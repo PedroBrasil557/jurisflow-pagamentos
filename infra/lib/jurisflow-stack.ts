@@ -20,18 +20,18 @@ export class JurisflowAppStack extends cdk.Stack {
 
     const { bucket: documentsBucket } = new Storage(this, 'Storage');
 
-    const { apiUrl } = new Api(this, 'Api', {
-      databaseUrl,
-      vpc,
-      documentsBucket,
-    });
+    // const { apiUrl } = new Api(this, 'Api', {
+    //   databaseUrl,
+    //   vpc,
+    //   documentsBucket,
+    // });
 
     new cdk.CfnOutput(this, 'WebAppUrl', {
       value: webAppUrl,
     });
 
-    new cdk.CfnOutput(this, 'ApiUrl', {
-      value: apiUrl,
-    });
+    // new cdk.CfnOutput(this, 'ApiUrl', {
+    //   value: apiUrl,
+    // });
   }
 }
