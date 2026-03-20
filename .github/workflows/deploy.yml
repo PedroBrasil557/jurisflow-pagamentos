@@ -1,0 +1,110 @@
+name: Test & Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+  pull_request:
+    branches:
+      - main
+      - dev
+    types: [opened, synchronize, reopened]
+
+jobs:
+  CI:
+    name: CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven/setup-bun@v2
+
+      - name: Install API dependencies
+        working-directory: ${{ github.workspace }}/api
+        run: bun install --frozen-lockfile
+
+      - name: API lint
+        working-directory: ${{ github.workspace }}/api
+        run: bun run lint
+
+      - name: API typecheck
+        working-directory: ${{ github.workspace }}/api
+        run: bun run typecheck
+
+      - name: Install Web dependencies
+        working-directory: ${{ github.workspace }}/web
+        run: bun install --frozen-lockfile
+
+      - name: Web lint
+        working-directory: ${{ github.workspace }}/web
+        run: bun run lint
+
+      - name: Web typecheck
+        working-directory: ${{ github.workspace }}/web
+        run: bun run typecheck
+
+  Deploy:
+    name: Deploy to AWS
+    needs: CI
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "yarn"
+          cache-dependency-path: infra/yarn.lock
+
+      - name: Setup Bun
+        uses: oven/setup-bun@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Build Web (dev)
+        if: github.ref == 'refs/heads/dev'
+        working-directory: ${{ github.workspace }}/web
+        run: bun install --frozen-lockfile && bun run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL_DEV }}
+
+      - name: Build Web (prod)
+        if: github.ref == 'refs/heads/main'
+        working-directory: ${{ github.workspace }}/web
+        run: bun install --frozen-lockfile && bun run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
+
+      - name: Deploy to Development
+        if: github.ref == 'refs/heads/dev'
+        working-directory: ${{ github.workspace }}/infra
+        run: yarn install --frozen-lockfile && yarn cdk deploy --all --require-approval never
+        env:
+          ENVIRONMENT: dev
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET_DEV }}
+
+      - name: Deploy to Production
+        if: github.ref == 'refs/heads/main'
+        working-directory: ${{ github.workspace }}/infra
+        run: yarn install --frozen-lockfile && yarn cdk deploy --all --require-approval never
+        env:
+          ENVIRONMENT: prod
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET_PROD }}

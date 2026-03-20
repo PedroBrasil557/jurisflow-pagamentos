@@ -1,0 +1,24 @@
+# deps
+node_modules/
+
+# build
+build/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# cdk
+cdk.out/
+cdk.context.json
+
+# os
+.DS_Store
+
+# editor
+*.swp
+*.swo
+
+# yarn
+yarn.lock

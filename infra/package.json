@@ -1,0 +1,26 @@
+{
+  "name": "jurisflow-infra",
+  "license": "UNLICENSED",
+  "version": "0.1.0",
+  "bin": {
+    "jurisflow": "bin/jurisflow.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "deploy": "bash ./scripts/deploy.sh",
+    "deploy:prod": "bash ./scripts/deploy.sh -p",
+    "deploy:infra": "cdk deploy --all --require-approval never"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.2",
+    "aws-cdk": "^2.177.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.177.0",
+    "constructs": "^10.4.2",
+    "dotenv": "^16.4.7"
+  }
+}

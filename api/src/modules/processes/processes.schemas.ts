@@ -1,0 +1,281 @@
+import { z } from 'zod'
+import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
+import { processPdfModelKeys } from './processes.pdf.models'
+import { processStatuses } from './processes.status'
+
+const binaryChoiceValues = ['', 'sim', 'nao'] as const
+const ternaryChoiceValues = ['', 'sim', 'nao', 'nao_sei'] as const
+const maritalStatusValues = [
+  '',
+  'solteiro',
+  'casado',
+  'separado_judicialmente',
+  'divorciado',
+  'viuvo',
+] as const
+const ownerTypeValues = [
+  '',
+  'primeiro_proprietario_uma_pessoa',
+  'primeiro_proprietario_duas_pessoas',
+  'segundo_proprietario_ou_superior',
+] as const
+
+const processCpfSchema = z
+  .string()
+  .trim()
+  .min(1, { message: 'Informe um CPF.' })
+  .transform((value) => normalizeCpf(value))
+  .refine((value) => isValidCpf(value), {
+    message: 'Informe um CPF valido.',
+  })
+
+const emailValidator = z.email({ message: 'Informe um e-mail valido.' })
+
+function toUppercase(value: string) {
+  return value.trim().toUpperCase()
+}
+
+function requiredUppercaseText(message: string, maxLength = 255) {
+  return z
+    .string()
+    .trim()
+    .min(1, { message })
+    .max(maxLength, { message: 'Valor muito longo.' })
+    .transform(toUppercase)
+}
+
+function optionalUppercaseText(maxLength = 255) {
+  return z
+    .string()
+    .trim()
+    .max(maxLength, { message: 'Valor muito longo.' })
+    .transform((value) => value.toUpperCase())
+}
+
+function optionalText(maxLength = 255) {
+  return z.string().trim().max(maxLength, { message: 'Valor muito longo.' })
+}
+
+const birthDateSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'Informe uma data de nascimento valida.',
+  })
+
+const processPayloadShape = {
+  fullName: requiredUppercaseText('Informe o nome completo.', 150),
+  birthDate: birthDateSchema,
+  nationality: requiredUppercaseText('Informe a nacionalidade.', 80),
+  maritalStatus: z.enum(maritalStatusValues),
+  profession: optionalUppercaseText(120),
+  ownerType: z.enum(ownerTypeValues).refine((value) => value !== '', {
+    message: 'Selecione o tipo de proprietario.',
+  }),
+  cpf: processCpfSchema,
+  rg: requiredUppercaseText('Informe o RG.', 40),
+  cadunico: z.enum(binaryChoiceValues),
+  propertyPaidOff: z.enum(ternaryChoiceValues),
+  deliveredMoreThanTenYears: z.enum(binaryChoiceValues),
+  purchaseAgreementLessThanTenYears: z.enum(binaryChoiceValues),
+  state: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z]{2}$/, { message: 'Informe uma UF valida.' })
+    .transform((value) => value.toUpperCase()),
+  city: requiredUppercaseText('Informe a cidade.', 120),
+  district: requiredUppercaseText('Informe o bairro.', 120),
+  housingComplex: requiredUppercaseText(
+    'Informe o conjunto ou residencial.',
+    160,
+  ),
+  street: requiredUppercaseText('Informe o logradouro.', 255),
+  number: optionalUppercaseText(40),
+  complement: optionalUppercaseText(255),
+  zipcode: z
+    .string()
+    .trim()
+    .min(1, { message: 'Informe o CEP.' })
+    .max(20, { message: 'CEP invalido.' }),
+  email: z
+    .string()
+    .trim()
+    .max(255, { message: 'E-mail muito longo.' })
+    .refine(
+      (value) => value === '' || emailValidator.safeParse(value).success,
+      {
+        message: 'Informe um e-mail valido.',
+      },
+    )
+    .transform((value) => value.toLowerCase()),
+  whatsapp: optionalText(30),
+  witness1Id: z.string().trim().min(1, {
+    message: 'Selecione a testemunha 1.',
+  }),
+  witness2Id: z.string().trim().min(1, {
+    message: 'Selecione a testemunha 2.',
+  }),
+  observation: optionalUppercaseText(500),
+} satisfies z.ZodRawShape
+
+function applyCrossFieldRules<
+  T extends {
+    deliveredMoreThanTenYears?: string
+    purchaseAgreementLessThanTenYears?: string
+    witness1Id?: string
+    witness2Id?: string
+  },
+>(data: T, ctx: z.RefinementCtx) {
+  if (
+    data.deliveredMoreThanTenYears === 'sim' &&
+    data.purchaseAgreementLessThanTenYears !== 'sim' &&
+    data.purchaseAgreementLessThanTenYears !== 'nao'
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message:
+        'Informe se o contrato de compra e venda foi celebrado ha menos de 10 anos.',
+      path: ['purchaseAgreementLessThanTenYears'],
+    })
+  }
+
+  if (
+    data.witness1Id &&
+    data.witness2Id &&
+    data.witness1Id === data.witness2Id
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'As testemunhas devem ser diferentes.',
+      path: ['witness2Id'],
+    })
+  }
+}
+
+function normalizeConditionalFields<
+  T extends {
+    deliveredMoreThanTenYears: string
+    purchaseAgreementLessThanTenYears: string
+  },
+>(data: T) {
+  return {
+    ...data,
+    purchaseAgreementLessThanTenYears:
+      data.deliveredMoreThanTenYears === 'sim'
+        ? data.purchaseAgreementLessThanTenYears
+        : '',
+  }
+}
+
+export const createProcessPayloadSchema = z
+  .object(processPayloadShape)
+  .superRefine((data, ctx) => {
+    applyCrossFieldRules(data, ctx)
+  })
+  .transform((data) => normalizeConditionalFields(data))
+
+export const updateProcessPayloadSchema = z
+  .object(processPayloadShape)
+  .partial()
+  .superRefine((data, ctx) => {
+    applyCrossFieldRules(data, ctx)
+  })
+
+export const listProcessesQuerySchema = z.object({
+  search: z
+    .string()
+    .trim()
+    .max(120, { message: 'Busca muito longa.' })
+    .optional(),
+  status: z.enum(processStatuses).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+})
+
+export const processIdParamsSchema = z.object({
+  processId: z.string().trim().min(1, {
+    message: 'Informe o processo.',
+  }),
+})
+
+export const processChecklistItemParamsSchema = z.object({
+  processId: z.string().trim().min(1, {
+    message: 'Informe o processo.',
+  }),
+  processDocumentId: z.string().trim().min(1, {
+    message: 'Informe o item do checklist.',
+  }),
+})
+
+export const processChecklistFileParamsSchema = z.object({
+  processId: z.string().trim().min(1, {
+    message: 'Informe o processo.',
+  }),
+  processDocumentId: z.string().trim().min(1, {
+    message: 'Informe o item do checklist.',
+  }),
+  fileId: z.string().trim().min(1, {
+    message: 'Informe o arquivo.',
+  }),
+})
+
+export const processPdfModelParamsSchema = z.object({
+  processId: z.string().trim().min(1, {
+    message: 'Informe o processo.',
+  }),
+  modelKey: z.enum(processPdfModelKeys, {
+    message: 'Informe um modelo valido.',
+  }),
+})
+
+const legalProcessFields = {
+  legalProcessNumber: z
+    .string()
+    .trim()
+    .min(1, { message: 'Informe o numero do processo.' })
+    .max(50, { message: 'Numero do processo muito longo.' }),
+  causeValue: z
+    .string()
+    .trim()
+    .min(1, { message: 'Informe o valor da causa.' })
+    .regex(/^\d+([.,]\d{1,2})?$/, {
+      message: 'Informe um valor numerico valido (ex: 1400,00).',
+    }),
+  protocolDate: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, {
+      message: 'Informe uma data valida no formato AAAA-MM-DD.',
+    }),
+}
+
+export const startProcessPayloadSchema = z.object(legalProcessFields)
+
+export const updateLegalProcessPayloadSchema = z.object(legalProcessFields)
+
+export const cancelProcessPayloadSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .max(500, { message: 'Motivo muito longo.' })
+    .optional(),
+})
+
+export const submitChecklistItemFormSchema = z.object({
+  observation: z.string().optional(),
+  markOkWithoutFile: z.string().optional(),
+  file: z.unknown().optional(),
+})
+
+export type CreateProcessPayload = z.output<typeof createProcessPayloadSchema>
+export type UpdateProcessPayload = z.output<typeof updateProcessPayloadSchema>
+export type ListProcessesQuery = z.output<typeof listProcessesQuerySchema>
+export type CancelProcessPayload = z.output<typeof cancelProcessPayloadSchema>
+export type StartProcessPayload = z.output<typeof startProcessPayloadSchema>
+export type UpdateLegalProcessPayload = z.output<
+  typeof updateLegalProcessPayloadSchema
+>
+
+export function normalizeProcessPayload(input: unknown) {
+  return createProcessPayloadSchema.parse(input)
+}

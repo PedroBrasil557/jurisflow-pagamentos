@@ -1,0 +1,16 @@
+FROM oven/bun:1-alpine
+
+RUN apk add --no-cache \
+  libreoffice-writer \
+  font-noto \
+  ttf-dejavu \
+  ttf-liberation \
+  font-carlito \
+  fontconfig \
+  && fc-cache -f
+
+WORKDIR /workspace/api
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile
+EXPOSE 3556
+CMD ["sh", "-c", "bun run db:migrate && bun run dev"]

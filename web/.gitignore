@@ -1,0 +1,33 @@
+# deps
+node_modules/
+
+# build
+dist/
+dist-ssr/
+
+# env
+.env
+.env.local
+.env.*.local
+*.local
+
+# tanstack
+.tanstack/
+.vinxi/
+.nitro/
+.output/
+.wrangler/
+
+# os
+.DS_Store
+
+# editor
+*.swp
+*.swo
+
+# misc
+__unconfig*
+todos.json
+
+# bun
+bun.lock

@@ -1,0 +1,152 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import type { ProcessFormValues } from '../process-form.types'
+import { processKeys } from './processes.queries'
+import {
+  cancelProcessRequest,
+  createProcessRequest,
+  finalizeProcessRequest,
+  type GenerateProcessPdfModelKey,
+  generateProcessPdfRequest,
+  type LegalProcessInput,
+  markProcessDocumentationReadyRequest,
+  startProcessRequest,
+  submitProcessChecklistItemRequest,
+  updateLegalProcessRequest,
+  updateProcessRequest,
+} from './processes.service'
+
+export function useCreateProcess() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (values: ProcessFormValues) => createProcessRequest(values),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+    },
+  })
+}
+
+export function useUpdateProcess(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (values: ProcessFormValues) =>
+      updateProcessRequest(processId, values),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+    },
+  })
+}
+
+export function useSubmitChecklistItem(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (input: {
+      file?: File | null
+      markOkWithoutFile?: boolean
+      observation?: string
+      processDocumentId: string
+    }) =>
+      submitProcessChecklistItemRequest({
+        ...input,
+        processId,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: processKeys.checklist(processId),
+      })
+    },
+  })
+}
+
+export function useMarkDocumentationReady(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => markProcessDocumentationReadyRequest(processId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.checklist(processId),
+      })
+    },
+  })
+}
+
+export function useStartProcess(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (payload: LegalProcessInput) =>
+      startProcessRequest(processId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+    },
+  })
+}
+
+export function useUpdateLegalProcess(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (payload: LegalProcessInput) =>
+      updateLegalProcessRequest(processId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+    },
+  })
+}
+
+export function useFinalizeProcess(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => finalizeProcessRequest(processId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+    },
+  })
+}
+
+export function useCancelProcess(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (reason?: string) => cancelProcessRequest(processId, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+    },
+  })
+}
+
+export function useGenerateProcessPdf(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (modelKey: GenerateProcessPdfModelKey) =>
+      generateProcessPdfRequest({ processId, modelKey }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: processKeys.pdfModels(processId),
+      })
+    },
+  })
+}

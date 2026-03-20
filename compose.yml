@@ -1,0 +1,106 @@
+services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    working_dir: /workspace/web
+    ports:
+      - "3555:3555"
+    environment:
+      PORT: "3555"
+      API_URL: "http://api:3556"
+      VITE_API_URL: "http://localhost:3556"
+    volumes:
+      - ./:/workspace
+      - web_node_modules:/workspace/web/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.dev
+    working_dir: /workspace/api
+    ports:
+      - "3556:3556"
+    environment:
+      PORT: "3556"
+      BETTER_AUTH_SECRET: "dev-only-secret-change-me-before-production"
+      BETTER_AUTH_URL: "http://localhost:3556"
+      WEB_URL: "http://localhost:3555"
+      TRUSTED_ORIGINS: "http://localhost:3555,http://127.0.0.1:3555"
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/app"
+      MINIO_ENDPOINT: "http://minio:9000"
+      MINIO_PUBLIC_URL: "http://localhost:3558"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin123"
+      MINIO_FORCE_PATH_STYLE: "true"
+      MINIO_PROCESS_DOCUMENTS_BUCKET: "process-documents"
+    volumes:
+      - ./:/workspace
+      - api_node_modules:/workspace/api/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      minio-create-buckets:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- 'http://127.0.0.1:3556/api/system/health?source=healthcheck' >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: postgres:18-alpine
+    ports:
+      - "3557:5432"
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "3558:9000"
+      - "3559:9001"
+    environment:
+      MINIO_ROOT_USER: "minioadmin"
+      MINIO_ROOT_PASSWORD: "minioadmin123"
+    volumes:
+      - minio_data:/data
+
+  minio-create-buckets:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        until /usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin123; do
+          sleep 1
+        done
+        /usr/bin/mc mb --ignore-existing local/process-documents
+        /usr/bin/mc anonymous set none local/process-documents
+    restart: "no"
+
+volumes:
+  web_node_modules:
+  api_node_modules:
+  postgres_data:
+  minio_data:
