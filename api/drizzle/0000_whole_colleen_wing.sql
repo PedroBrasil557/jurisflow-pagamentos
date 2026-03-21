@@ -1,7 +1,7 @@
 CREATE TYPE "public"."user_role" AS ENUM('user', 'admin', 'attorney');--> statement-breakpoint
 CREATE TYPE "public"."process_document_status" AS ENUM('PENDENTE', 'ANEXADO', 'OK_SEM_ARQUIVO', 'APROVADO', 'REJEITADO');--> statement-breakpoint
-CREATE TYPE "public"."process_history_event_type" AS ENUM('CREATED', 'UPDATED', 'STATUS_CHANGED', 'CANCELLED', 'PDF_GENERATED', 'DOCUMENT_UPLOADED', 'DOCUMENT_REPLACED', 'DOCUMENT_DELETED', 'DOCUMENT_MARKED_OK_WITHOUT_FILE', 'DOCUMENT_UNMARKED_OK_WITHOUT_FILE', 'DOCUMENT_OBSERVATION_UPDATED');--> statement-breakpoint
-CREATE TYPE "public"."process_status" AS ENUM('EM_DOCUMENTACAO', 'DOCUMENTACAO_PRONTA', 'EM_PROCESSO', 'FINALIZADO', 'CANCELADO');--> statement-breakpoint
+CREATE TYPE "public"."process_history_event_type" AS ENUM('CREATED', 'UPDATED', 'STATUS_CHANGED', 'CANCELLED', 'PDF_GENERATED', 'DOCUMENT_UPLOADED', 'DOCUMENT_REPLACED', 'DOCUMENT_DELETED', 'DOCUMENT_MARKED_OK_WITHOUT_FILE', 'DOCUMENT_UNMARKED_OK_WITHOUT_FILE', 'DOCUMENT_OBSERVATION_UPDATED', 'BATCH_UPLOADED', 'BATCH_DELETED');--> statement-breakpoint
+CREATE TYPE "public"."process_status" AS ENUM('CADASTRADO', 'EM_LOTE', 'EM_DOCUMENTACAO', 'DOCUMENTACAO_PRONTA', 'EM_PROCESSO', 'FINALIZADO', 'CANCELADO');--> statement-breakpoint
 CREATE TABLE "account" (
 	"id" text PRIMARY KEY NOT NULL,
 	"account_id" text NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE "housing_complex" (
 CREATE TABLE "process" (
 	"id" text PRIMARY KEY NOT NULL,
 	"code" text NOT NULL,
-	"status" "process_status" DEFAULT 'EM_DOCUMENTACAO' NOT NULL,
+	"status" "process_status" DEFAULT 'CADASTRADO' NOT NULL,
 	"full_name" text NOT NULL,
 	"birth_date" date NOT NULL,
 	"nationality" text NOT NULL,
@@ -77,8 +77,8 @@ CREATE TABLE "process" (
 	"rg" text NOT NULL,
 	"cadunico" text NOT NULL,
 	"property_paid_off" text NOT NULL,
-	"delivered_more_than_ten_years" text NOT NULL,
-	"purchase_agreement_less_than_ten_years" text NOT NULL,
+	"delivered_more_than_ten_years" text,
+	"purchase_agreement_less_than_ten_years" text,
 	"state" text NOT NULL,
 	"city" text NOT NULL,
 	"district" text NOT NULL,
@@ -89,6 +89,24 @@ CREATE TABLE "process" (
 	"zipcode" text NOT NULL,
 	"email" text NOT NULL,
 	"whatsapp" text NOT NULL,
+	"spouse_contract_signed" text,
+	"spouse_full_name" text,
+	"spouse_birth_date" date,
+	"spouse_nationality" text,
+	"spouse_marital_status" text,
+	"spouse_profession" text,
+	"spouse_cpf" text,
+	"spouse_rg" text,
+	"spouse_cadunico" text,
+	"spouse_same_address" text,
+	"spouse_state" text,
+	"spouse_city" text,
+	"spouse_district" text,
+	"spouse_housing_complex" text,
+	"spouse_street" text,
+	"spouse_number" text,
+	"spouse_complement" text,
+	"spouse_zipcode" text,
 	"witness_1_id" text NOT NULL,
 	"witness_2_id" text NOT NULL,
 	"observation" text NOT NULL,
@@ -105,6 +123,18 @@ CREATE TABLE "process" (
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "process_code_unique" UNIQUE("code")
+);
+--> statement-breakpoint
+CREATE TABLE "process_batch_file" (
+	"id" text PRIMARY KEY NOT NULL,
+	"process_id" text NOT NULL,
+	"bucket_name" text NOT NULL,
+	"object_key" text NOT NULL,
+	"original_file_name" text NOT NULL,
+	"mime_type" text NOT NULL,
+	"size_in_bytes" integer NOT NULL,
+	"uploaded_by_user_id" text NOT NULL,
+	"uploaded_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "process_document" (
@@ -179,6 +209,8 @@ ALTER TABLE "process" ADD CONSTRAINT "process_witness_1_id_user_id_fk" FOREIGN K
 ALTER TABLE "process" ADD CONSTRAINT "process_witness_2_id_user_id_fk" FOREIGN KEY ("witness_2_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "process" ADD CONSTRAINT "process_created_by_user_id_user_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "process" ADD CONSTRAINT "process_assigned_attorney_id_user_id_fk" FOREIGN KEY ("assigned_attorney_id") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "process_batch_file" ADD CONSTRAINT "process_batch_file_process_id_process_id_fk" FOREIGN KEY ("process_id") REFERENCES "public"."process"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "process_batch_file" ADD CONSTRAINT "process_batch_file_uploaded_by_user_id_user_id_fk" FOREIGN KEY ("uploaded_by_user_id") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "process_document" ADD CONSTRAINT "process_document_process_id_process_id_fk" FOREIGN KEY ("process_id") REFERENCES "public"."process"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "process_document" ADD CONSTRAINT "process_document_document_type_id_process_document_type_id_fk" FOREIGN KEY ("document_type_id") REFERENCES "public"."process_document_type"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "process_document_file" ADD CONSTRAINT "process_document_file_process_document_id_process_document_id_fk" FOREIGN KEY ("process_document_id") REFERENCES "public"."process_document"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -196,6 +228,9 @@ CREATE INDEX "process_created_by_user_id_idx" ON "process" USING btree ("created
 CREATE INDEX "process_assigned_attorney_id_idx" ON "process" USING btree ("assigned_attorney_id");--> statement-breakpoint
 CREATE INDEX "process_witness_1_id_idx" ON "process" USING btree ("witness_1_id");--> statement-breakpoint
 CREATE INDEX "process_witness_2_id_idx" ON "process" USING btree ("witness_2_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "process_batch_file_storage_object_idx" ON "process_batch_file" USING btree ("bucket_name","object_key");--> statement-breakpoint
+CREATE INDEX "process_batch_file_process_id_idx" ON "process_batch_file" USING btree ("process_id");--> statement-breakpoint
+CREATE INDEX "process_batch_file_uploaded_by_user_id_idx" ON "process_batch_file" USING btree ("uploaded_by_user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "process_document_process_type_idx" ON "process_document" USING btree ("process_id","document_type_id");--> statement-breakpoint
 CREATE INDEX "process_document_status_idx" ON "process_document" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "process_document_process_id_idx" ON "process_document" USING btree ("process_id");--> statement-breakpoint
