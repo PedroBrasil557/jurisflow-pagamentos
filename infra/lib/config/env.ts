@@ -6,9 +6,9 @@ export const env = {
   slackBotToken: process.env.SLACK_BOT_TOKEN ?? '',
   domainCertificateArn: process.env.DOMAIN_CERTIFICATE_ARN ?? '',
   apiDomainName: isProd
-    ? 'PLACEHOLDER'
+    ? 'hk9iayyyce.execute-api.us-east-1.amazonaws.com'
     : 'bq81uw2pw0.execute-api.us-east-1.amazonaws.com',
   webDomainNames: isProd
-    ? ['PLACEHOLDER']
+    ? ['d91mdzg8zlb5o.cloudfront.net']
     : ['d1son9ku39ox5g.cloudfront.net'],
 };

@@ -87,7 +87,7 @@ jobs:
         working-directory: ${{ github.workspace }}/web
         run: bun install --frozen-lockfile && bun run build
         env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL_PROD }}
+          VITE_API_URL: https://hk9iayyyce.execute-api.us-east-1.amazonaws.com
 
       - name: Deploy to Development
         if: github.ref == 'refs/heads/dev'
