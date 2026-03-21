@@ -31,12 +31,12 @@ services:
       WEB_URL: "http://localhost:3555"
       TRUSTED_ORIGINS: "http://localhost:3555,http://127.0.0.1:3555"
       DATABASE_URL: "postgresql://postgres:postgres@db:5432/app"
-      MINIO_ENDPOINT: "http://minio:9000"
-      MINIO_PUBLIC_URL: "http://localhost:3558"
-      MINIO_ACCESS_KEY: "minioadmin"
-      MINIO_SECRET_KEY: "minioadmin123"
-      MINIO_FORCE_PATH_STYLE: "true"
-      MINIO_PROCESS_DOCUMENTS_BUCKET: "process-documents"
+      S3_ENDPOINT: "http://minio:9000"
+      S3_PUBLIC_URL: "http://localhost:3558"
+      S3_ACCESS_KEY: "minioadmin"
+      S3_SECRET_KEY: "minioadmin123"
+      S3_FORCE_PATH_STYLE: "true"
+      S3_PROCESS_DOCUMENTS_BUCKET: "process-documents"
     volumes:
       - ./:/workspace
       - api_node_modules:/workspace/api/node_modules
@@ -80,6 +80,7 @@ services:
     environment:
       MINIO_ROOT_USER: "minioadmin"
       MINIO_ROOT_PASSWORD: "minioadmin123"
+      MINIO_CORS_ALLOW_ORIGIN: "http://localhost:3555,http://127.0.0.1:3555"
     volumes:
       - minio_data:/data
 

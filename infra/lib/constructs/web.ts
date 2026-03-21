@@ -9,8 +9,8 @@ import {
 } from 'aws-cdk-lib/aws-cloudfront';
 import path from 'path';
 import { getEnvName } from '../utils/getEnvName';
-import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
-import { env } from '../config/env';
+// import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
+// import { env } from '../config/env';
 
 export class WebApp extends Construct {
   readonly webAppUrl: string;
@@ -29,11 +29,11 @@ export class WebApp extends Construct {
 
     const originAccessControl = new S3OriginAccessControl(this, 'OriginAccessControl');
 
-    const certificate = Certificate.fromCertificateArn(
-      this,
-      'WebCertificate',
-      env.domainCertificateArn,
-    );
+    // const certificate = Certificate.fromCertificateArn(
+    //   this,
+    //   'WebCertificate',
+    //   env.domainCertificateArn,
+    // );
 
     const defaultBehavior = {
       origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(webBucket, {
@@ -52,8 +52,8 @@ export class WebApp extends Construct {
     };
 
     const cloudFrontConfig: DistributionProps = {
-      domainNames: env.webDomainNames,
-      certificate,
+      // domainNames: env.webDomainNames,
+      // certificate,
       defaultRootObject: 'index.html',
       defaultBehavior,
       additionalBehaviors: {

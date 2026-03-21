@@ -5,6 +5,10 @@ export const env = {
   isProd,
   slackBotToken: process.env.SLACK_BOT_TOKEN ?? '',
   domainCertificateArn: process.env.DOMAIN_CERTIFICATE_ARN ?? '',
-  apiDomainName: 'PLACEHOLDER', // TODO: preencher com domínio real
-  webDomainNames: ['PLACEHOLDER'], // TODO: preencher com domínio(s) real(is)
+  apiDomainName: isProd
+    ? 'PLACEHOLDER'
+    : 'bq81uw2pw0.execute-api.us-east-1.amazonaws.com',
+  webDomainNames: isProd
+    ? ['PLACEHOLDER']
+    : ['d1son9ku39ox5g.cloudfront.net'],
 };

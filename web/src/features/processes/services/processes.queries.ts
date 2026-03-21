@@ -1,6 +1,7 @@
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 import type { ProcessListQuery } from './processes.service'
 import {
+  fetchBatchFiles,
   fetchProcess,
   fetchProcessChecklist,
   fetchProcesses,
@@ -18,6 +19,7 @@ export const processKeys = {
   detail: (id: string) => [...processKeys.details(), id] as const,
   checklist: (id: string) => [...processKeys.all, 'checklist', id] as const,
   pdfModels: (id: string) => [...processKeys.all, 'pdf-models', id] as const,
+  batch: (id: string) => [...processKeys.all, 'batch', id] as const,
   history: (id: string) => [...processKeys.all, 'history', id] as const,
   userOptions: (search: string) => ['user-options', search] as const,
 }
@@ -46,6 +48,13 @@ export function processChecklistOptions(processId: string) {
   return queryOptions({
     queryKey: processKeys.checklist(processId),
     queryFn: () => fetchProcessChecklist(processId),
+  })
+}
+
+export function processBatchFilesOptions(processId: string) {
+  return queryOptions({
+    queryKey: processKeys.batch(processId),
+    queryFn: () => fetchBatchFiles(processId),
   })
 }
 

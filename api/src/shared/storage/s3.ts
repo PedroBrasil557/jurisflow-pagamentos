@@ -31,19 +31,47 @@ export function buildStorageObjectKey(parts: readonly string[]) {
     .join('/')
 }
 
+function normalizeLabel(label: string) {
+  return label
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9._-]/g, '')
+}
+
 export function buildProcessDocumentObjectKey(input: {
   documentTypeKey: string
+  documentTypeSortOrder: number
+  documentTypeLabel: string
   fileId: string
   fileName: string
   processId: string
+}) {
+  const safeFileName = normalizeFileName(input.fileName) || 'arquivo'
+  const sortPrefix = String(input.documentTypeSortOrder).padStart(2, '0')
+  const safeLabel =
+    normalizeLabel(input.documentTypeLabel) || input.documentTypeKey
+
+  return buildStorageObjectKey([
+    'processes',
+    input.processId,
+    'documents',
+    `${sortPrefix}-${safeLabel}`,
+    `${input.fileId}-${safeFileName}`,
+  ])
+}
+
+export function buildProcessBatchObjectKey(input: {
+  processId: string
+  fileId: string
+  fileName: string
 }) {
   const safeFileName = normalizeFileName(input.fileName) || 'arquivo'
 
   return buildStorageObjectKey([
     'processes',
     input.processId,
-    'documents',
-    input.documentTypeKey,
+    'batch',
     `${input.fileId}-${safeFileName}`,
   ])
 }

@@ -6,6 +6,7 @@ import { user } from '../auth/auth.schema'
 import {
   ensureProcessChecklistItems,
   getProcessChecklist,
+  syncProcessStatusAfterChecklistChange,
 } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
@@ -43,8 +44,6 @@ const processEditableFieldKeys = [
   'rg',
   'cadunico',
   'propertyPaidOff',
-  'deliveredMoreThanTenYears',
-  'purchaseAgreementLessThanTenYears',
   'state',
   'city',
   'district',
@@ -55,6 +54,24 @@ const processEditableFieldKeys = [
   'zipcode',
   'email',
   'whatsapp',
+  'spouseContractSigned',
+  'spouseFullName',
+  'spouseBirthDate',
+  'spouseNationality',
+  'spouseMaritalStatus',
+  'spouseProfession',
+  'spouseCpf',
+  'spouseRg',
+  'spouseCadunico',
+  'spouseSameAddress',
+  'spouseState',
+  'spouseCity',
+  'spouseDistrict',
+  'spouseHousingComplex',
+  'spouseStreet',
+  'spouseNumber',
+  'spouseComplement',
+  'spouseZipcode',
   'witness1Id',
   'witness2Id',
   'observation',
@@ -123,6 +140,10 @@ function buildProcessCode() {
 
 function getLegalProcessLabel(currentProcess: ProcessRecord) {
   switch (currentProcess.status) {
+    case 'CADASTRADO':
+      return 'Cadastrado'
+    case 'EM_LOTE':
+      return 'Em lote'
     case 'EM_DOCUMENTACAO':
       return 'Nao iniciado'
     case 'DOCUMENTACAO_PRONTA':
@@ -158,8 +179,16 @@ function getHistoryEventLabel(historyEntry: ProcessListHistoryRecord) {
       return 'Ok sem arquivo desmarcado'
     case 'DOCUMENT_OBSERVATION_UPDATED':
       return 'Observacao do documento atualizada'
+    case 'BATCH_UPLOADED':
+      return 'Arquivos enviados em lote'
+    case 'BATCH_DELETED':
+      return 'Arquivo em lote removido'
     case 'STATUS_CHANGED':
       switch (historyEntry.toStatus) {
+        case 'CADASTRADO':
+          return 'Retornou para cadastrado'
+        case 'EM_LOTE':
+          return 'Arquivos em lote enviados'
         case 'EM_DOCUMENTACAO':
           return 'Documentacao reaberta'
         case 'DOCUMENTACAO_PRONTA':
@@ -190,9 +219,6 @@ function pickEditableValues(
     rg: currentProcess.rg,
     cadunico: currentProcess.cadunico,
     propertyPaidOff: currentProcess.propertyPaidOff,
-    deliveredMoreThanTenYears: currentProcess.deliveredMoreThanTenYears,
-    purchaseAgreementLessThanTenYears:
-      currentProcess.purchaseAgreementLessThanTenYears,
     state: currentProcess.state,
     city: currentProcess.city,
     district: currentProcess.district,
@@ -203,6 +229,24 @@ function pickEditableValues(
     zipcode: currentProcess.zipcode,
     email: currentProcess.email,
     whatsapp: currentProcess.whatsapp,
+    spouseContractSigned: currentProcess.spouseContractSigned ?? '',
+    spouseFullName: currentProcess.spouseFullName ?? '',
+    spouseBirthDate: currentProcess.spouseBirthDate ?? '',
+    spouseNationality: currentProcess.spouseNationality ?? '',
+    spouseMaritalStatus: currentProcess.spouseMaritalStatus ?? '',
+    spouseProfession: currentProcess.spouseProfession ?? '',
+    spouseCpf: currentProcess.spouseCpf ?? '',
+    spouseRg: currentProcess.spouseRg ?? '',
+    spouseCadunico: currentProcess.spouseCadunico ?? '',
+    spouseSameAddress: currentProcess.spouseSameAddress ?? '',
+    spouseState: currentProcess.spouseState ?? '',
+    spouseCity: currentProcess.spouseCity ?? '',
+    spouseDistrict: currentProcess.spouseDistrict ?? '',
+    spouseHousingComplex: currentProcess.spouseHousingComplex ?? '',
+    spouseStreet: currentProcess.spouseStreet ?? '',
+    spouseNumber: currentProcess.spouseNumber ?? '',
+    spouseComplement: currentProcess.spouseComplement ?? '',
+    spouseZipcode: currentProcess.spouseZipcode ?? '',
     witness1Id: currentProcess.witness1Id,
     witness2Id: currentProcess.witness2Id,
     observation: currentProcess.observation,
@@ -474,7 +518,7 @@ export async function createProcess(
     .values({
       id: processId,
       code: processCode,
-      status: 'EM_DOCUMENTACAO',
+      status: 'CADASTRADO',
       createdByUserId: actor.id,
       assignedAttorneyId: null,
       documentationReadyAt: null,
@@ -534,6 +578,22 @@ export async function updateProcess(
     changedFields,
     notes: 'Campos do processo atualizados.',
   })
+
+  if (
+    changedFields.ownerType ||
+    changedFields.spouseContractSigned ||
+    changedFields.propertyPaidOff
+  ) {
+    await ensureProcessChecklistItems(processId)
+    const checklist = await getProcessChecklist(processId)
+    const syncedProcess = await syncProcessStatusAfterChecklistChange({
+      processId,
+      actor,
+      checklist,
+    })
+
+    return syncedProcess
+  }
 
   return updatedProcess
 }

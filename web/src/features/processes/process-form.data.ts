@@ -12,16 +12,12 @@ export const maritalStatusOptions = [
 export const ownerTypeOptions = [
   { value: '', label: 'Selecione...' },
   {
-    value: 'primeiro_proprietario_uma_pessoa',
-    label: 'Primeiro proprietario - 1 pessoa no termo do banco',
+    value: 'titular_contrato_caixa',
+    label: 'Titular contrato caixa',
   },
   {
-    value: 'primeiro_proprietario_duas_pessoas',
-    label: 'Primeiro proprietario - 2 pessoas no termo do banco',
-  },
-  {
-    value: 'segundo_proprietario_ou_superior',
-    label: 'Segundo proprietario (ou superior)',
+    value: 'nao_titular_contrato_caixa',
+    label: 'Nao titular contrato caixa',
   },
 ] satisfies readonly SelectOption[]
 
@@ -39,6 +35,7 @@ export const yesNoUnknownOptions = [
 ] satisfies readonly SelectOption[]
 
 export const brazilStateOptions = [
+  { value: '', label: 'Selecione...' },
   { value: 'AC', label: 'AC' },
   { value: 'AL', label: 'AL' },
   { value: 'AP', label: 'AP' },
@@ -79,9 +76,7 @@ export const emptyProcessFormValues: ProcessFormValues = {
   rg: '',
   cadunico: '',
   propertyPaidOff: '',
-  deliveredMoreThanTenYears: '',
-  purchaseAgreementLessThanTenYears: '',
-  state: 'BA',
+  state: '',
   city: '',
   district: '',
   housingComplex: '',
@@ -91,6 +86,24 @@ export const emptyProcessFormValues: ProcessFormValues = {
   zipcode: '',
   email: '',
   whatsapp: '',
+  spouseContractSigned: '',
+  spouseFullName: '',
+  spouseBirthDate: '',
+  spouseNationality: 'BRASILEIRA',
+  spouseMaritalStatus: '',
+  spouseProfession: '',
+  spouseCpf: '',
+  spouseRg: '',
+  spouseCadunico: '',
+  spouseSameAddress: '',
+  spouseState: '',
+  spouseCity: '',
+  spouseDistrict: '',
+  spouseHousingComplex: '',
+  spouseStreet: '',
+  spouseNumber: '',
+  spouseComplement: '',
+  spouseZipcode: '',
   witness1Id: '',
   witness2Id: '',
   observation: '',

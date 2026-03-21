@@ -56,6 +56,13 @@ CREATE TABLE "verification" (
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "housing_complex" (
+	"id" text PRIMARY KEY NOT NULL,
+	"name" text NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 CREATE TABLE "process" (
 	"id" text PRIMARY KEY NOT NULL,
 	"code" text NOT NULL,
@@ -183,6 +190,7 @@ ALTER TABLE "process_history" ADD CONSTRAINT "process_history_actor_user_id_user
 CREATE INDEX "account_userId_idx" ON "account" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "session_userId_idx" ON "session" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "verification_identifier_idx" ON "verification" USING btree ("identifier");--> statement-breakpoint
+CREATE UNIQUE INDEX "housing_complex_name_idx" ON "housing_complex" USING btree ("name");--> statement-breakpoint
 CREATE INDEX "process_status_idx" ON "process" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "process_created_by_user_id_idx" ON "process" USING btree ("created_by_user_id");--> statement-breakpoint
 CREATE INDEX "process_assigned_attorney_id_idx" ON "process" USING btree ("assigned_attorney_id");--> statement-breakpoint

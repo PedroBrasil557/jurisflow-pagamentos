@@ -11,9 +11,8 @@ export type MaritalStatusValue =
   | 'viuvo'
 export type OwnerTypeValue =
   | ''
-  | 'primeiro_proprietario_uma_pessoa'
-  | 'primeiro_proprietario_duas_pessoas'
-  | 'segundo_proprietario_ou_superior'
+  | 'titular_contrato_caixa'
+  | 'nao_titular_contrato_caixa'
 
 export type SelectOption = {
   label: string
@@ -37,8 +36,6 @@ export type ProcessFormValues = {
   rg: string
   cadunico: BinaryChoice
   propertyPaidOff: TernaryChoice
-  deliveredMoreThanTenYears: BinaryChoice
-  purchaseAgreementLessThanTenYears: BinaryChoice
   state: string
   city: string
   district: string
@@ -49,6 +46,24 @@ export type ProcessFormValues = {
   zipcode: string
   email: string
   whatsapp: string
+  spouseContractSigned: BinaryChoice
+  spouseFullName: string
+  spouseBirthDate: string
+  spouseNationality: string
+  spouseMaritalStatus: MaritalStatusValue
+  spouseProfession: string
+  spouseCpf: string
+  spouseRg: string
+  spouseCadunico: BinaryChoice
+  spouseSameAddress: BinaryChoice
+  spouseState: string
+  spouseCity: string
+  spouseDistrict: string
+  spouseHousingComplex: string
+  spouseStreet: string
+  spouseNumber: string
+  spouseComplement: string
+  spouseZipcode: string
   witness1Id: string
   witness2Id: string
   observation: string

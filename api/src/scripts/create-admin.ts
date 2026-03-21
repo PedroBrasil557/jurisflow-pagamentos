@@ -74,10 +74,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  const message =
-    error instanceof Error ? error.message : 'Falha ao criar o administrador.'
-
-  console.error(message)
+  console.error(error)
   printUsage()
   process.exit(1)
 })

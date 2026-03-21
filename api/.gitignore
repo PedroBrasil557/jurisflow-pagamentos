@@ -15,6 +15,3 @@ dist/
 # editor
 *.swp
 *.swo
-
-# bun
-bun.lock

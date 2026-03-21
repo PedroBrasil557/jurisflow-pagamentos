@@ -18,8 +18,12 @@ const processChecklistClientRoute = processClientRoute.checklist
 const processChecklistItemClientRoute =
   processChecklistClientRoute[':processDocumentId']
 const processChecklistSubmitClientRoute = processChecklistItemClientRoute.submit
+const processChecklistFileClientRoute =
+  processChecklistItemClientRoute.files[':fileId']
 const processChecklistFileDownloadClientRoute =
-  processChecklistItemClientRoute.files[':fileId'].download
+  processChecklistFileClientRoute.download
+const processBatchClientRoute = processClientRoute.batch
+const processBatchFileClientRoute = processBatchClientRoute[':fileId']
 const processHistoryClientRoute = processClientRoute.history
 const processCancelClientRoute = processClientRoute.cancel
 const processStartClientRoute = processClientRoute.start
@@ -31,6 +35,30 @@ type ListProcessesResponse = InferResponseType<
   200
 >
 type GetProcessResponse = InferResponseType<typeof processClientRoute.$get, 200>
+type GetProcessBatchFilesResponse = InferResponseType<
+  typeof processBatchClientRoute.$get,
+  200
+>
+type UploadBatchFilesResponse = InferResponseType<
+  typeof processBatchClientRoute.upload.$post,
+  201
+>
+type DeleteBatchFileResponse = InferResponseType<
+  typeof processBatchFileClientRoute.$delete,
+  200
+>
+type GetBatchFileDownloadResponse = InferResponseType<
+  typeof processBatchFileClientRoute.download.$get,
+  200
+>
+type DownloadAllBatchFilesResponse = InferResponseType<
+  (typeof processBatchClientRoute)['download-all']['$get'],
+  200
+>
+type DownloadAllChecklistFilesResponse = InferResponseType<
+  (typeof processChecklistClientRoute)['download-all']['$get'],
+  200
+>
 type GetProcessChecklistResponse = InferResponseType<
   typeof processChecklistClientRoute.$get,
   200
@@ -70,6 +98,10 @@ type SubmitProcessChecklistResponse = InferResponseType<
   typeof processChecklistSubmitClientRoute.$post,
   200
 >
+type DeleteChecklistFileResponse = InferResponseType<
+  typeof processChecklistFileClientRoute.$delete,
+  200
+>
 type GetProcessChecklistFileDownloadResponse = InferResponseType<
   typeof processChecklistFileDownloadClientRoute.$get,
   200
@@ -92,6 +124,8 @@ type UpdateProcessRequest = InferRequestType<
 type ProcessRecord = GetProcessResponse['process']
 type ProcessUserOptionRecord = UserOptionsResponse['items'][number]
 
+export type ProcessBatchFilesData = GetProcessBatchFilesResponse
+export type ProcessBatchFile = GetProcessBatchFilesResponse['files'][number]
 export type ProcessesPageData = ListProcessesResponse
 export type ProcessListItem = ListProcessesResponse['items'][number]
 export type ProcessChecklistData = GetProcessChecklistResponse
@@ -120,6 +154,8 @@ export type ProcessListQuery = {
 export const defaultProcessPageLimit = 10
 
 const processStatusLabels = {
+  CADASTRADO: 'Cadastrado',
+  EM_LOTE: 'Em lote',
   EM_DOCUMENTACAO: 'Em documentacao',
   DOCUMENTACAO_PRONTA: 'Documentacao pronta',
   EM_PROCESSO: 'Em processo',
@@ -161,10 +197,6 @@ function mapProcessToFormValues(
     cadunico: currentProcess.cadunico as ProcessFormValues['cadunico'],
     propertyPaidOff:
       currentProcess.propertyPaidOff as ProcessFormValues['propertyPaidOff'],
-    deliveredMoreThanTenYears:
-      currentProcess.deliveredMoreThanTenYears as ProcessFormValues['deliveredMoreThanTenYears'],
-    purchaseAgreementLessThanTenYears:
-      currentProcess.purchaseAgreementLessThanTenYears as ProcessFormValues['purchaseAgreementLessThanTenYears'],
     state: currentProcess.state,
     city: currentProcess.city,
     district: currentProcess.district,
@@ -175,6 +207,30 @@ function mapProcessToFormValues(
     zipcode: currentProcess.zipcode,
     email: currentProcess.email,
     whatsapp: currentProcess.whatsapp,
+    spouseContractSigned: (currentProcess.spouseContractSigned ??
+      '') as ProcessFormValues['spouseContractSigned'],
+    spouseFullName: currentProcess.spouseFullName ?? '',
+    spouseBirthDate: currentProcess.spouseBirthDate ?? '',
+    spouseNationality: currentProcess.spouseNationality || 'BRASILEIRA',
+    spouseMaritalStatus: (currentProcess.spouseMaritalStatus ??
+      '') as ProcessFormValues['spouseMaritalStatus'],
+    spouseProfession: currentProcess.spouseProfession ?? '',
+    spouseCpf: currentProcess.spouseCpf
+      ? formatCpf(currentProcess.spouseCpf)
+      : '',
+    spouseRg: currentProcess.spouseRg ?? '',
+    spouseCadunico: (currentProcess.spouseCadunico ??
+      '') as ProcessFormValues['spouseCadunico'],
+    spouseSameAddress: (currentProcess.spouseSameAddress ??
+      '') as ProcessFormValues['spouseSameAddress'],
+    spouseState: currentProcess.spouseState ?? '',
+    spouseCity: currentProcess.spouseCity ?? '',
+    spouseDistrict: currentProcess.spouseDistrict ?? '',
+    spouseHousingComplex: currentProcess.spouseHousingComplex ?? '',
+    spouseStreet: currentProcess.spouseStreet ?? '',
+    spouseNumber: currentProcess.spouseNumber ?? '',
+    spouseComplement: currentProcess.spouseComplement ?? '',
+    spouseZipcode: currentProcess.spouseZipcode ?? '',
     witness1Id: currentProcess.witness1Id,
     witness2Id: currentProcess.witness2Id,
     observation: currentProcess.observation,
@@ -206,8 +262,6 @@ function toProcessPayload(
     rg: values.rg,
     cadunico: values.cadunico,
     propertyPaidOff: values.propertyPaidOff,
-    deliveredMoreThanTenYears: values.deliveredMoreThanTenYears,
-    purchaseAgreementLessThanTenYears: values.purchaseAgreementLessThanTenYears,
     state: values.state,
     city: values.city,
     district: values.district,
@@ -218,6 +272,25 @@ function toProcessPayload(
     zipcode: values.zipcode,
     email: values.email,
     whatsapp: values.whatsapp,
+    spouseContractSigned: values.spouseContractSigned,
+    spouseFullName: values.spouseFullName,
+    spouseBirthDate: values.spouseBirthDate,
+    spouseNationality: values.spouseNationality,
+    spouseMaritalStatus:
+      values.spouseMaritalStatus as CreateProcessRequest['spouseMaritalStatus'],
+    spouseProfession: values.spouseProfession,
+    spouseCpf: values.spouseCpf,
+    spouseRg: values.spouseRg,
+    spouseCadunico: values.spouseCadunico,
+    spouseSameAddress: values.spouseSameAddress,
+    spouseState: values.spouseState,
+    spouseCity: values.spouseCity,
+    spouseDistrict: values.spouseDistrict,
+    spouseHousingComplex: values.spouseHousingComplex,
+    spouseStreet: values.spouseStreet,
+    spouseNumber: values.spouseNumber,
+    spouseComplement: values.spouseComplement,
+    spouseZipcode: values.spouseZipcode,
     witness1Id: values.witness1Id,
     witness2Id: values.witness2Id,
     observation: values.observation,
@@ -468,6 +541,28 @@ export async function getProcessChecklistFileDownloadRequest(input: {
   return (await response.json()) as GetProcessChecklistFileDownloadResponse
 }
 
+export async function deleteChecklistFileRequest(input: {
+  fileId: string
+  processDocumentId: string
+  processId: string
+}) {
+  const response = await processChecklistFileClientRoute.$delete({
+    param: {
+      processId: input.processId,
+      processDocumentId: input.processDocumentId,
+      fileId: input.fileId,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel remover o arquivo.'),
+    )
+  }
+
+  return (await response.json()) as DeleteChecklistFileResponse
+}
+
 export async function markProcessDocumentationReadyRequest(processId: string) {
   const response = await processMarkDocumentationReadyClientRoute.$post({
     param: {
@@ -581,4 +676,135 @@ export async function finalizeProcessRequest(processId: string) {
   }
 
   return (await response.json()) as FinalizeProcessResponse
+}
+
+export async function fetchBatchFiles(
+  processId: string,
+): Promise<GetProcessBatchFilesResponse> {
+  const response = await processBatchClientRoute.$get({
+    param: { processId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar os arquivos em lote.',
+      ),
+    )
+  }
+
+  return (await response.json()) as GetProcessBatchFilesResponse
+}
+
+export async function uploadBatchFilesRequest(input: {
+  processId: string
+  files: File[]
+}) {
+  const formData = new FormData()
+
+  for (const file of input.files) {
+    formData.append('files', file)
+  }
+
+  const url = processBatchClientRoute.upload.$url({
+    param: { processId: input.processId },
+  })
+
+  const response = await fetch(url, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel enviar os arquivos em lote.',
+      ),
+    )
+  }
+
+  return (await response.json()) as UploadBatchFilesResponse
+}
+
+export async function deleteBatchFileRequest(input: {
+  processId: string
+  fileId: string
+}) {
+  const response = await processBatchFileClientRoute.$delete({
+    param: {
+      processId: input.processId,
+      fileId: input.fileId,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel remover o arquivo em lote.',
+      ),
+    )
+  }
+
+  return (await response.json()) as DeleteBatchFileResponse
+}
+
+export async function getBatchFileDownloadRequest(input: {
+  processId: string
+  fileId: string
+}) {
+  const response = await processBatchFileClientRoute.download.$get({
+    param: {
+      processId: input.processId,
+      fileId: input.fileId,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel preparar o download do arquivo.',
+      ),
+    )
+  }
+
+  return (await response.json()) as GetBatchFileDownloadResponse
+}
+
+export async function downloadAllBatchFilesRequest(processId: string) {
+  const response = await processBatchClientRoute['download-all'].$get({
+    param: { processId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel preparar o download dos arquivos em lote.',
+      ),
+    )
+  }
+
+  return (await response.json()) as DownloadAllBatchFilesResponse
+}
+
+export async function downloadAllChecklistFilesRequest(processId: string) {
+  const response = await processChecklistClientRoute['download-all'].$get({
+    param: { processId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel preparar o download dos documentos.',
+      ),
+    )
+  }
+
+  return (await response.json()) as DownloadAllChecklistFilesResponse
 }

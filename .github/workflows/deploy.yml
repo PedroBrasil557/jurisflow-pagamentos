@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Bun
-        uses: oven/setup-bun@v2
+        uses: oven-sh/setup-bun@v2
 
       - name: Install API dependencies
         working-directory: ${{ github.workspace }}/api
@@ -66,7 +66,7 @@ jobs:
           cache-dependency-path: infra/yarn.lock
 
       - name: Setup Bun
-        uses: oven/setup-bun@v2
+        uses: oven-sh/setup-bun@v2
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -80,7 +80,7 @@ jobs:
         working-directory: ${{ github.workspace }}/web
         run: bun install --frozen-lockfile && bun run build
         env:
-          VITE_API_URL: ${{ secrets.VITE_API_URL_DEV }}
+          VITE_API_URL: https://bq81uw2pw0.execute-api.us-east-1.amazonaws.com
 
       - name: Build Web (prod)
         if: github.ref == 'refs/heads/main'
@@ -95,9 +95,8 @@ jobs:
         run: yarn install --frozen-lockfile && yarn cdk deploy --all --require-approval never
         env:
           ENVIRONMENT: dev
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET_DEV }}
+          DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}
 
       - name: Deploy to Production
         if: github.ref == 'refs/heads/main'
@@ -105,6 +104,5 @@ jobs:
         run: yarn install --frozen-lockfile && yarn cdk deploy --all --require-approval never
         env:
           ENVIRONMENT: prod
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-          DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET_PROD }}
+          DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}

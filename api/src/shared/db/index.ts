@@ -11,6 +11,7 @@ const pool =
   globalForDatabase.__apiPool ??
   new Pool({
     connectionString: env.databaseUrl,
+    ssl: process.env.ENVIRONMENT ? { rejectUnauthorized: false } : false,
   })
 
 if (process.env.NODE_ENV !== 'production') {

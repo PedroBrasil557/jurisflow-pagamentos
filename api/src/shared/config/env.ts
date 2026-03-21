@@ -42,7 +42,8 @@ const envSchema = z.object({
   HOST: z.string().min(1).default('0.0.0.0'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3556),
   DATABASE_URL: z
-    .url()
+    .string()
+    .min(1)
     .default('postgresql://postgres:postgres@localhost:3557/app'),
   BETTER_AUTH_SECRET: z
     .string()

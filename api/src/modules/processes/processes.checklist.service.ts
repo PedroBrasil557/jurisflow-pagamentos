@@ -8,12 +8,17 @@ import {
   uploadStorageObject,
 } from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
+import { buildChecklistDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
-import { defaultProcessDocumentTypes } from './processes.documents'
+import {
+  conditionalProcessDocumentTypes,
+  defaultProcessDocumentTypes,
+} from './processes.documents'
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
 import {
   process,
+  processBatchFile,
   processDocument,
   processDocumentFile,
   processDocumentType,
@@ -34,6 +39,8 @@ type ChecklistSubmitResult = Awaited<ReturnType<typeof getProcessChecklist>> & {
 const maxProcessDocumentFileSizeInBytes = 25 * 1024 * 1024
 const maxChecklistObservationLength = 300
 const checklistUploadAllowedStatuses = [
+  'CADASTRADO',
+  'EM_LOTE',
   'EM_DOCUMENTACAO',
   'DOCUMENTACAO_PRONTA',
 ] as const satisfies readonly ProcessStatus[]
@@ -131,30 +138,66 @@ async function ensureDefaultProcessDocumentTypes() {
     .from(processDocumentType)
 
   const existingKeys = new Set(existingTypes.map((item) => item.key))
-  const missingTypes = defaultProcessDocumentTypes.filter(
+  const allDocumentTypes = [
+    ...defaultProcessDocumentTypes,
+    ...conditionalProcessDocumentTypes,
+  ]
+  const missingTypes = allDocumentTypes.filter(
     (documentType) => !existingKeys.has(documentType.key),
   )
 
-  if (missingTypes.length === 0) {
-    return
+  if (missingTypes.length > 0) {
+    await db
+      .insert(processDocumentType)
+      .values(
+        missingTypes.map((documentType) => ({
+          id: crypto.randomUUID(),
+          key: documentType.key,
+          label: documentType.label,
+          sortOrder: documentType.sortOrder,
+          isRequired: documentType.isRequired,
+          allowsMultipleFiles: documentType.allowsMultipleFiles,
+          isActive: true,
+        })),
+      )
+      .onConflictDoNothing({
+        target: processDocumentType.key,
+      })
   }
 
-  await db
-    .insert(processDocumentType)
-    .values(
-      missingTypes.map((documentType) => ({
-        id: crypto.randomUUID(),
-        key: documentType.key,
-        label: documentType.label,
-        sortOrder: documentType.sortOrder,
-        isRequired: documentType.isRequired,
-        allowsMultipleFiles: documentType.allowsMultipleFiles,
-        isActive: true,
-      })),
-    )
-    .onConflictDoNothing({
-      target: processDocumentType.key,
-    })
+  // Deactivate document types that were removed from code
+  const activeCodeKeys = new Set<string>(allDocumentTypes.map((d) => d.key))
+  const removedKeys: string[] = existingTypes
+    .map((t) => t.key)
+    .filter((key) => !activeCodeKeys.has(key))
+
+  if (removedKeys.length > 0) {
+    await db
+      .update(processDocumentType)
+      .set({ isActive: false })
+      .where(
+        and(
+          inArray(processDocumentType.key, removedKeys),
+          eq(processDocumentType.isActive, true),
+        ),
+      )
+  }
+}
+
+function getConditionalDocumentKeys(
+  processFields: Record<string, unknown>,
+): Set<string> {
+  const keys = new Set<string>()
+
+  for (const docType of conditionalProcessDocumentTypes) {
+    const fieldValue = processFields[docType.condition.field]
+
+    if (fieldValue === docType.condition.value) {
+      keys.add(docType.key)
+    }
+  }
+
+  return keys
 }
 
 export async function ensureProcessChecklistItems(processId: string) {
@@ -612,6 +655,8 @@ async function attachChecklistFile(input: {
   const objectKey = buildProcessDocumentObjectKey({
     processId: input.checklistItem.processId,
     documentTypeKey: input.checklistItem.documentType.key,
+    documentTypeSortOrder: input.checklistItem.documentType.sortOrder,
+    documentTypeLabel: input.checklistItem.documentType.label,
     fileId,
     fileName: input.file.name,
   })
@@ -709,46 +754,131 @@ async function attachChecklistFile(input: {
   }
 }
 
-async function syncProcessStatusAfterChecklistChange(input: {
+async function countBatchFiles(processId: string) {
+  const [result] = await db
+    .select({ total: sql<number>`count(*)::int` })
+    .from(processBatchFile)
+    .where(eq(processBatchFile.processId, processId))
+
+  return result?.total ?? 0
+}
+
+export async function syncProcessStatusAfterChecklistChange(input: {
   actor: ProcessActor
   checklist: Awaited<ReturnType<typeof getProcessChecklist>>
   processId: string
 }) {
   const currentProcess = await getProcessRecordOrThrow(input.processId)
 
+  // Only auto-sync for early/mid statuses
+  const syncableStatuses: ProcessStatus[] = [
+    'CADASTRADO',
+    'EM_LOTE',
+    'EM_DOCUMENTACAO',
+    'DOCUMENTACAO_PRONTA',
+  ]
+
+  if (!syncableStatuses.includes(currentProcess.status)) {
+    return currentProcess
+  }
+
+  const batchCount = await countBatchFiles(input.processId)
+
+  // Count only from visible (filtered) checklist items
+  const visibleFileCount = input.checklist.items.reduce(
+    (sum, item) => sum + item.currentFiles.length,
+    0,
+  )
+  const hasOkWithoutFile = input.checklist.items.some(
+    (item) => item.status === 'OK_SEM_ARQUIVO',
+  )
+  const hasIndividualDocs = visibleFileCount > 0 || hasOkWithoutFile
+
+  let targetStatus: ProcessStatus
+
+  if (hasIndividualDocs) {
+    targetStatus = 'EM_DOCUMENTACAO'
+  } else if (batchCount > 0) {
+    targetStatus = 'EM_LOTE'
+  } else {
+    targetStatus = 'CADASTRADO'
+  }
+
+  // If DOCUMENTACAO_PRONTA but docs became pending, revert to EM_DOCUMENTACAO
   if (
     currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
     input.checklist.summary.requiredPending > 0
   ) {
-    const [updatedProcess] = await db
-      .update(process)
-      .set({
-        status: 'EM_DOCUMENTACAO',
-        documentationReadyAt: null,
-      })
-      .where(eq(process.id, input.processId))
-      .returning()
-
-    await createProcessHistoryEntry({
-      processId: input.processId,
-      actorUserId: input.actor.id,
-      eventType: 'STATUS_CHANGED',
-      fromStatus: 'DOCUMENTACAO_PRONTA',
-      toStatus: 'EM_DOCUMENTACAO',
-      notes: 'Documentacao voltou a ficar pendente.',
-    })
-
-    return updatedProcess
+    targetStatus = 'EM_DOCUMENTACAO'
   }
 
-  return currentProcess
+  // If DOCUMENTACAO_PRONTA and all docs are still ok, no change needed
+  if (
+    currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
+    input.checklist.summary.requiredPending === 0
+  ) {
+    return currentProcess
+  }
+
+  // If already at the right status, no change
+  if (targetStatus === currentProcess.status) {
+    return currentProcess
+  }
+
+  const extraValues: Record<string, unknown> = {}
+
+  if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+    extraValues.documentationReadyAt = null
+  }
+
+  const [updatedProcess] = await db
+    .update(process)
+    .set({
+      status: targetStatus,
+      ...extraValues,
+    })
+    .where(eq(process.id, input.processId))
+    .returning()
+
+  await createProcessHistoryEntry({
+    processId: input.processId,
+    actorUserId: input.actor.id,
+    eventType: 'STATUS_CHANGED',
+    fromStatus: currentProcess.status,
+    toStatus: targetStatus,
+    notes:
+      targetStatus === 'CADASTRADO'
+        ? 'Todos os documentos foram removidos.'
+        : targetStatus === 'EM_LOTE'
+          ? 'Documentos individuais removidos, restam arquivos em lote.'
+          : targetStatus === 'EM_DOCUMENTACAO'
+            ? 'Documentacao voltou a ficar pendente.'
+            : undefined,
+  })
+
+  return updatedProcess
 }
 
 export async function getProcessChecklist(processId: string) {
-  await ensureProcessExists(processId)
+  const currentProcess = await getProcessRecordOrThrow(processId)
   await ensureProcessChecklistItems(processId)
 
-  const checklistItems = await listChecklistItems(processId)
+  const allConditionalKeys = new Set<string>(
+    conditionalProcessDocumentTypes.map((d) => d.key),
+  )
+  const activeConditionalKeys = getConditionalDocumentKeys(currentProcess)
+
+  const allChecklistItems = await listChecklistItems(processId)
+
+  // Filter out conditional items that don't apply to this process
+  const checklistItems = allChecklistItems.filter((item) => {
+    if (!allConditionalKeys.has(item.documentType.key)) {
+      return true
+    }
+
+    return activeConditionalKeys.has(item.documentType.key)
+  })
+
   const currentFiles = await listCurrentChecklistFiles(
     checklistItems.map((item) => item.id),
   )
@@ -895,7 +1025,12 @@ export async function getProcessChecklistFileDownload(input: {
   processDocumentId: string
   fileId: string
 }) {
-  const fileRecord = await getChecklistFileOrThrow(input)
+  const [currentProcess, checklistItem, fileRecord] = await Promise.all([
+    getProcessRecordOrThrow(input.processId),
+    getChecklistItemOrThrow(input.processId, input.processDocumentId),
+    getChecklistFileOrThrow(input),
+  ])
+
   const expiresInSeconds = 60 * 10
   let downloadUrl: string
 
@@ -912,11 +1047,20 @@ export async function getProcessChecklistFileDownload(input: {
     )
   }
 
+  const downloadFileName = buildChecklistDownloadFileName({
+    documentTypeSortOrder: checklistItem.documentType.sortOrder,
+    documentTypeLabel: checklistItem.documentType.label,
+    processCode: currentProcess.code,
+    processFullName: currentProcess.fullName,
+    originalFileName: fileRecord.originalFileName,
+  })
+
   return {
     file: {
       id: fileRecord.id,
       processDocumentId: fileRecord.processDocumentId,
       originalFileName: fileRecord.originalFileName,
+      downloadFileName,
       mimeType: fileRecord.mimeType,
       sizeInBytes: fileRecord.sizeInBytes,
       revision: fileRecord.revision,
@@ -926,4 +1070,152 @@ export async function getProcessChecklistFileDownload(input: {
     downloadUrl,
     expiresAt: new Date(Date.now() + expiresInSeconds * 1000),
   }
+}
+
+export async function deleteChecklistFile(input: {
+  processId: string
+  processDocumentId: string
+  fileId: string
+  actor: ProcessActor
+}) {
+  const checklistItem = await getChecklistItemOrThrow(
+    input.processId,
+    input.processDocumentId,
+  )
+
+  assertChecklistUploadAllowed(checklistItem.processStatus)
+
+  const [fileRecord] = await db
+    .select()
+    .from(processDocumentFile)
+    .where(
+      and(
+        eq(processDocumentFile.processDocumentId, input.processDocumentId),
+        eq(processDocumentFile.id, input.fileId),
+        eq(processDocumentFile.isCurrent, true),
+      ),
+    )
+    .limit(1)
+
+  if (!fileRecord) {
+    throw new ProcessServiceError(404, 'Arquivo nao encontrado.')
+  }
+
+  try {
+    await deleteStorageObject({
+      bucketName: fileRecord.bucketName,
+      objectKey: fileRecord.objectKey,
+    })
+  } catch {
+    throw new ProcessServiceError(
+      503,
+      'Nao foi possivel remover o arquivo do storage. Tente novamente.',
+    )
+  }
+
+  await db
+    .delete(processDocumentFile)
+    .where(eq(processDocumentFile.id, input.fileId))
+
+  const [remainingFile] = await db
+    .select({ id: processDocumentFile.id })
+    .from(processDocumentFile)
+    .where(
+      and(
+        eq(processDocumentFile.processDocumentId, input.processDocumentId),
+        eq(processDocumentFile.isCurrent, true),
+      ),
+    )
+    .limit(1)
+
+  if (!remainingFile) {
+    await db
+      .update(processDocument)
+      .set({ status: 'PENDENTE' })
+      .where(eq(processDocument.id, input.processDocumentId))
+  }
+
+  await createProcessHistoryEntry({
+    processId: input.processId,
+    actorUserId: input.actor.id,
+    eventType: 'DOCUMENT_DELETED',
+    notes: `Arquivo removido: ${checklistItem.documentType.label} (${fileRecord.originalFileName}).`,
+  })
+
+  const checklist = await getProcessChecklist(input.processId)
+  const currentProcess = await syncProcessStatusAfterChecklistChange({
+    processId: input.processId,
+    actor: input.actor,
+    checklist,
+  })
+
+  return {
+    ...checklist,
+    message: 'Arquivo removido com sucesso.',
+    process: currentProcess,
+  }
+}
+
+export async function downloadAllChecklistFiles(processId: string) {
+  const currentProcess = await getProcessRecordOrThrow(processId)
+
+  const files = await db
+    .select({
+      id: processDocumentFile.id,
+      bucketName: processDocumentFile.bucketName,
+      objectKey: processDocumentFile.objectKey,
+      originalFileName: processDocumentFile.originalFileName,
+      documentTypeLabel: processDocumentType.label,
+      documentTypeSortOrder: processDocumentType.sortOrder,
+    })
+    .from(processDocumentFile)
+    .innerJoin(
+      processDocument,
+      eq(processDocumentFile.processDocumentId, processDocument.id),
+    )
+    .innerJoin(
+      processDocumentType,
+      eq(processDocument.documentTypeId, processDocumentType.id),
+    )
+    .where(
+      and(
+        eq(processDocument.processId, processId),
+        eq(processDocumentFile.isCurrent, true),
+      ),
+    )
+    .orderBy(
+      asc(processDocumentType.sortOrder),
+      asc(processDocumentFile.uploadedAt),
+    )
+
+  if (files.length === 0) {
+    return { files: [] }
+  }
+
+  const expiresInSeconds = 60 * 10
+  const result = await Promise.all(
+    files.map(async (file) => {
+      const downloadUrl = await createStorageObjectDownloadUrl({
+        bucketName: file.bucketName,
+        objectKey: file.objectKey,
+        expiresInSeconds,
+      })
+
+      const downloadFileName = buildChecklistDownloadFileName({
+        documentTypeSortOrder: file.documentTypeSortOrder,
+        documentTypeLabel: file.documentTypeLabel,
+        processCode: currentProcess.code,
+        processFullName: currentProcess.fullName,
+        originalFileName: file.originalFileName,
+      })
+
+      return {
+        id: file.id,
+        originalFileName: downloadFileName,
+        downloadUrl,
+      }
+    }),
+  )
+
+  return { files: result }
 }

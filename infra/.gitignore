@@ -20,5 +20,3 @@ cdk.context.json
 *.swp
 *.swo
 
-# yarn
-yarn.lock

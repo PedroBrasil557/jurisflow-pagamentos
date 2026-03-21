@@ -8,6 +8,8 @@ import { signUpValidationHook } from './auth.hooks'
 import { defaultUserRole } from './auth.roles'
 import * as schema from './auth.schema'
 
+const isProduction = !!process.env.ENVIRONMENT
+
 export const auth = betterAuth({
   secret: env.betterAuthSecret,
   baseURL: env.betterAuthUrl,
@@ -16,6 +18,17 @@ export const auth = betterAuth({
     provider: 'pg',
     schema,
   }),
+  advanced: isProduction
+    ? {
+        crossSubDomainCookies: {
+          enabled: true,
+        },
+        defaultCookieAttributes: {
+          sameSite: 'none',
+          secure: true,
+        },
+      }
+    : undefined,
   emailAndPassword: {
     enabled: true,
     autoSignIn: true,

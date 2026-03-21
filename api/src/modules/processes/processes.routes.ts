@@ -12,6 +12,15 @@ import {
   queryValidator,
 } from '../../shared/validation/validators'
 import {
+  deleteBatchFile,
+  downloadAllBatchFiles,
+  getBatchFileDownload,
+  listBatchFiles,
+  uploadBatchFiles,
+} from './processes.batch.service'
+import {
+  deleteChecklistFile,
+  downloadAllChecklistFiles,
   getProcessChecklist,
   getProcessChecklistFileDownload,
   submitProcessChecklistItem,
@@ -25,6 +34,7 @@ import {
   cancelProcessPayloadSchema,
   createProcessPayloadSchema,
   listProcessesQuerySchema,
+  processBatchFileParamsSchema,
   processChecklistFileParamsSchema,
   processChecklistItemParamsSchema,
   processIdParamsSchema,
@@ -175,6 +185,138 @@ export const processRoutes = new Hono<AppBindings>()
       try {
         const result = await getProcessChecklistFileDownload(
           c.req.valid('param'),
+        )
+
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .delete(
+    '/:processId/checklist/:processDocumentId/files/:fileId',
+    paramsValidator(processChecklistFileParamsSchema),
+    async (c) => {
+      try {
+        const result = await deleteChecklistFile({
+          ...c.req.valid('param'),
+          actor: getAuthenticatedUser(c),
+        })
+
+        return c.json(
+          {
+            checklist: {
+              items: result.items,
+              summary: result.summary,
+            },
+            message: result.message,
+            process: result.process,
+          },
+          200,
+        )
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .post(
+    '/:processId/batch/upload',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      const formData = await c.req.raw.formData()
+      const files: File[] = []
+
+      for (const value of formData.getAll('files')) {
+        if (value instanceof File) {
+          files.push(value)
+        }
+      }
+
+      if (files.length === 0) {
+        return c.json({ message: 'Informe ao menos um arquivo.' }, 400)
+      }
+
+      try {
+        const result = await uploadBatchFiles({
+          processId: c.req.valid('param').processId,
+          files,
+          actor: getAuthenticatedUser(c),
+        })
+
+        return c.json(result, 201)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .get(
+    '/:processId/batch',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const files = await listBatchFiles(c.req.valid('param').processId)
+
+        return c.json({ files }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .delete(
+    '/:processId/batch/:fileId',
+    paramsValidator(processBatchFileParamsSchema),
+    async (c) => {
+      try {
+        const result = await deleteBatchFile({
+          processId: c.req.valid('param').processId,
+          fileId: c.req.valid('param').fileId,
+          actor: getAuthenticatedUser(c),
+        })
+
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .get(
+    '/:processId/batch/:fileId/download',
+    paramsValidator(processBatchFileParamsSchema),
+    async (c) => {
+      try {
+        const result = await getBatchFileDownload({
+          processId: c.req.valid('param').processId,
+          fileId: c.req.valid('param').fileId,
+        })
+
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .get(
+    '/:processId/batch/download-all',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const result = await downloadAllBatchFiles(
+          c.req.valid('param').processId,
+        )
+
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .get(
+    '/:processId/checklist/download-all',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const result = await downloadAllChecklistFiles(
+          c.req.valid('param').processId,
         )
 
         return c.json(result, 200)

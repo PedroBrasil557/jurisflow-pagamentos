@@ -8,7 +8,7 @@ import {
 import { ArrowLeft, Loader2, User } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Controller, type SubmitHandler, useWatch } from 'react-hook-form'
+import { type SubmitHandler, useWatch } from 'react-hook-form'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { getUserRoleLabel } from '@/features/auth/auth.roles'
@@ -16,6 +16,7 @@ import { SearchableSelect } from '@/shared/components/searchable-select'
 import { StatusBadge } from '@/shared/components/status-badge'
 import { useZodForm } from '@/shared/components/ui/form'
 import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
+import { downloadFile } from '@/shared/lib/download'
 import { ProcessDateField } from '../components/process-form/process-date-field'
 import {
   ProcessRadioGroupField,
@@ -24,7 +25,6 @@ import {
   ProcessTextField,
 } from '../components/process-form/process-form-field'
 import { ProcessFormSection } from '../components/process-form/process-form-section'
-import { ProcessPdfModelDialog } from '../components/process-pdf/process-pdf-model-dialog'
 import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save-success-dialog'
 import {
   brazilStateOptions,
@@ -58,7 +58,6 @@ import {
 import {
   generateProcessPdfRequest,
   getProcessPdfModelsRequest,
-  type ProcessPdfModelOption,
 } from '../services/processes.service'
 
 const protectedRouteApi = getRouteApi('/_protected')
@@ -113,22 +112,19 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   )
   const draft = detailQ.data?.draft
 
-  const initialValues = useMemo(
-    () => draft?.values ?? { ...emptyProcessFormValues },
-    [draft],
-  )
+  const initialValues = useMemo(() => {
+    if (draft?.values) {
+      return draft.values
+    }
+
+    return {
+      ...emptyProcessFormValues,
+      witness1Id: mode === 'create' ? user.id : '',
+    }
+  }, [draft, mode, user.id])
   const [successState, setSuccessState] =
     useState<ProcessSaveSuccessState | null>(null)
-  const [isPdfModelDialogOpen, setIsPdfModelDialogOpen] = useState(false)
-  const [isLoadingPdfModels, setIsLoadingPdfModels] = useState(false)
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
-  const [pdfModels, setPdfModels] = useState<readonly ProcessPdfModelOption[]>(
-    [],
-  )
-  const [pdfModelError, setPdfModelError] = useState('')
-  const [selectedPdfModelKey, setSelectedPdfModelKey] = useState<
-    ProcessPdfModelOption['key'] | null
-  >(null)
 
   const createMutation = useCreateProcess()
   const updateMutation = useUpdateProcess(processId ?? '')
@@ -154,27 +150,18 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
 
   const shouldBlock = isDirty && !isSubmitting && !successState
   useBlocker({
-    shouldBlockFn: () => shouldBlock,
+    shouldBlockFn: () => {
+      if (!shouldBlock) {
+        return false
+      }
+
+      return !window.confirm(
+        'Existem alteracoes nao salvas. Deseja sair sem salvar?',
+      )
+    },
     enableBeforeUnload: () => shouldBlock,
     disabled: !shouldBlock,
   })
-
-  useEffect(() => {
-    if (
-      values.deliveredMoreThanTenYears !== 'sim' &&
-      values.purchaseAgreementLessThanTenYears
-    ) {
-      setValue('purchaseAgreementLessThanTenYears', '', {
-        shouldDirty: true,
-        shouldValidate: isSubmitted,
-      })
-    }
-  }, [
-    isSubmitted,
-    setValue,
-    values.deliveredMoreThanTenYears,
-    values.purchaseAgreementLessThanTenYears,
-  ])
 
   function updateValue<FieldName extends keyof ProcessFormValues>(
     fieldName: FieldName,
@@ -195,9 +182,9 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     ) => {
       let nextValue = event.target.value
 
-      if (fieldName === 'cpf') {
+      if (fieldName === 'cpf' || fieldName === 'spouseCpf') {
         nextValue = formatCpf(nextValue)
-      } else if (fieldName === 'zipcode') {
+      } else if (fieldName === 'zipcode' || fieldName === 'spouseZipcode') {
         nextValue = formatZipCode(nextValue)
       } else if (fieldName === 'whatsapp') {
         nextValue = formatWhatsapp(nextValue)
@@ -225,107 +212,42 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     }
   }
 
-  function handleBinaryChoiceChange(
-    fieldName:
-      | 'deliveredMoreThanTenYears'
-      | 'purchaseAgreementLessThanTenYears',
-  ) {
-    return (nextValue: BinaryChoice) => {
-      if (fieldName === 'deliveredMoreThanTenYears') {
-        updateValue(fieldName, nextValue)
-
-        if (nextValue !== 'sim') {
-          updateValue('purchaseAgreementLessThanTenYears', '')
-        }
-
-        return
-      }
-
-      updateValue(fieldName, nextValue)
-    }
-  }
-
   function handleReset() {
     reset(initialValues)
   }
 
   async function handleCompleteSuccessFlow() {
     setSuccessState(null)
-    setIsPdfModelDialogOpen(false)
-    setIsLoadingPdfModels(false)
     setIsGeneratingPdf(false)
-    setPdfModelError('')
-    setPdfModels([])
-    setSelectedPdfModelKey(null)
 
     await navigate({ to: '/processos' })
   }
 
-  async function handleOpenPdfModelDialog() {
-    if (!successState) {
-      return
-    }
-
-    setIsPdfModelDialogOpen(true)
-    setIsLoadingPdfModels(true)
-    setPdfModelError('')
-    setSelectedPdfModelKey(null)
-
-    try {
-      const result = await getProcessPdfModelsRequest(successState.processId)
-
-      setPdfModels(result.items)
-    } catch (error) {
-      setPdfModels([])
-      setPdfModelError(
-        error instanceof Error
-          ? error.message
-          : 'Nao foi possivel carregar os modelos de PDF.',
-      )
-    } finally {
-      setIsLoadingPdfModels(false)
-    }
-  }
-
-  function handleClosePdfModelDialog() {
-    setIsPdfModelDialogOpen(false)
-    setIsLoadingPdfModels(false)
-    setIsGeneratingPdf(false)
-    setPdfModelError('')
-    setSelectedPdfModelKey(null)
-  }
-
-  function openGeneratedPdf(downloadUrl: string) {
-    const link = document.createElement('a')
-
-    link.href = downloadUrl
-    link.rel = 'noopener noreferrer'
-    link.target = '_blank'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  }
-
-  async function handleGeneratePdf(modelKey: ProcessPdfModelOption['key']) {
+  async function handleGeneratePdf() {
     if (!successState) {
       return
     }
 
     setIsGeneratingPdf(true)
-    setSelectedPdfModelKey(modelKey)
-    setPdfModelError('')
 
     try {
+      const models = await getProcessPdfModelsRequest(successState.processId)
+      const firstModel = models.items[0]
+
+      if (!firstModel) {
+        toast.error('Nenhum modelo de PDF disponivel.')
+        return
+      }
+
       const result = await generateProcessPdfRequest({
         processId: successState.processId,
-        modelKey,
+        modelKey: firstModel.key,
       })
 
-      openGeneratedPdf(result.document.downloadUrl)
-      toast.success(result.message)
-      handleClosePdfModelDialog()
+      await downloadFile(result.document.downloadUrl, result.document.fileName)
+      toast.success('PDF gerado com sucesso.')
     } catch (error) {
-      setPdfModelError(
+      toast.error(
         error instanceof Error
           ? error.message
           : 'Nao foi possivel gerar o PDF.',
@@ -456,10 +378,10 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
         </div>
 
         <div className="mt-3">
-          <Link className="no-underline" to="/processos">
+          <Link className="no-underline" preload={false} to="/processos">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="size-4" />
-              Voltar para processos
+              Voltar
             </Button>
           </Link>
         </div>
@@ -470,6 +392,18 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
         noValidate
         onSubmit={handleSubmit(handleProcessSubmit)}
       >
+        <ProcessFormSection title="Tipo de proprietario">
+          <ProcessSelectField
+            {...register('ownerType')}
+            error={errors.ownerType?.message}
+            label="Proprietario (tipo)"
+            onChange={handleSelectChange('ownerType')}
+            options={ownerTypeOptions}
+            required
+            value={values.ownerType}
+          />
+        </ProcessFormSection>
+
         <ProcessFormSection title="Dados pessoais">
           <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
             <div className="md:col-span-2">
@@ -519,22 +453,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
               placeholder="Digite a profissao"
               value={values.profession}
             />
-          </div>
-        </ProcessFormSection>
-
-        <ProcessFormSection title="Documentacao">
-          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            <div className="md:col-span-2 lg:col-span-3">
-              <ProcessSelectField
-                {...register('ownerType')}
-                error={errors.ownerType?.message}
-                label="Proprietario (tipo)"
-                onChange={handleSelectChange('ownerType')}
-                options={ownerTypeOptions}
-                required
-                value={values.ownerType}
-              />
-            </div>
 
             <ProcessTextField
               {...register('cpf')}
@@ -565,75 +483,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
               options={yesNoOptions}
               value={values.cadunico}
             />
-
-            <div className="md:col-span-2 lg:col-span-3">
-              <div className="grid gap-5 rounded-[26px] border border-border/50 bg-muted/30 p-4">
-                <div className="max-w-3xl">
-                  <ProcessSelectField
-                    {...register('propertyPaidOff')}
-                    error={errors.propertyPaidOff?.message}
-                    label="O imovel e quitado?"
-                    onChange={handleSelectChange('propertyPaidOff')}
-                    options={yesNoUnknownOptions}
-                    value={values.propertyPaidOff}
-                  />
-
-                  {values.propertyPaidOff === 'sim' ? (
-                    <div className="mt-3 rounded-[20px] border border-amber-500/25 bg-amber-500/12 px-4 py-3">
-                      <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
-                        Falta documento de quitacao
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div
-                  className={`grid gap-5 border-t border-border/50 pt-5 ${values.deliveredMoreThanTenYears === 'sim' ? 'lg:grid-cols-2' : ''}`}
-                >
-                  <Controller
-                    control={control}
-                    name="deliveredMoreThanTenYears"
-                    render={() => (
-                      <ProcessRadioGroupField
-                        error={errors.deliveredMoreThanTenYears?.message}
-                        label="O imovel foi entregue ha mais de 10 anos?"
-                        onChange={handleBinaryChoiceChange(
-                          'deliveredMoreThanTenYears',
-                        )}
-                        options={[
-                          { label: 'Sim', value: 'sim' },
-                          { label: 'Nao', value: 'nao' },
-                        ]}
-                        value={values.deliveredMoreThanTenYears}
-                      />
-                    )}
-                  />
-
-                  {values.deliveredMoreThanTenYears === 'sim' ? (
-                    <Controller
-                      control={control}
-                      name="purchaseAgreementLessThanTenYears"
-                      render={() => (
-                        <ProcessRadioGroupField
-                          error={
-                            errors.purchaseAgreementLessThanTenYears?.message
-                          }
-                          label="O contrato de compra e venda foi celebrado ha menos de 10 anos?"
-                          onChange={handleBinaryChoiceChange(
-                            'purchaseAgreementLessThanTenYears',
-                          )}
-                          options={[
-                            { label: 'Sim', value: 'sim' },
-                            { label: 'Nao', value: 'nao' },
-                          ]}
-                          value={values.purchaseAgreementLessThanTenYears}
-                        />
-                      )}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </div>
           </div>
         </ProcessFormSection>
 
@@ -733,6 +582,248 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
             </div>
           </div>
         </ProcessFormSection>
+
+        <ProcessFormSection title="Documentacao">
+          <div className="grid gap-5">
+            <div className="max-w-xl">
+              <ProcessSelectField
+                {...register('propertyPaidOff')}
+                error={errors.propertyPaidOff?.message}
+                label="O imovel e quitado?"
+                onChange={handleSelectChange('propertyPaidOff')}
+                options={yesNoUnknownOptions}
+                value={values.propertyPaidOff}
+              />
+
+              {values.propertyPaidOff === 'sim' ? (
+                <div className="mt-3 rounded-[20px] border border-amber-500/25 bg-amber-500/12 px-4 py-3">
+                  <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                    Falta documento de quitacao
+                  </span>
+                </div>
+              ) : null}
+            </div>
+
+            {values.ownerType !== '' ? (
+              <ProcessRadioGroupField
+                error={errors.spouseContractSigned?.message}
+                label={
+                  values.ownerType === 'titular_contrato_caixa'
+                    ? 'Contrato com a caixa assinado junto com o conjuge?'
+                    : 'Contrato de compra e venda assinado junto com o conjuge?'
+                }
+                onChange={(v) => updateValue('spouseContractSigned', v)}
+                options={[
+                  { label: 'Sim', value: 'sim' },
+                  { label: 'Nao', value: 'nao' },
+                ]}
+                value={values.spouseContractSigned}
+              />
+            ) : null}
+          </div>
+        </ProcessFormSection>
+
+        {values.spouseContractSigned === 'sim' ? (
+          <>
+            <ProcessFormSection title="Dados do conjuge">
+              <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                <div className="md:col-span-2">
+                  <ProcessTextField
+                    {...register('spouseFullName')}
+                    error={errors.spouseFullName?.message}
+                    label="Nome completo do conjuge"
+                    onChange={handleTextChange('spouseFullName')}
+                    placeholder="Digite o nome completo"
+                    value={values.spouseFullName}
+                  />
+                </div>
+
+                <ProcessDateField
+                  error={errors.spouseBirthDate?.message}
+                  label="Data de nascimento"
+                  onChange={(v) => updateValue('spouseBirthDate', v)}
+                  value={values.spouseBirthDate}
+                />
+
+                <ProcessTextField
+                  {...register('spouseNationality')}
+                  error={errors.spouseNationality?.message}
+                  label="Nacionalidade"
+                  onChange={handleTextChange('spouseNationality')}
+                  readOnly
+                  value={values.spouseNationality}
+                />
+
+                <ProcessSelectField
+                  {...register('spouseMaritalStatus')}
+                  error={errors.spouseMaritalStatus?.message}
+                  label="Estado civil"
+                  onChange={handleSelectChange('spouseMaritalStatus')}
+                  options={maritalStatusOptions}
+                  value={values.spouseMaritalStatus}
+                />
+
+                <ProcessTextField
+                  {...register('spouseProfession')}
+                  error={errors.spouseProfession?.message}
+                  label="Profissao"
+                  onChange={handleTextChange('spouseProfession')}
+                  placeholder="Digite a profissao"
+                  value={values.spouseProfession}
+                />
+
+                <ProcessTextField
+                  {...register('spouseCpf')}
+                  error={errors.spouseCpf?.message}
+                  label="CPF"
+                  maxLength={14}
+                  onChange={handleTextChange('spouseCpf')}
+                  placeholder="000.000.000-00"
+                  value={values.spouseCpf}
+                />
+
+                <ProcessTextField
+                  {...register('spouseRg')}
+                  error={errors.spouseRg?.message}
+                  label="RG"
+                  onChange={handleTextChange('spouseRg')}
+                  placeholder="00.000.000-0"
+                  value={values.spouseRg}
+                />
+
+                <ProcessSelectField
+                  {...register('spouseCadunico')}
+                  error={errors.spouseCadunico?.message}
+                  label="CadUnico"
+                  onChange={handleSelectChange('spouseCadunico')}
+                  options={yesNoOptions}
+                  value={values.spouseCadunico}
+                />
+              </div>
+            </ProcessFormSection>
+
+            <ProcessFormSection title="Endereco do conjuge">
+              <div className="grid gap-5">
+                <ProcessRadioGroupField
+                  error={errors.spouseSameAddress?.message}
+                  label="Mesmo endereco do titular?"
+                  onChange={(nextValue: BinaryChoice) => {
+                    updateValue('spouseSameAddress', nextValue)
+
+                    if (nextValue === 'sim') {
+                      updateValue('spouseState', values.state)
+                      updateValue('spouseCity', values.city)
+                      updateValue('spouseDistrict', values.district)
+                      updateValue('spouseHousingComplex', values.housingComplex)
+                      updateValue('spouseStreet', values.street)
+                      updateValue('spouseNumber', values.number)
+                      updateValue('spouseComplement', values.complement)
+                      updateValue('spouseZipcode', values.zipcode)
+                    }
+                  }}
+                  options={[
+                    { label: 'Sim', value: 'sim' },
+                    { label: 'Nao', value: 'nao' },
+                  ]}
+                  value={values.spouseSameAddress}
+                />
+
+                <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+                  <ProcessSelectField
+                    {...register('spouseState')}
+                    error={errors.spouseState?.message}
+                    label="UF"
+                    onChange={handleSelectChange('spouseState')}
+                    options={brazilStateOptions}
+                    disabled={values.spouseSameAddress === 'sim'}
+                    value={values.spouseState}
+                  />
+
+                  <div className="lg:col-span-2">
+                    <ProcessTextField
+                      {...register('spouseCity')}
+                      error={errors.spouseCity?.message}
+                      label="Cidade"
+                      onChange={handleTextChange('spouseCity')}
+                      placeholder="Digite a cidade"
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseCity}
+                    />
+                  </div>
+
+                  <ProcessTextField
+                    {...register('spouseDistrict')}
+                    error={errors.spouseDistrict?.message}
+                    label="Bairro"
+                    onChange={handleTextChange('spouseDistrict')}
+                    placeholder="Digite o bairro"
+                    disabled={values.spouseSameAddress === 'sim'}
+                    value={values.spouseDistrict}
+                  />
+
+                  <div className="lg:col-span-2">
+                    <ProcessTextField
+                      {...register('spouseHousingComplex')}
+                      error={errors.spouseHousingComplex?.message}
+                      label="Conjunto / Residencial"
+                      onChange={handleTextChange('spouseHousingComplex')}
+                      placeholder="Digite o conjunto"
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseHousingComplex}
+                    />
+                  </div>
+
+                  <div className="lg:col-span-2">
+                    <ProcessTextField
+                      {...register('spouseStreet')}
+                      error={errors.spouseStreet?.message}
+                      label="Rua / Logradouro"
+                      onChange={handleTextChange('spouseStreet')}
+                      placeholder="Digite o logradouro"
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseStreet}
+                    />
+                  </div>
+
+                  <ProcessTextField
+                    {...register('spouseNumber')}
+                    error={errors.spouseNumber?.message}
+                    label="Numero"
+                    onChange={handleTextChange('spouseNumber')}
+                    placeholder="Digite o numero"
+                    disabled={values.spouseSameAddress === 'sim'}
+                    value={values.spouseNumber}
+                  />
+
+                  <div className="lg:col-span-2">
+                    <ProcessTextField
+                      {...register('spouseComplement')}
+                      error={errors.spouseComplement?.message}
+                      label="Complemento"
+                      onChange={handleTextChange('spouseComplement')}
+                      placeholder="Apartamento, bloco ou referencia"
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseComplement}
+                    />
+                  </div>
+
+                  <div className="lg:col-span-2">
+                    <ProcessTextField
+                      {...register('spouseZipcode')}
+                      error={errors.spouseZipcode?.message}
+                      label="CEP"
+                      maxLength={9}
+                      onChange={handleTextChange('spouseZipcode')}
+                      placeholder="00000-000"
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseZipcode}
+                    />
+                  </div>
+                </div>
+              </div>
+            </ProcessFormSection>
+          </>
+        ) : null}
 
         <ProcessFormSection title="Contato">
           <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
@@ -839,26 +930,14 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
         </div>
       </form>
 
-      {successState && !isPdfModelDialogOpen ? (
+      {successState ? (
         <ProcessSaveSuccessDialog
-          isBusy={isLoadingPdfModels || isGeneratingPdf}
+          isBusy={isGeneratingPdf}
           mode={mode}
           onClose={handleCompleteSuccessFlow}
           onComplete={handleCompleteSuccessFlow}
-          onGeneratePdf={handleOpenPdfModelDialog}
+          onGeneratePdf={() => void handleGeneratePdf()}
           processName={successState.processName}
-        />
-      ) : null}
-
-      {successState && isPdfModelDialogOpen ? (
-        <ProcessPdfModelDialog
-          errorMessage={pdfModelError}
-          isGenerating={isGeneratingPdf}
-          isLoading={isLoadingPdfModels}
-          models={pdfModels}
-          onCancel={handleClosePdfModelDialog}
-          onSelect={handleGeneratePdf}
-          selectedModelKey={selectedPdfModelKey}
         />
       ) : null}
     </div>

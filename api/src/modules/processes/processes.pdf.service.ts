@@ -13,12 +13,15 @@ import { user } from '../auth/auth.schema'
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
 import {
+  cancellationPdfModel,
   getProcessPdfModelByKey,
   type ProcessPdfModelKey,
   processPdfModels,
 } from './processes.pdf.models'
 import {
   type ProcessPdfRenderData,
+  renderCancellationPdf,
+  renderKitAdjudicacaoConjugePdf,
   renderKitAdjudicacaoPdf,
 } from './processes.pdf.renderer'
 import { processGeneratedDocument } from './processes.schema'
@@ -179,11 +182,62 @@ function buildProcessPdfRenderData(input: {
     zipcode: toUppercaseDocumentValue(input.processRecord.zipcode),
   }
 
+  const hasSpouse = input.processRecord.spouseContractSigned === 'sim'
+
+  const spouseData = hasSpouse
+    ? {
+        fullName: toUppercaseDocumentValue(input.processRecord.spouseFullName),
+        maritalStatus:
+          processMaritalStatusLabels[
+            input.processRecord
+              .spouseMaritalStatus as keyof typeof processMaritalStatusLabels
+          ] ??
+          toUppercaseDocumentValue(input.processRecord.spouseMaritalStatus),
+        nationality: toUppercaseDocumentValue(
+          input.processRecord.spouseNationality,
+        ),
+        profession: toUppercaseDocumentValue(
+          input.processRecord.spouseProfession,
+        ),
+        cpf: formatCpf(input.processRecord.spouseCpf ?? ''),
+        rg: toUppercaseDocumentValue(input.processRecord.spouseRg),
+        address:
+          input.processRecord.spouseSameAddress === 'sim'
+            ? partyData.address
+            : toUppercaseDocumentValue(
+                buildProcessAddress({
+                  street: input.processRecord.spouseStreet ?? '',
+                  number: input.processRecord.spouseNumber ?? '',
+                  complement: input.processRecord.spouseComplement ?? '',
+                  district: input.processRecord.spouseDistrict ?? '',
+                  housingComplex:
+                    input.processRecord.spouseHousingComplex ?? '',
+                }),
+              ),
+        cityState:
+          input.processRecord.spouseSameAddress === 'sim'
+            ? locationLabel
+            : `${input.processRecord.spouseCity ?? ''}/${input.processRecord.spouseState ?? ''}`.toLocaleUpperCase(
+                'pt-BR',
+              ),
+        zipcode: toUppercaseDocumentValue(
+          input.processRecord.spouseSameAddress === 'sim'
+            ? input.processRecord.zipcode
+            : input.processRecord.spouseZipcode,
+        ),
+      }
+    : undefined
+
+  const resolvedRendererKey = hasSpouse
+    ? 'KIT_ADJUDICACAO_CONJUGE_BASE'
+    : model.rendererKey
+
   const renderData: ProcessPdfRenderData = {
     attorney: model.attorneyProfile,
     generatedAtLabel: formatDate(input.generatedAt),
     locationLabel,
     party: partyData,
+    spouse: spouseData,
     witnesses: [
       {
         name: input.witnesses[0].name.toUpperCase(),
@@ -199,6 +253,7 @@ function buildProcessPdfRenderData(input: {
   return {
     model,
     renderData,
+    resolvedRendererKey,
     dataSnapshot: {
       generatedAt: input.generatedAt.toISOString(),
       locationLabel,
@@ -207,6 +262,7 @@ function buildProcessPdfRenderData(input: {
         label: model.label,
       },
       party: renderData.party,
+      spouse: renderData.spouse,
       process: {
         code: input.processRecord.code,
         id: input.processId,
@@ -219,22 +275,32 @@ function buildProcessPdfRenderData(input: {
 
 function renderPdfForModel(input: {
   data: ProcessPdfRenderData
-  modelKey: ProcessPdfModelKey
+  rendererKey: string
 }) {
-  const model = getProcessPdfModelByKey(input.modelKey)
-
-  if (!model) {
-    throw new ProcessServiceError(404, 'Modelo de PDF nao encontrado.')
-  }
-
-  switch (model.rendererKey) {
+  switch (input.rendererKey) {
     case 'KIT_ADJUDICACAO_BASE':
       return renderKitAdjudicacaoPdf(input.data)
+    case 'KIT_ADJUDICACAO_CONJUGE_BASE':
+      return renderKitAdjudicacaoConjugePdf(input.data)
+    default:
+      throw new ProcessServiceError(404, 'Modelo de PDF nao encontrado.')
   }
 }
 
 export async function listProcessPdfModels(processId: string) {
-  await getProcessOrThrow(processId)
+  const currentProcess = await getProcessOrThrow(processId)
+
+  if (currentProcess.status === 'CANCELADO') {
+    return {
+      items: [
+        {
+          key: cancellationPdfModel.key,
+          label: cancellationPdfModel.label,
+          description: cancellationPdfModel.description,
+        },
+      ],
+    }
+  }
 
   return {
     items: processPdfModels.map((model) => ({
@@ -247,21 +313,37 @@ export async function listProcessPdfModels(processId: string) {
 
 export async function generateProcessPdf(input: {
   actor: ProcessActor
-  modelKey: ProcessPdfModelKey
+  modelKey: string
   processId: string
 }) {
   const generatedAt = new Date()
-  const { currentProcess, witnesses } = await getProcessPdfData(input.processId)
-  const { model, renderData, dataSnapshot } = buildProcessPdfRenderData({
-    generatedAt,
-    modelKey: input.modelKey,
-    processId: input.processId,
-    processRecord: currentProcess,
-    witnesses,
-  })
+  const currentProcess = await getProcessOrThrow(input.processId)
+
+  // Handle cancellation PDF (static template)
+  if (
+    input.modelKey === cancellationPdfModel.key &&
+    currentProcess.status === 'CANCELADO'
+  ) {
+    return generateCancellationPdf({
+      actor: input.actor,
+      processId: input.processId,
+      processCode: currentProcess.code,
+      generatedAt,
+    })
+  }
+
+  const { witnesses } = await getProcessPdfData(input.processId)
+  const { model, renderData, resolvedRendererKey, dataSnapshot } =
+    buildProcessPdfRenderData({
+      generatedAt,
+      modelKey: input.modelKey as ProcessPdfModelKey,
+      processId: input.processId,
+      processRecord: currentProcess,
+      witnesses,
+    })
   const { bytes, pageCount } = await renderPdfForModel({
     data: renderData,
-    modelKey: model.key,
+    rendererKey: resolvedRendererKey,
   })
   const generatedDocumentId = crypto.randomUUID()
   const bucketName = storageBuckets.processDocuments
@@ -335,5 +417,98 @@ export async function generateProcessPdf(input: {
       downloadUrl,
     },
     message: 'PDF gerado com sucesso.',
+  }
+}
+
+async function generateCancellationPdf(input: {
+  actor: ProcessActor
+  processId: string
+  processCode: string
+  generatedAt: Date
+}) {
+  const { bytes, pageCount } = await renderCancellationPdf()
+  const generatedDocumentId = crypto.randomUUID()
+  const bucketName = storageBuckets.processDocuments
+  const fileName = buildPdfFileName({
+    processCode: input.processCode,
+    modelKey: cancellationPdfModel.key,
+  })
+  const objectKey = buildProcessGeneratedDocumentObjectKey({
+    documentId: generatedDocumentId,
+    fileName,
+    modelKey: cancellationPdfModel.key,
+    processId: input.processId,
+  })
+
+  await uploadStorageObject({
+    body: bytes,
+    bucketName,
+    contentType: 'application/pdf',
+    objectKey,
+  })
+
+  try {
+    await db.transaction(async (tx) => {
+      await tx.insert(processGeneratedDocument).values({
+        id: generatedDocumentId,
+        processId: input.processId,
+        modelKey: cancellationPdfModel.key,
+        modelLabel: cancellationPdfModel.label,
+        bucketName,
+        objectKey,
+        fileName,
+        mimeType: 'application/pdf',
+        sizeInBytes: bytes.byteLength,
+        pageCount,
+        dataSnapshot: {
+          generatedAt: input.generatedAt.toISOString(),
+          model: {
+            key: cancellationPdfModel.key,
+            label: cancellationPdfModel.label,
+          },
+          process: {
+            code: input.processCode,
+            id: input.processId,
+            status: 'CANCELADO',
+          },
+        },
+        generatedByUserId: input.actor.id,
+        generatedAt: input.generatedAt,
+      })
+
+      await createProcessHistoryEntry({
+        processId: input.processId,
+        actorUserId: input.actor.id,
+        eventType: 'PDF_GENERATED',
+        notes: `PDF gerado com o modelo ${cancellationPdfModel.label}.`,
+        executor: tx,
+      })
+    })
+  } catch (error) {
+    await deleteStorageObject({
+      bucketName,
+      objectKey,
+    }).catch(() => undefined)
+
+    throw error
+  }
+
+  const downloadUrl = await createStorageObjectDownloadUrl({
+    bucketName,
+    objectKey,
+  })
+
+  return {
+    document: {
+      id: generatedDocumentId,
+      fileName,
+      modelKey: cancellationPdfModel.key,
+      modelLabel: cancellationPdfModel.label,
+      pageCount,
+      sizeInBytes: bytes.byteLength,
+      generatedAt: input.generatedAt.toISOString(),
+      downloadUrl,
+    },
+    message: 'PDF de cancelamento gerado com sucesso.',
   }
 }

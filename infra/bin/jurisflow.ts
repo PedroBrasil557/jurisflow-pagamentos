@@ -6,9 +6,9 @@ import { getEnvName } from '../lib/utils/getEnvName';
 
 const app = new cdk.App({});
 
-new JurisflowAppStack(app, getEnvName('JurisflowAppStack', true), {
+new JurisflowAppStack(app, getEnvName('JurisflowWebAppStack', true), {
   env: {
-    account: 'PLACEHOLDER', // TODO: preencher com AWS Account ID
+    account: '257394493214',
     region: 'us-east-1',
   },
 });

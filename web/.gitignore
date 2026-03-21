@@ -29,5 +29,3 @@ dist-ssr/
 __unconfig*
 todos.json
 
-# bun
-bun.lock

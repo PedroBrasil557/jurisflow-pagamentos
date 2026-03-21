@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getRouteApi, Link, useNavigate } from '@tanstack/react-router'
 import { Loader2, Plus } from 'lucide-react'
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent } from '#/components/ui/card'
@@ -12,6 +13,7 @@ import {
   type DataTableColumn,
 } from '@/shared/components/ui/data-table'
 import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
+import { downloadFile } from '@/shared/lib/download'
 import { ProcessActions } from '../components/process-actions'
 import { CancelProcessDialog } from '../components/process-cancel/cancel-process-dialog'
 import { FinalizeProcessDialog } from '../components/process-finalize/finalize-process-dialog'
@@ -19,12 +21,13 @@ import { ProcessHistoryDialog } from '../components/process-history/process-hist
 import { ProcessLastMovement } from '../components/process-last-movement'
 import { LegalProcessDialog } from '../components/process-legal/legal-process-dialog'
 import { ProcessMobileCard } from '../components/process-mobile-card'
-import { GeneratePdfDialog } from '../components/process-pdf/generate-pdf-dialog'
 import { ProcessStatusBadge } from '../components/process-status-badge'
 import { formatCpf } from '../process-form.utils'
 import { processListOptions } from '../services/processes.queries'
 import {
   defaultProcessPageLimit,
+  generateProcessPdfRequest,
+  getProcessPdfModelsRequest,
   type ProcessListItem,
 } from '../services/processes.service'
 
@@ -105,7 +108,6 @@ export function ProcessesPage({
   const [search, setSearch] = useState(currentSearch)
   const [historyProcessId, setHistoryProcessId] = useState<string | null>(null)
   const [cancelTarget, setCancelTarget] = useState<ProcessListItem | null>(null)
-  const [pdfProcessId, setPdfProcessId] = useState<string | null>(null)
   const [legalTarget, setLegalTarget] = useState<ProcessListItem | null>(null)
   const [finalizeTarget, setFinalizeTarget] = useState<ProcessListItem | null>(
     null,
@@ -122,6 +124,32 @@ export function ProcessesPage({
 
   const data = query.data
   const total = data?.pagination.total ?? 0
+
+  async function handleGeneratePdf(processId: string) {
+    try {
+      const models = await getProcessPdfModelsRequest(processId)
+      const firstModel = models.items[0]
+
+      if (!firstModel) {
+        toast.error('Nenhum modelo de PDF disponivel.')
+        return
+      }
+
+      const result = await generateProcessPdfRequest({
+        processId,
+        modelKey: firstModel.key,
+      })
+
+      await downloadFile(result.document.downloadUrl, result.document.fileName)
+      toast.success('PDF gerado com sucesso.')
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Nao foi possivel gerar o PDF.',
+      )
+    }
+  }
 
   function handleSearchChange(value: string) {
     setSearch(value)
@@ -177,7 +205,7 @@ export function ProcessesPage({
                     onCancel={setCancelTarget}
                     onFinalize={setFinalizeTarget}
                     userRole={user.role}
-                    onGeneratePdf={setPdfProcessId}
+                    onGeneratePdf={(id) => void handleGeneratePdf(id)}
                     onLegalProcess={setLegalTarget}
                     onViewHistory={setHistoryProcessId}
                     process={process}
@@ -218,7 +246,7 @@ export function ProcessesPage({
                 onCancel={setCancelTarget}
                 onFinalize={setFinalizeTarget}
                 userRole={user.role}
-                onGeneratePdf={setPdfProcessId}
+                onGeneratePdf={(id) => void handleGeneratePdf(id)}
                 onLegalProcess={setLegalTarget}
                 onViewHistory={setHistoryProcessId}
                 process={process}
@@ -242,14 +270,6 @@ export function ProcessesPage({
           open={!!cancelTarget}
           processId={cancelTarget.id}
           processName={cancelTarget.fullName}
-        />
-      ) : null}
-
-      {pdfProcessId ? (
-        <GeneratePdfDialog
-          onClose={() => setPdfProcessId(null)}
-          open={!!pdfProcessId}
-          processId={pdfProcessId}
         />
       ) : null}
 

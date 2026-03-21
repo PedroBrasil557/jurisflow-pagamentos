@@ -1,10 +1,15 @@
-import { XCircle } from 'lucide-react'
+import { CheckCircle, Loader2, XCircle } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Textarea } from '#/components/ui/textarea'
 import { AppDialog } from '@/shared/components/app-dialog'
+import { downloadFile } from '@/shared/lib/download'
 import { useCancelProcess } from '../../services/processes.mutations'
+import {
+  generateProcessPdfRequest,
+  getProcessPdfModelsRequest,
+} from '../../services/processes.service'
 
 type CancelProcessDialogProps = {
   onClose: () => void
@@ -20,13 +25,22 @@ export function CancelProcessDialog({
   processName,
 }: CancelProcessDialogProps) {
   const [reason, setReason] = useState('')
+  const [isCancelled, setIsCancelled] = useState(false)
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const cancelMutation = useCancelProcess(processId)
+
+  function handleClose() {
+    setReason('')
+    setIsCancelled(false)
+    setIsGeneratingPdf(false)
+    onClose()
+  }
 
   async function handleConfirm() {
     try {
       await cancelMutation.mutateAsync(reason || undefined)
       toast.success('Processo cancelado com sucesso.')
-      onClose()
+      setIsCancelled(true)
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -36,12 +50,77 @@ export function CancelProcessDialog({
     }
   }
 
+  async function handleGeneratePdf() {
+    setIsGeneratingPdf(true)
+
+    try {
+      const models = await getProcessPdfModelsRequest(processId)
+      const firstModel = models.items[0]
+
+      if (!firstModel) {
+        toast.error('Nenhum modelo de PDF disponivel.')
+        return
+      }
+
+      const result = await generateProcessPdfRequest({
+        processId,
+        modelKey: firstModel.key,
+      })
+
+      await downloadFile(result.document.downloadUrl, result.document.fileName)
+      toast.success('PDF de cancelamento gerado com sucesso.')
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Nao foi possivel gerar o PDF.',
+      )
+    } finally {
+      setIsGeneratingPdf(false)
+    }
+  }
+
+  if (isCancelled) {
+    return (
+      <AppDialog
+        description={`O processo de ${processName} foi cancelado com sucesso.`}
+        icon={CheckCircle}
+        maxWidth="xl"
+        onClose={handleClose}
+        open={open}
+        title="Processo cancelado"
+        variant="success"
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <Button
+            disabled={isGeneratingPdf}
+            onClick={handleClose}
+            type="button"
+            variant="outline"
+          >
+            Concluir
+          </Button>
+          <Button
+            disabled={isGeneratingPdf}
+            onClick={() => void handleGeneratePdf()}
+            type="button"
+          >
+            {isGeneratingPdf ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : null}
+            Gerar PDF
+          </Button>
+        </div>
+      </AppDialog>
+    )
+  }
+
   return (
     <AppDialog
       description="Esta acao nao pode ser desfeita. O processo sera marcado como cancelado permanentemente."
       icon={XCircle}
       maxWidth="lg"
-      onClose={onClose}
+      onClose={handleClose}
       open={open}
       title="Cancelar processo"
       variant="destructive"
@@ -76,7 +155,7 @@ export function CancelProcessDialog({
       <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button
           disabled={cancelMutation.isPending}
-          onClick={onClose}
+          onClick={handleClose}
           type="button"
           variant="outline"
         >

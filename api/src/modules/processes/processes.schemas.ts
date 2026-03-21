@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
-import { processPdfModelKeys } from './processes.pdf.models'
 import { processStatuses } from './processes.status'
 
 const binaryChoiceValues = ['', 'sim', 'nao'] as const
@@ -15,9 +14,8 @@ const maritalStatusValues = [
 ] as const
 const ownerTypeValues = [
   '',
-  'primeiro_proprietario_uma_pessoa',
-  'primeiro_proprietario_duas_pessoas',
-  'segundo_proprietario_ou_superior',
+  'titular_contrato_caixa',
+  'nao_titular_contrato_caixa',
 ] as const
 
 const processCpfSchema = z
@@ -76,8 +74,6 @@ const processPayloadShape = {
   rg: requiredUppercaseText('Informe o RG.', 40),
   cadunico: z.enum(binaryChoiceValues),
   propertyPaidOff: z.enum(ternaryChoiceValues),
-  deliveredMoreThanTenYears: z.enum(binaryChoiceValues),
-  purchaseAgreementLessThanTenYears: z.enum(binaryChoiceValues),
   state: z
     .string()
     .trim()
@@ -109,6 +105,28 @@ const processPayloadShape = {
     )
     .transform((value) => value.toLowerCase()),
   whatsapp: optionalText(30),
+  spouseContractSigned: z.enum(binaryChoiceValues),
+  spouseFullName: optionalUppercaseText(150),
+  spouseBirthDate: z
+    .union([z.string().trim(), z.null()])
+    .optional()
+    .default('')
+    .transform((value) => (!value ? null : value)),
+  spouseNationality: optionalUppercaseText(80),
+  spouseMaritalStatus: z.enum(maritalStatusValues),
+  spouseProfession: optionalUppercaseText(120),
+  spouseCpf: optionalText(14),
+  spouseRg: optionalUppercaseText(40),
+  spouseCadunico: z.enum(binaryChoiceValues),
+  spouseSameAddress: z.enum(binaryChoiceValues),
+  spouseState: optionalText(2),
+  spouseCity: optionalUppercaseText(120),
+  spouseDistrict: optionalUppercaseText(120),
+  spouseHousingComplex: optionalUppercaseText(160),
+  spouseStreet: optionalUppercaseText(255),
+  spouseNumber: optionalUppercaseText(40),
+  spouseComplement: optionalUppercaseText(255),
+  spouseZipcode: optionalText(20),
   witness1Id: z.string().trim().min(1, {
     message: 'Selecione a testemunha 1.',
   }),
@@ -120,25 +138,21 @@ const processPayloadShape = {
 
 function applyCrossFieldRules<
   T extends {
-    deliveredMoreThanTenYears?: string
-    purchaseAgreementLessThanTenYears?: string
     witness1Id?: string
     witness2Id?: string
+    spouseContractSigned?: string
+    spouseFullName?: string
+    spouseBirthDate?: string | null
+    spouseCpf?: string
+    spouseRg?: string
+    spouseState?: string
+    spouseCity?: string
+    spouseDistrict?: string
+    spouseHousingComplex?: string
+    spouseStreet?: string
+    spouseZipcode?: string
   },
 >(data: T, ctx: z.RefinementCtx) {
-  if (
-    data.deliveredMoreThanTenYears === 'sim' &&
-    data.purchaseAgreementLessThanTenYears !== 'sim' &&
-    data.purchaseAgreementLessThanTenYears !== 'nao'
-  ) {
-    ctx.addIssue({
-      code: 'custom',
-      message:
-        'Informe se o contrato de compra e venda foi celebrado ha menos de 10 anos.',
-      path: ['purchaseAgreementLessThanTenYears'],
-    })
-  }
-
   if (
     data.witness1Id &&
     data.witness2Id &&
@@ -150,20 +164,96 @@ function applyCrossFieldRules<
       path: ['witness2Id'],
     })
   }
-}
 
-function normalizeConditionalFields<
-  T extends {
-    deliveredMoreThanTenYears: string
-    purchaseAgreementLessThanTenYears: string
-  },
->(data: T) {
-  return {
-    ...data,
-    purchaseAgreementLessThanTenYears:
-      data.deliveredMoreThanTenYears === 'sim'
-        ? data.purchaseAgreementLessThanTenYears
-        : '',
+  if (data.spouseContractSigned === 'sim') {
+    if (!data.spouseFullName?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseFullName'],
+        message: 'Informe o nome completo do conjuge.',
+      })
+    }
+
+    if (
+      !data.spouseBirthDate?.trim() ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(data.spouseBirthDate)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseBirthDate'],
+        message: 'Informe a data de nascimento do conjuge.',
+      })
+    }
+
+    if (!data.spouseCpf?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseCpf'],
+        message: 'Informe o CPF do conjuge.',
+      })
+    } else if (!isValidCpf(normalizeCpf(data.spouseCpf))) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseCpf'],
+        message: 'Informe um CPF valido.',
+      })
+    }
+
+    if (!data.spouseRg?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseRg'],
+        message: 'Informe o RG do conjuge.',
+      })
+    }
+
+    if (!data.spouseState?.trim() || !/^[A-Za-z]{2}$/.test(data.spouseState)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseState'],
+        message: 'Informe a UF do conjuge.',
+      })
+    }
+
+    if (!data.spouseCity?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseCity'],
+        message: 'Informe a cidade do conjuge.',
+      })
+    }
+
+    if (!data.spouseDistrict?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseDistrict'],
+        message: 'Informe o bairro do conjuge.',
+      })
+    }
+
+    if (!data.spouseHousingComplex?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseHousingComplex'],
+        message: 'Informe o conjunto ou residencial do conjuge.',
+      })
+    }
+
+    if (!data.spouseStreet?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseStreet'],
+        message: 'Informe o logradouro do conjuge.',
+      })
+    }
+
+    if (!data.spouseZipcode?.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spouseZipcode'],
+        message: 'Informe o CEP do conjuge.',
+      })
+    }
   }
 }
 
@@ -172,7 +262,6 @@ export const createProcessPayloadSchema = z
   .superRefine((data, ctx) => {
     applyCrossFieldRules(data, ctx)
   })
-  .transform((data) => normalizeConditionalFields(data))
 
 export const updateProcessPayloadSchema = z
   .object(processPayloadShape)
@@ -223,7 +312,7 @@ export const processPdfModelParamsSchema = z.object({
   processId: z.string().trim().min(1, {
     message: 'Informe o processo.',
   }),
-  modelKey: z.enum(processPdfModelKeys, {
+  modelKey: z.string().trim().min(1, {
     message: 'Informe um modelo valido.',
   }),
 })
@@ -275,6 +364,15 @@ export type StartProcessPayload = z.output<typeof startProcessPayloadSchema>
 export type UpdateLegalProcessPayload = z.output<
   typeof updateLegalProcessPayloadSchema
 >
+
+export const processBatchFileParamsSchema = z.object({
+  processId: z.string().trim().min(1, {
+    message: 'Informe o processo.',
+  }),
+  fileId: z.string().trim().min(1, {
+    message: 'Informe o arquivo.',
+  }),
+})
 
 export function normalizeProcessPayload(input: unknown) {
   return createProcessPayloadSchema.parse(input)

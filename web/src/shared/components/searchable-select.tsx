@@ -98,7 +98,7 @@ export function SearchableSelect({
 
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [hasNextPage, onLoadMore, isLoading, options.length])
+  }, [hasNextPage, onLoadMore, isLoading])
 
   const filteredOptions =
     onSearchChange !== undefined
@@ -137,7 +137,7 @@ export function SearchableSelect({
         </PopoverTrigger>
         <PopoverContent
           align="start"
-          className="w-[var(--radix-popover-trigger-width)] p-0"
+          className="w-(--radix-popover-trigger-width) p-0"
         >
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <Search className="size-4 shrink-0 text-muted-foreground" />

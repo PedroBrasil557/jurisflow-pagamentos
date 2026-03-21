@@ -4,6 +4,8 @@ import { processKeys } from './processes.queries'
 import {
   cancelProcessRequest,
   createProcessRequest,
+  deleteBatchFileRequest,
+  deleteChecklistFileRequest,
   finalizeProcessRequest,
   type GenerateProcessPdfModelKey,
   generateProcessPdfRequest,
@@ -13,6 +15,7 @@ import {
   submitProcessChecklistItemRequest,
   updateLegalProcessRequest,
   updateProcessRequest,
+  uploadBatchFilesRequest,
 } from './processes.service'
 
 export function useCreateProcess() {
@@ -37,6 +40,59 @@ export function useUpdateProcess(processId: string) {
       queryClient.invalidateQueries({
         queryKey: processKeys.detail(processId),
       })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.checklist(processId),
+      })
+    },
+  })
+}
+
+export function useUploadBatchFiles(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (files: File[]) =>
+      uploadBatchFilesRequest({ processId, files }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.batch(processId) })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+    },
+  })
+}
+
+export function useDeleteBatchFile(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (fileId: string) =>
+      deleteBatchFileRequest({ processId, fileId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.batch(processId) })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+    },
+  })
+}
+
+export function useDeleteChecklistFile(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (input: { processDocumentId: string; fileId: string }) =>
+      deleteChecklistFileRequest({ processId, ...input }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: processKeys.checklist(processId),
+      })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     },
   })
 }

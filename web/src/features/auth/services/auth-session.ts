@@ -1,10 +1,7 @@
 import type { InferResponseType } from 'hono/client'
 import { apiClient } from '@/shared/services/api-client'
 
-type SessionResponse = InferResponseType<
-  typeof apiClient.api.session.$get,
-  200
->
+type SessionResponse = InferResponseType<typeof apiClient.api.session.$get, 200>
 
 export async function getSession(): Promise<SessionResponse | null> {
   const response = await apiClient.api.session.$get()

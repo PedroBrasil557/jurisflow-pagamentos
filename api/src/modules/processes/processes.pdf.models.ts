@@ -9,11 +9,15 @@ export type ProcessPdfAttorneyProfile = {
   procurationName: string
 }
 
+export type ProcessPdfRendererKey =
+  | 'KIT_ADJUDICACAO_BASE'
+  | 'KIT_ADJUDICACAO_CONJUGE_BASE'
+
 export type ProcessPdfModelDefinition = {
   description: string
   key: string
   label: string
-  rendererKey: 'KIT_ADJUDICACAO_BASE'
+  rendererKey: ProcessPdfRendererKey
   attorneyProfile: ProcessPdfAttorneyProfile
 }
 
@@ -53,6 +57,12 @@ export type ProcessPdfModelKey = (typeof processPdfModels)[number]['key']
 export const processPdfModelKeys = processPdfModels.map(
   (model) => model.key,
 ) as [ProcessPdfModelKey, ...ProcessPdfModelKey[]]
+
+export const cancellationPdfModel = {
+  key: 'MODELO_CANCELAMENTO_BASE',
+  label: 'Modelo de cancelamento',
+  description: 'Documento padrao de cancelamento do processo.',
+} as const
 
 export function getProcessPdfModelByKey(key: string) {
   return processPdfModels.find((model) => model.key === key) ?? null

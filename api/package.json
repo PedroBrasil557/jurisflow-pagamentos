@@ -4,7 +4,7 @@
     "create:admin": "bun run src/scripts/create-admin.ts",
     "dev": "bun run --hot src/index.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "bun run scripts/migrate.ts",
     "db:studio": "drizzle-kit studio",
     "format": "biome format --write .",
     "lint": "biome lint .",

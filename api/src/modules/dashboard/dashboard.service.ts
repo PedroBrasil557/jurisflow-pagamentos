@@ -4,6 +4,8 @@ import { user } from '../auth/auth.schema'
 import { process } from '../processes/processes.schema'
 
 const statusLabels: Record<string, string> = {
+  CADASTRADO: 'Cadastrado',
+  EM_LOTE: 'Em lote',
   EM_DOCUMENTACAO: 'Em documentacao',
   DOCUMENTACAO_PRONTA: 'Documentacao pronta',
   EM_PROCESSO: 'Em processo',
@@ -12,10 +14,8 @@ const statusLabels: Record<string, string> = {
 }
 
 const ownerTypeLabels: Record<string, string> = {
-  primeiro_proprietario_uma_pessoa: '1 proprietario',
-  primeiro_proprietario_casal: '1 proprietario (casal)',
-  segundo_proprietario_uma_pessoa: '2 proprietario',
-  segundo_proprietario_casal: '2 proprietario (casal)',
+  titular_contrato_caixa: 'Titular contrato caixa',
+  nao_titular_contrato_caixa: 'Nao titular contrato caixa',
 }
 
 const monthNames = [

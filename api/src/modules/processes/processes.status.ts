@@ -1,4 +1,6 @@
 export const processStatuses = [
+  'CADASTRADO',
+  'EM_LOTE',
   'EM_DOCUMENTACAO',
   'DOCUMENTACAO_PRONTA',
   'EM_PROCESSO',
@@ -8,7 +10,7 @@ export const processStatuses = [
 
 export type ProcessStatus = (typeof processStatuses)[number]
 
-export const defaultProcessStatus: ProcessStatus = 'EM_DOCUMENTACAO'
+export const defaultProcessStatus: ProcessStatus = 'CADASTRADO'
 
 export const processHistoryEventTypes = [
   'CREATED',
@@ -22,6 +24,8 @@ export const processHistoryEventTypes = [
   'DOCUMENT_MARKED_OK_WITHOUT_FILE',
   'DOCUMENT_UNMARKED_OK_WITHOUT_FILE',
   'DOCUMENT_OBSERVATION_UPDATED',
+  'BATCH_UPLOADED',
+  'BATCH_DELETED',
 ] as const
 
 export type ProcessHistoryEventType = (typeof processHistoryEventTypes)[number]
@@ -40,8 +44,15 @@ const processStatusTransitions: Record<
   ProcessStatus,
   readonly ProcessStatus[]
 > = {
-  EM_DOCUMENTACAO: ['DOCUMENTACAO_PRONTA', 'CANCELADO'],
-  DOCUMENTACAO_PRONTA: ['EM_PROCESSO', 'CANCELADO'],
+  CADASTRADO: ['EM_LOTE', 'EM_DOCUMENTACAO', 'CANCELADO'],
+  EM_LOTE: ['EM_DOCUMENTACAO', 'CADASTRADO', 'CANCELADO'],
+  EM_DOCUMENTACAO: [
+    'EM_LOTE',
+    'CADASTRADO',
+    'DOCUMENTACAO_PRONTA',
+    'CANCELADO',
+  ],
+  DOCUMENTACAO_PRONTA: ['EM_DOCUMENTACAO', 'EM_PROCESSO', 'CANCELADO'],
   EM_PROCESSO: ['FINALIZADO', 'CANCELADO'],
   FINALIZADO: [],
   CANCELADO: [],

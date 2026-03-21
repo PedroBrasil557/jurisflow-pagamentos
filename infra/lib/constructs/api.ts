@@ -24,10 +24,10 @@ import path from 'path';
 import { env } from '../config/env';
 import { ApplicationLoadBalancer } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import { Duration } from 'aws-cdk-lib';
-import { DomainName, HttpApi } from 'aws-cdk-lib/aws-apigatewayv2';
+import { HttpApi } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpAlbIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { RetentionDays } from 'aws-cdk-lib/aws-logs';
-import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
+// import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
 import { Schedule } from 'aws-cdk-lib/aws-applicationautoscaling';
 import type * as s3 from 'aws-cdk-lib/aws-s3';
 
@@ -201,20 +201,20 @@ export class Api extends Construct {
       'Allow Load Balancer to ECS',
     );
 
-    const certificate = Certificate.fromCertificateArn(
-      this,
-      'ApiCertificate',
-      env.domainCertificateArn,
-    );
+    // const certificate = Certificate.fromCertificateArn(
+    //   this,
+    //   'ApiCertificate',
+    //   env.domainCertificateArn,
+    // );
 
     const httpApi = new HttpApi(this, 'HttpApi', {
       apiName: getEnvName('jurisflow-api-gateway'),
-      defaultDomainMapping: {
-        domainName: new DomainName(this, 'ApiDomainName', {
-          certificate,
-          domainName: env.apiDomainName,
-        }),
-      },
+      // defaultDomainMapping: {
+      //   domainName: new DomainName(this, 'ApiDomainName', {
+      //     certificate,
+      //     domainName: env.apiDomainName,
+      //   }),
+      // },
     });
 
     const albIntegration = new HttpAlbIntegration('AlbIntegration', listener);

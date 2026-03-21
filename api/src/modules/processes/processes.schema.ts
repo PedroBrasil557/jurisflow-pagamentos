@@ -40,7 +40,7 @@ export const process = pgTable(
   {
     id: text('id').primaryKey(),
     code: text('code').notNull().unique(),
-    status: processStatusEnum('status').default('EM_DOCUMENTACAO').notNull(),
+    status: processStatusEnum('status').default('CADASTRADO').notNull(),
     fullName: text('full_name').notNull(),
     birthDate: date('birth_date').notNull(),
     nationality: text('nationality').notNull(),
@@ -51,10 +51,10 @@ export const process = pgTable(
     rg: text('rg').notNull(),
     cadunico: text('cadunico').notNull(),
     propertyPaidOff: text('property_paid_off').notNull(),
-    deliveredMoreThanTenYears: text('delivered_more_than_ten_years').notNull(),
+    deliveredMoreThanTenYears: text('delivered_more_than_ten_years'),
     purchaseAgreementLessThanTenYears: text(
       'purchase_agreement_less_than_ten_years',
-    ).notNull(),
+    ),
     state: text('state').notNull(),
     city: text('city').notNull(),
     district: text('district').notNull(),
@@ -65,6 +65,24 @@ export const process = pgTable(
     zipcode: text('zipcode').notNull(),
     email: text('email').notNull(),
     whatsapp: text('whatsapp').notNull(),
+    spouseContractSigned: text('spouse_contract_signed'),
+    spouseFullName: text('spouse_full_name'),
+    spouseBirthDate: date('spouse_birth_date'),
+    spouseNationality: text('spouse_nationality'),
+    spouseMaritalStatus: text('spouse_marital_status'),
+    spouseProfession: text('spouse_profession'),
+    spouseCpf: text('spouse_cpf'),
+    spouseRg: text('spouse_rg'),
+    spouseCadunico: text('spouse_cadunico'),
+    spouseSameAddress: text('spouse_same_address'),
+    spouseState: text('spouse_state'),
+    spouseCity: text('spouse_city'),
+    spouseDistrict: text('spouse_district'),
+    spouseHousingComplex: text('spouse_housing_complex'),
+    spouseStreet: text('spouse_street'),
+    spouseNumber: text('spouse_number'),
+    spouseComplement: text('spouse_complement'),
+    spouseZipcode: text('spouse_zipcode'),
     witness1Id: text('witness_1_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
@@ -278,6 +296,7 @@ export const processRelations = relations(process, ({ one, many }) => ({
     relationName: 'process_witness_2',
   }),
   documents: many(processDocument),
+  batchFiles: many(processBatchFile),
   generatedDocuments: many(processGeneratedDocument),
   historyEntries: many(processHistory),
 }))
@@ -327,6 +346,50 @@ export const processDocumentFileRelations = relations(
       fields: [processDocumentFile.uploadedByUserId],
       references: [user.id],
       relationName: 'process_document_file_uploaded_by_user',
+    }),
+  }),
+)
+
+export const processBatchFile = pgTable(
+  'process_batch_file',
+  {
+    id: text('id').primaryKey(),
+    processId: text('process_id')
+      .notNull()
+      .references(() => process.id, { onDelete: 'cascade' }),
+    bucketName: text('bucket_name').notNull(),
+    objectKey: text('object_key').notNull(),
+    originalFileName: text('original_file_name').notNull(),
+    mimeType: text('mime_type').notNull(),
+    sizeInBytes: integer('size_in_bytes').notNull(),
+    uploadedByUserId: text('uploaded_by_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    uploadedAt: timestamp('uploaded_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('process_batch_file_storage_object_idx').on(
+      table.bucketName,
+      table.objectKey,
+    ),
+    index('process_batch_file_process_id_idx').on(table.processId),
+    index('process_batch_file_uploaded_by_user_id_idx').on(
+      table.uploadedByUserId,
+    ),
+  ],
+)
+
+export const processBatchFileRelations = relations(
+  processBatchFile,
+  ({ one }) => ({
+    process: one(process, {
+      fields: [processBatchFile.processId],
+      references: [process.id],
+    }),
+    uploadedByUser: one(user, {
+      fields: [processBatchFile.uploadedByUserId],
+      references: [user.id],
+      relationName: 'process_batch_file_uploaded_by_user',
     }),
   }),
 )
