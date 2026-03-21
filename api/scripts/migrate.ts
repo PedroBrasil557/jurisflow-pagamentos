@@ -30,7 +30,7 @@ for (const stmt of enumStatements) {
     // Ignore if enum value already exists
     const message = error instanceof Error ? error.message : String(error)
 
-    if (!message.includes('already exists')) {
+    if (!message.includes('already exists') && !message.includes('does not exist')) {
       throw error
     }
   }
