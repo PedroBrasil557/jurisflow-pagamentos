@@ -231,8 +231,8 @@ function mapProcessToFormValues(
     spouseNumber: currentProcess.spouseNumber ?? '',
     spouseComplement: currentProcess.spouseComplement ?? '',
     spouseZipcode: currentProcess.spouseZipcode ?? '',
-    witness1Id: currentProcess.witness1Id,
-    witness2Id: currentProcess.witness2Id,
+    witness1Id: currentProcess.witness1Id ?? '',
+    witness2Id: currentProcess.witness2Id ?? '',
     observation: currentProcess.observation,
   }
 }

@@ -83,12 +83,12 @@ export const process = pgTable(
     spouseNumber: text('spouse_number'),
     spouseComplement: text('spouse_complement'),
     spouseZipcode: text('spouse_zipcode'),
-    witness1Id: text('witness_1_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
-    witness2Id: text('witness_2_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'restrict' }),
+    witness1Id: text('witness_1_id').references(() => user.id, {
+      onDelete: 'restrict',
+    }),
+    witness2Id: text('witness_2_id').references(() => user.id, {
+      onDelete: 'restrict',
+    }),
     observation: text('observation').notNull(),
     createdByUserId: text('created_by_user_id')
       .notNull()

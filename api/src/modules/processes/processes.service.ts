@@ -72,8 +72,6 @@ const processEditableFieldKeys = [
   'spouseNumber',
   'spouseComplement',
   'spouseZipcode',
-  'witness1Id',
-  'witness2Id',
   'observation',
 ] as const
 
@@ -247,8 +245,6 @@ function pickEditableValues(
     spouseNumber: currentProcess.spouseNumber ?? '',
     spouseComplement: currentProcess.spouseComplement ?? '',
     spouseZipcode: currentProcess.spouseZipcode ?? '',
-    witness1Id: currentProcess.witness1Id,
-    witness2Id: currentProcess.witness2Id,
     observation: currentProcess.observation,
   }
 }
@@ -527,6 +523,8 @@ export async function createProcess(
       cancelledAt: null,
       cancellationReason: null,
       ...payload,
+      witness1Id: null,
+      witness2Id: null,
     })
     .returning()
 

@@ -29,6 +29,7 @@ import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save
 import {
   brazilStateOptions,
   emptyProcessFormValues,
+  getHousingComplexDefaults,
   maritalStatusOptions,
   ownerTypeOptions,
   yesNoOptions,
@@ -39,22 +40,14 @@ import type {
   ProcessFormMode,
   ProcessFormValues,
 } from '../process-form.types'
-import {
-  formatCpf,
-  formatWhatsapp,
-  formatZipCode,
-  getWitnessOptions,
-} from '../process-form.utils'
+import { formatCpf, formatWhatsapp, formatZipCode } from '../process-form.utils'
 import { processFormSchema } from '../schemas/process-form.schema'
 import { housingComplexOptionsInfiniteQuery } from '../services/housing-complexes.queries'
 import {
   useCreateProcess,
   useUpdateProcess,
 } from '../services/processes.mutations'
-import {
-  processDetailOptions,
-  userOptionsInfiniteQuery,
-} from '../services/processes.queries'
+import { processDetailOptions } from '../services/processes.queries'
 import {
   generateProcessPdfRequest,
   getProcessPdfModelsRequest,
@@ -84,16 +77,9 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   const { user } = protectedRouteApi.useRouteContext()
   const navigate = useNavigate()
 
-  const [witnessSearch, setWitnessSearch] = useState('')
-  const debouncedWitnessSearch = useDebouncedValue(witnessSearch, {
-    delay: 300,
-  })
   const [hcSearch, setHcSearch] = useState('')
   const debouncedHcSearch = useDebouncedValue(hcSearch, { delay: 300 })
 
-  const witnessQ = useInfiniteQuery(
-    userOptionsInfiniteQuery(debouncedWitnessSearch),
-  )
   const hcQ = useInfiniteQuery(
     housingComplexOptionsInfiniteQuery(debouncedHcSearch),
   )
@@ -102,10 +88,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     enabled: mode === 'edit' && !!processId,
   })
 
-  const allWitnessUsers = useMemo(
-    () => witnessQ.data?.pages.flatMap((p) => p.witnessUsers) ?? [],
-    [witnessQ.data],
-  )
   const allHousingComplexes = useMemo(
     () => hcQ.data?.pages.flatMap((p) => p.items) ?? [],
     [hcQ.data],
@@ -117,11 +99,8 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
       return draft.values
     }
 
-    return {
-      ...emptyProcessFormValues,
-      witness1Id: mode === 'create' ? user.id : '',
-    }
-  }, [draft, mode, user.id])
+    return emptyProcessFormValues
+  }, [draft])
   const [successState, setSuccessState] =
     useState<ProcessSaveSuccessState | null>(null)
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
@@ -142,8 +121,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   })
   const watchedValues = useWatch({ control })
   const values = (watchedValues ?? initialValues) as ProcessFormValues
-  const witness1Options = getWitnessOptions(allWitnessUsers, values.witness2Id)
-  const witness2Options = getWitnessOptions(allWitnessUsers, values.witness1Id)
   useEffect(() => {
     reset(initialValues)
   }, [initialValues, reset])
@@ -301,35 +278,22 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     [allHousingComplexes],
   )
 
-  const witness1SelectOptions = useMemo(
-    () =>
-      witness1Options.map((u) => ({
-        value: u.id,
-        label: u.label,
-        description: u.cpf,
-      })),
-    [witness1Options],
-  )
-
-  const witness2SelectOptions = useMemo(
-    () =>
-      witness2Options.map((u) => ({
-        value: u.id,
-        label: u.label,
-        description: u.cpf,
-      })),
-    [witness2Options],
-  )
-
-  const handleWitnessSearchChange = useCallback(
-    (search: string) => setWitnessSearch(search),
-    [],
-  )
-
   const handleHcSearchChange = useCallback(
     (search: string) => setHcSearch(search),
     [],
   )
+
+  function handleHousingComplexChange(value: string) {
+    updateValue('housingComplex', value)
+
+    const defaults = getHousingComplexDefaults(value)
+    if (defaults) {
+      updateValue('district', defaults.district)
+      updateValue('city', defaults.city)
+      updateValue('state', defaults.state)
+      updateValue('zipcode', defaults.zipcode)
+    }
+  }
 
   const isLoading = mode === 'edit' && detailQ.isLoading
 
@@ -488,6 +452,34 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
 
         <ProcessFormSection title="Endereco">
           <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+            <div className="lg:col-span-3">
+              <SearchableSelect
+                error={errors.housingComplex?.message}
+                hasNextPage={hcQ.hasNextPage}
+                isLoading={hcQ.isFetchingNextPage}
+                label="Conjunto / Residencial"
+                onChange={handleHousingComplexChange}
+                onLoadMore={() => hcQ.fetchNextPage()}
+                onSearchChange={handleHcSearchChange}
+                options={housingComplexSelectOptions}
+                placeholder="Selecione o conjunto..."
+                required
+                searchPlaceholder="Buscar conjunto..."
+                value={values.housingComplex}
+              />
+            </div>
+
+            <ProcessTextField
+              {...register('zipcode')}
+              error={errors.zipcode?.message}
+              label="CEP"
+              maxLength={9}
+              onChange={handleTextChange('zipcode')}
+              placeholder="00000-000"
+              required
+              value={values.zipcode}
+            />
+
             <ProcessSelectField
               {...register('state')}
               error={errors.state?.message}
@@ -519,24 +511,7 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
               value={values.district}
             />
 
-            <div className="lg:col-span-2">
-              <SearchableSelect
-                error={errors.housingComplex?.message}
-                hasNextPage={hcQ.hasNextPage}
-                isLoading={hcQ.isFetchingNextPage}
-                label="Conjunto / Residencial"
-                onChange={(v) => updateValue('housingComplex', v)}
-                onLoadMore={() => hcQ.fetchNextPage()}
-                onSearchChange={handleHcSearchChange}
-                options={housingComplexSelectOptions}
-                placeholder="Selecione o conjunto..."
-                required
-                searchPlaceholder="Buscar conjunto..."
-                value={values.housingComplex}
-              />
-            </div>
-
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-3">
               <ProcessTextField
                 {...register('street')}
                 error={errors.street?.message}
@@ -565,19 +540,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                 onChange={handleTextChange('complement')}
                 placeholder="Apartamento, bloco ou referencia"
                 value={values.complement}
-              />
-            </div>
-
-            <div className="lg:col-span-2">
-              <ProcessTextField
-                {...register('zipcode')}
-                error={errors.zipcode?.message}
-                label="CEP"
-                maxLength={9}
-                onChange={handleTextChange('zipcode')}
-                placeholder="00000-000"
-                required
-                value={values.zipcode}
               />
             </div>
           </div>
@@ -729,6 +691,29 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                 />
 
                 <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+                  <div className="lg:col-span-3">
+                    <ProcessTextField
+                      {...register('spouseHousingComplex')}
+                      error={errors.spouseHousingComplex?.message}
+                      label="Conjunto / Residencial"
+                      onChange={handleTextChange('spouseHousingComplex')}
+                      placeholder="Digite o conjunto"
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseHousingComplex}
+                    />
+                  </div>
+
+                  <ProcessTextField
+                    {...register('spouseZipcode')}
+                    error={errors.spouseZipcode?.message}
+                    label="CEP"
+                    maxLength={9}
+                    onChange={handleTextChange('spouseZipcode')}
+                    placeholder="00000-000"
+                    disabled={values.spouseSameAddress === 'sim'}
+                    value={values.spouseZipcode}
+                  />
+
                   <ProcessSelectField
                     {...register('spouseState')}
                     error={errors.spouseState?.message}
@@ -761,19 +746,7 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                     value={values.spouseDistrict}
                   />
 
-                  <div className="lg:col-span-2">
-                    <ProcessTextField
-                      {...register('spouseHousingComplex')}
-                      error={errors.spouseHousingComplex?.message}
-                      label="Conjunto / Residencial"
-                      onChange={handleTextChange('spouseHousingComplex')}
-                      placeholder="Digite o conjunto"
-                      disabled={values.spouseSameAddress === 'sim'}
-                      value={values.spouseHousingComplex}
-                    />
-                  </div>
-
-                  <div className="lg:col-span-2">
+                  <div className="lg:col-span-3">
                     <ProcessTextField
                       {...register('spouseStreet')}
                       error={errors.spouseStreet?.message}
@@ -806,19 +779,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                       value={values.spouseComplement}
                     />
                   </div>
-
-                  <div className="lg:col-span-2">
-                    <ProcessTextField
-                      {...register('spouseZipcode')}
-                      error={errors.spouseZipcode?.message}
-                      label="CEP"
-                      maxLength={9}
-                      onChange={handleTextChange('spouseZipcode')}
-                      placeholder="00000-000"
-                      disabled={values.spouseSameAddress === 'sim'}
-                      value={values.spouseZipcode}
-                    />
-                  </div>
                 </div>
               </div>
             </ProcessFormSection>
@@ -848,44 +808,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                 onChange={handleTextChange('whatsapp')}
                 placeholder="00 00000-0000"
                 value={values.whatsapp}
-              />
-            </div>
-          </div>
-        </ProcessFormSection>
-
-        <ProcessFormSection title="Testemunhas">
-          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-            <div className="lg:col-span-2">
-              <SearchableSelect
-                error={errors.witness1Id?.message}
-                hasNextPage={witnessQ.hasNextPage}
-                isLoading={witnessQ.isFetchingNextPage}
-                label="Selecionar testemunha 1"
-                onChange={(v) => updateValue('witness1Id', v)}
-                onLoadMore={() => witnessQ.fetchNextPage()}
-                onSearchChange={handleWitnessSearchChange}
-                options={witness1SelectOptions}
-                placeholder="Selecione..."
-                required
-                searchPlaceholder="Buscar por nome ou CPF..."
-                value={values.witness1Id}
-              />
-            </div>
-
-            <div className="lg:col-span-2">
-              <SearchableSelect
-                error={errors.witness2Id?.message}
-                hasNextPage={witnessQ.hasNextPage}
-                isLoading={witnessQ.isFetchingNextPage}
-                label="Selecionar testemunha 2"
-                onChange={(v) => updateValue('witness2Id', v)}
-                onLoadMore={() => witnessQ.fetchNextPage()}
-                onSearchChange={handleWitnessSearchChange}
-                options={witness2SelectOptions}
-                placeholder="Selecione..."
-                required
-                searchPlaceholder="Buscar por nome ou CPF..."
-                value={values.witness2Id}
               />
             </div>
           </div>

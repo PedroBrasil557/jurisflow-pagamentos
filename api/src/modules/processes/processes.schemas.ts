@@ -127,19 +127,13 @@ const processPayloadShape = {
   spouseNumber: optionalUppercaseText(40),
   spouseComplement: optionalUppercaseText(255),
   spouseZipcode: optionalText(20),
-  witness1Id: z.string().trim().min(1, {
-    message: 'Selecione a testemunha 1.',
-  }),
-  witness2Id: z.string().trim().min(1, {
-    message: 'Selecione a testemunha 2.',
-  }),
+  witness1Id: z.string().trim().optional().default(''),
+  witness2Id: z.string().trim().optional().default(''),
   observation: optionalUppercaseText(500),
 } satisfies z.ZodRawShape
 
 function applyCrossFieldRules<
   T extends {
-    witness1Id?: string
-    witness2Id?: string
     spouseContractSigned?: string
     spouseFullName?: string
     spouseBirthDate?: string | null
@@ -153,18 +147,6 @@ function applyCrossFieldRules<
     spouseZipcode?: string
   },
 >(data: T, ctx: z.RefinementCtx) {
-  if (
-    data.witness1Id &&
-    data.witness2Id &&
-    data.witness1Id === data.witness2Id
-  ) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'As testemunhas devem ser diferentes.',
-      path: ['witness2Id'],
-    })
-  }
-
   if (data.spouseContractSigned === 'sim') {
     if (!data.spouseFullName?.trim()) {
       ctx.addIssue({
