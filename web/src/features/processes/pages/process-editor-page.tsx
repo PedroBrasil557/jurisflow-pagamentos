@@ -29,6 +29,7 @@ import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save
 import {
   brazilStateOptions,
   emptyProcessFormValues,
+  getHousingComplexDefaults,
   maritalStatusOptions,
   ownerTypeOptions,
   yesNoOptions,
@@ -331,6 +332,18 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     [],
   )
 
+  function handleHousingComplexChange(value: string) {
+    updateValue('housingComplex', value)
+
+    const defaults = getHousingComplexDefaults(value)
+    if (defaults) {
+      updateValue('district', defaults.district)
+      updateValue('city', defaults.city)
+      updateValue('state', defaults.state)
+      updateValue('zipcode', defaults.zipcode)
+    }
+  }
+
   const isLoading = mode === 'edit' && detailQ.isLoading
 
   if (isLoading) {
@@ -519,13 +532,13 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
               value={values.district}
             />
 
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-3">
               <SearchableSelect
                 error={errors.housingComplex?.message}
                 hasNextPage={hcQ.hasNextPage}
                 isLoading={hcQ.isFetchingNextPage}
                 label="Conjunto / Residencial"
-                onChange={(v) => updateValue('housingComplex', v)}
+                onChange={handleHousingComplexChange}
                 onLoadMore={() => hcQ.fetchNextPage()}
                 onSearchChange={handleHcSearchChange}
                 options={housingComplexSelectOptions}
@@ -536,7 +549,18 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
               />
             </div>
 
-            <div className="lg:col-span-2">
+            <ProcessTextField
+              {...register('zipcode')}
+              error={errors.zipcode?.message}
+              label="CEP"
+              maxLength={9}
+              onChange={handleTextChange('zipcode')}
+              placeholder="00000-000"
+              required
+              value={values.zipcode}
+            />
+
+            <div className="lg:col-span-3">
               <ProcessTextField
                 {...register('street')}
                 error={errors.street?.message}
@@ -565,19 +589,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                 onChange={handleTextChange('complement')}
                 placeholder="Apartamento, bloco ou referencia"
                 value={values.complement}
-              />
-            </div>
-
-            <div className="lg:col-span-2">
-              <ProcessTextField
-                {...register('zipcode')}
-                error={errors.zipcode?.message}
-                label="CEP"
-                maxLength={9}
-                onChange={handleTextChange('zipcode')}
-                placeholder="00000-000"
-                required
-                value={values.zipcode}
               />
             </div>
           </div>
@@ -761,7 +772,7 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                     value={values.spouseDistrict}
                   />
 
-                  <div className="lg:col-span-2">
+                  <div className="lg:col-span-3">
                     <ProcessTextField
                       {...register('spouseHousingComplex')}
                       error={errors.spouseHousingComplex?.message}
@@ -773,7 +784,18 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                     />
                   </div>
 
-                  <div className="lg:col-span-2">
+                  <ProcessTextField
+                    {...register('spouseZipcode')}
+                    error={errors.spouseZipcode?.message}
+                    label="CEP"
+                    maxLength={9}
+                    onChange={handleTextChange('spouseZipcode')}
+                    placeholder="00000-000"
+                    disabled={values.spouseSameAddress === 'sim'}
+                    value={values.spouseZipcode}
+                  />
+
+                  <div className="lg:col-span-3">
                     <ProcessTextField
                       {...register('spouseStreet')}
                       error={errors.spouseStreet?.message}
@@ -804,19 +826,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                       placeholder="Apartamento, bloco ou referencia"
                       disabled={values.spouseSameAddress === 'sim'}
                       value={values.spouseComplement}
-                    />
-                  </div>
-
-                  <div className="lg:col-span-2">
-                    <ProcessTextField
-                      {...register('spouseZipcode')}
-                      error={errors.spouseZipcode?.message}
-                      label="CEP"
-                      maxLength={9}
-                      onChange={handleTextChange('spouseZipcode')}
-                      placeholder="00000-000"
-                      disabled={values.spouseSameAddress === 'sim'}
-                      value={values.spouseZipcode}
                     />
                   </div>
                 </div>

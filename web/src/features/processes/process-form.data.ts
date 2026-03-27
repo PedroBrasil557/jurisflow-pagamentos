@@ -1,5 +1,48 @@
 import type { ProcessFormValues, SelectOption } from './process-form.types'
 
+export type HousingComplexAddressDefaults = {
+  district: string
+  city: string
+  state: string
+  zipcode: string
+}
+
+function normalizeText(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+}
+
+const housingComplexAddressEntries: [string, HousingComplexAddressDefaults][] =
+  [
+    [
+      'CONDOMINIO RESIDENCIAL PONTO VERDE',
+      {
+        district: 'AVIARIO',
+        city: 'FEIRA DE SANTANA',
+        state: 'BA',
+        zipcode: '44095-300',
+      },
+    ],
+    [
+      'CONDOMINIO RESIDENCIAL RESERVA DO PARQUE',
+      {
+        district: 'AVIARIO',
+        city: 'FEIRA DE SANTANA',
+        state: 'BA',
+        zipcode: '44095-300',
+      },
+    ],
+  ]
+
+export function getHousingComplexDefaults(
+  name: string,
+): HousingComplexAddressDefaults | undefined {
+  const normalized = normalizeText(name)
+  return housingComplexAddressEntries.find(([key]) => key === normalized)?.[1]
+}
+
 export const maritalStatusOptions = [
   { value: '', label: 'Selecione...' },
   { value: 'solteiro', label: 'Solteiro(a)' },
@@ -76,14 +119,14 @@ export const emptyProcessFormValues: ProcessFormValues = {
   rg: '',
   cadunico: '',
   propertyPaidOff: '',
-  state: '',
-  city: '',
-  district: '',
-  housingComplex: '',
+  state: 'BA',
+  city: 'FEIRA DE SANTANA',
+  district: 'AVIARIO',
+  housingComplex: 'CONDOMINIO RESIDENCIAL PONTO VERDE',
   street: '',
   number: '',
   complement: '',
-  zipcode: '',
+  zipcode: '44095-300',
   email: '',
   whatsapp: '',
   spouseContractSigned: '',
