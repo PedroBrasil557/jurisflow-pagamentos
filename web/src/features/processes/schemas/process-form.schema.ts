@@ -106,27 +106,11 @@ export const processFormSchema = z
     spouseNumber: optionalText(40),
     spouseComplement: optionalText(255),
     spouseZipcode: optionalText(20),
-    witness1Id: z.string().trim().min(1, {
-      message: 'Selecione a testemunha 1.',
-    }),
-    witness2Id: z.string().trim().min(1, {
-      message: 'Selecione a testemunha 2.',
-    }),
+    witness1Id: optionalText(),
+    witness2Id: optionalText(),
     observation: optionalText(500),
   })
   .superRefine((data, ctx) => {
-    if (
-      data.witness1Id &&
-      data.witness2Id &&
-      data.witness1Id === data.witness2Id
-    ) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['witness2Id'],
-        message: 'As testemunhas devem ser diferentes.',
-      })
-    }
-
     if (data.spouseContractSigned === 'sim') {
       if (!data.spouseFullName?.trim()) {
         ctx.addIssue({

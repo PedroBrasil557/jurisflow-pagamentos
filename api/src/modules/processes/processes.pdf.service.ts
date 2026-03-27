@@ -94,7 +94,20 @@ function buildPdfFileName(input: { modelKey: string; processCode: string }) {
 
 async function getProcessPdfData(processId: string) {
   const currentProcess = await getProcessOrThrow(processId)
-  const witnessIds = [currentProcess.witness1Id, currentProcess.witness2Id]
+
+  const witnessIds = [
+    currentProcess.witness1Id,
+    currentProcess.witness2Id,
+  ].filter((id): id is string => id !== null)
+
+  const emptyWitness = { id: '', name: '', cpf: '' }
+
+  if (witnessIds.length === 0) {
+    return {
+      currentProcess,
+      witnesses: [emptyWitness, emptyWitness] as const,
+    }
+  }
 
   const rawWitnesses = await db
     .select({
@@ -105,28 +118,15 @@ async function getProcessPdfData(processId: string) {
     .from(user)
     .where(inArray(user.id, witnessIds))
 
-  const witnesses = rawWitnesses.map((w) => ({
-    ...w,
-    cpf: w.cpf ?? '',
-  }))
-
-  if (witnesses.length !== 2) {
-    throw new ProcessServiceError(
-      409,
-      'Nao foi possivel localizar as testemunhas deste processo.',
-    )
-  }
-
-  const witnessById = new Map(witnesses.map((witness) => [witness.id, witness]))
-  const witness1 = witnessById.get(currentProcess.witness1Id)
-  const witness2 = witnessById.get(currentProcess.witness2Id)
-
-  if (!witness1 || !witness2) {
-    throw new ProcessServiceError(
-      409,
-      'Nao foi possivel localizar as testemunhas deste processo.',
-    )
-  }
+  const witnessById = new Map(
+    rawWitnesses.map((w) => [w.id, { ...w, cpf: w.cpf ?? '' }]),
+  )
+  const witness1 = currentProcess.witness1Id
+    ? (witnessById.get(currentProcess.witness1Id) ?? emptyWitness)
+    : emptyWitness
+  const witness2 = currentProcess.witness2Id
+    ? (witnessById.get(currentProcess.witness2Id) ?? emptyWitness)
+    : emptyWitness
 
   return {
     currentProcess,
