@@ -72,6 +72,8 @@ const processEditableFieldKeys = [
   'spouseNumber',
   'spouseComplement',
   'spouseZipcode',
+  'witness1Id',
+  'witness2Id',
   'observation',
 ] as const
 
@@ -245,6 +247,8 @@ function pickEditableValues(
     spouseNumber: currentProcess.spouseNumber ?? '',
     spouseComplement: currentProcess.spouseComplement ?? '',
     spouseZipcode: currentProcess.spouseZipcode ?? '',
+    witness1Id: currentProcess.witness1Id ?? '',
+    witness2Id: currentProcess.witness2Id ?? '',
     observation: currentProcess.observation,
   }
 }
@@ -555,6 +559,10 @@ export async function updateProcess(
     ...currentValues,
     ...payload,
   })
+  const normalizedWitnessValues = {
+    witness1Id: mergedValues.witness1Id || null,
+    witness2Id: mergedValues.witness2Id || null,
+  }
   const changedFields = buildChangedFields(currentValues, mergedValues)
 
   if (Object.keys(changedFields).length === 0) {
@@ -565,6 +573,7 @@ export async function updateProcess(
     .update(process)
     .set({
       ...mergedValues,
+      ...normalizedWitnessValues,
     })
     .where(eq(process.id, processId))
     .returning()
