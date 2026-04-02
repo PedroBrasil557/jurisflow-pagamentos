@@ -7,6 +7,11 @@ export type HousingComplexAddressDefaults = {
   zipcode: string
 }
 
+type HousingComplexAddressEntry = {
+  aliases: readonly string[]
+  defaults: HousingComplexAddressDefaults
+}
+
 function normalizeText(text: string): string {
   return text
     .normalize('NFD')
@@ -14,33 +19,64 @@ function normalizeText(text: string): string {
     .toUpperCase()
 }
 
-const housingComplexAddressEntries: [string, HousingComplexAddressDefaults][] =
-  [
-    [
-      'CONDOMINIO RESIDENCIAL PONTO VERDE',
-      {
-        district: 'AVIARIO',
-        city: 'FEIRA DE SANTANA',
-        state: 'BA',
-        zipcode: '44095-300',
-      },
+const housingComplexAddressEntries = [
+  {
+    aliases: ['CONDOMINIO RESIDENCIAL PONTO VERDE'],
+    defaults: {
+      district: 'AVIARIO',
+      city: 'FEIRA DE SANTANA',
+      state: 'BA',
+      zipcode: '44095-300',
+    },
+  },
+  {
+    aliases: ['CONDOMINIO RESIDENCIAL RESERVA DO PARQUE'],
+    defaults: {
+      district: 'AVIARIO',
+      city: 'FEIRA DE SANTANA',
+      state: 'BA',
+      zipcode: '44095-300',
+    },
+  },
+  {
+    aliases: ['RESIDENCIAL ZILDA ARNS', 'CONDOMINIO RESIDENCIAL ZILDA ARNS'],
+    defaults: {
+      district: 'CAJUEIRO',
+      city: 'SANTO ANTONIO DE JESUS',
+      state: 'BA',
+      zipcode: '44430-000',
+    },
+  },
+  {
+    aliases: ['RESIDENCIAL VILA VIVA', 'CONDOMINIO RESIDENCIAL VILA VIVA'],
+    defaults: {
+      district: 'CAJUEIRO',
+      city: 'SANTO ANTONIO DE JESUS',
+      state: 'BA',
+      zipcode: '44570-330',
+    },
+  },
+  {
+    aliases: [
+      'RESIDENCIAL SANTO ANTONIO DE JESUS III',
+      'CONDOMINIO RESIDENCIAL SANTO ANTONIO DE JESUS III',
     ],
-    [
-      'CONDOMINIO RESIDENCIAL RESERVA DO PARQUE',
-      {
-        district: 'AVIARIO',
-        city: 'FEIRA DE SANTANA',
-        state: 'BA',
-        zipcode: '44095-300',
-      },
-    ],
-  ]
+    defaults: {
+      district: 'CAJUEIRO',
+      city: 'SANTO ANTONIO DE JESUS',
+      state: 'BA',
+      zipcode: '44570-330',
+    },
+  },
+] satisfies readonly HousingComplexAddressEntry[]
 
 export function getHousingComplexDefaults(
   name: string,
 ): HousingComplexAddressDefaults | undefined {
   const normalized = normalizeText(name)
-  return housingComplexAddressEntries.find(([key]) => key === normalized)?.[1]
+  return housingComplexAddressEntries.find((entry) =>
+    entry.aliases.some((alias) => normalizeText(alias) === normalized),
+  )?.defaults
 }
 
 export const maritalStatusOptions = [
