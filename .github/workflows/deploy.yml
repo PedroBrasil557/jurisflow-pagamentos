@@ -79,15 +79,11 @@ jobs:
         if: github.ref == 'refs/heads/dev'
         working-directory: ${{ github.workspace }}/web
         run: bun install --frozen-lockfile && bun run build
-        env:
-          VITE_API_URL: https://bq81uw2pw0.execute-api.us-east-1.amazonaws.com
 
       - name: Build Web (prod)
         if: github.ref == 'refs/heads/main'
         working-directory: ${{ github.workspace }}/web
         run: bun install --frozen-lockfile && bun run build
-        env:
-          VITE_API_URL: https://hk9iayyyce.execute-api.us-east-1.amazonaws.com
 
       - name: Deploy to Development
         if: github.ref == 'refs/heads/dev'

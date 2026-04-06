@@ -3,15 +3,11 @@ import { z } from 'zod'
 const isProduction = import.meta.env.PROD
 
 function getDefaultApiUrl() {
-  if (!isProduction) {
-    return 'http://localhost:3555'
-  }
-
-  if (typeof window !== 'undefined') {
+  if (isProduction && typeof window !== 'undefined') {
     return window.location.origin
   }
 
-  return undefined
+  return import.meta.env.VITE_API_URL ?? 'http://localhost:3555'
 }
 
 const clientEnvSchema = z.object({
@@ -23,7 +19,7 @@ const clientEnvSchema = z.object({
         return new URL(value).origin
       } catch {
         context.addIssue({
-          code: z.ZodIssueCode.custom,
+          code: 'custom',
           message: 'VITE_API_URL precisa ser uma URL valida.',
         })
 
@@ -33,7 +29,7 @@ const clientEnvSchema = z.object({
 })
 
 const parsedClientEnv = clientEnvSchema.safeParse({
-  VITE_API_URL: import.meta.env.VITE_API_URL ?? getDefaultApiUrl(),
+  VITE_API_URL: getDefaultApiUrl(),
 })
 
 if (!parsedClientEnv.success) {
