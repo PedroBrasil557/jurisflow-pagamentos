@@ -128,7 +128,9 @@ O `apiClient` é completamente type-safe: os tipos são inferidos das definiçõ
 
 - Em desenvolvimento, o navegador fala com `http://localhost:3555/api/*` e o Vite encaminha para `API_PROXY_TARGET` no servidor dev
 - Em produção, o navegador fala com `https://<cloudfront>/api/*` e o CloudFront encaminha para a API
-- `VITE_API_URL` deve apontar para a **origem pública do app web**, não para a API direta
+- No ambiente publicado, o frontend resolve automaticamente a origem pública com `window.location.origin`
+- `VITE_API_URL` fica como fallback/local e nunca deve apontar para a API direta em builds publicados
+- O workflow de deploy não precisa injetar `VITE_API_URL` para ambientes publicados
 - O cliente do better-auth usa essa origem pública e resolve automaticamente os endpoints em `'/api/auth/*'`
 
 ## Estrutura de Features
@@ -358,7 +360,7 @@ bun run format      # Biome format
 
 | Variável | Uso |
 |---------|-----|
-| `VITE_API_URL` | Origem pública do app web usada pelo cliente HTTP (`http://localhost:3555` no local) |
+| `VITE_API_URL` | Fallback para desenvolvimento/local. Em build publicado, a origem pública vem de `window.location.origin` |
 | `API_PROXY_TARGET` | Somente dev. Endereço real da API que o Vite deve proxiar (`http://localhost:3556`) |
 
 ## Como Contribuir

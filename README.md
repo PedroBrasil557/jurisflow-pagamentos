@@ -150,7 +150,7 @@ Principais variáveis do Web:
 
 | Variável | Descrição |
 |----------|-----------|
-| `VITE_API_URL` | Origem pública do app web usada pelo cliente HTTP no navegador (localmente `http://localhost:3555`) |
+| `VITE_API_URL` | Fallback para desenvolvimento/local. No ambiente publicado o web usa `window.location.origin` como origem pública do app |
 | `API_PROXY_TARGET` | Somente desenvolvimento. Alvo real da API para o proxy do Vite (ex.: `http://localhost:3556`) |
 
 ## Convenções do Projeto
