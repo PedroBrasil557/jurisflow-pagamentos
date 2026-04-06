@@ -21,6 +21,14 @@ export type HousingComplexListQuery = {
   search?: string
 }
 
+export type HousingComplexPayload = {
+  name: string
+  district: string
+  city: string
+  state: string
+  zipcode: string
+}
+
 export const defaultHousingComplexPageLimit = 10
 
 export async function fetchAdminHousingComplexes(
@@ -47,7 +55,9 @@ export async function fetchAdminHousingComplexes(
   return (await response.json()) as ListHousingComplexesResponse
 }
 
-export async function createHousingComplexRequest(payload: { name: string }) {
+export async function createHousingComplexRequest(
+  payload: HousingComplexPayload,
+) {
   const response = await adminHousingComplexesRoute.$post({
     json: payload,
   })
@@ -63,7 +73,7 @@ export async function createHousingComplexRequest(payload: { name: string }) {
 
 export async function updateHousingComplexRequest(input: {
   housingComplexId: string
-  payload: { name: string }
+  payload: HousingComplexPayload
 }) {
   const response = await adminHousingComplexesRoute[':housingComplexId'].$patch(
     {

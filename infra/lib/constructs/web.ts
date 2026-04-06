@@ -1,7 +1,12 @@
 import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
 import {
+  BucketDeployment,
+  CacheControl as DeploymentCacheControl,
+  Source,
+} from 'aws-cdk-lib/aws-s3-deployment';
+import {
+  Duration,
   Fn,
   RemovalPolicy,
   aws_cloudfront,
@@ -33,6 +38,7 @@ export class WebApp extends Construct {
     super(scope, id);
 
     const appPath = path.join(__dirname, '../../../web/dist');
+    const appAssetsPath = path.join(appPath, 'assets');
 
     const webBucket = new s3.Bucket(this, 'WebAppBucket', {
       bucketName: getEnvName('jurisflow-web-bucket'),
@@ -128,12 +134,38 @@ function handler(event) {
       cloudFrontConfig,
     );
 
-    new BucketDeployment(this, 'S3Deployment', {
-      sources: [Source.asset(appPath)],
+    new BucketDeployment(this, 'S3RootDeployment', {
+      sources: [
+        Source.asset(appPath, {
+          exclude: ['assets/*'],
+        }),
+      ],
       destinationBucket: webBucket,
       distribution: cloudFrontDistribution,
       distributionPaths: ['/*'],
+      cacheControl: [
+        DeploymentCacheControl.noStore(),
+        DeploymentCacheControl.noCache(),
+        DeploymentCacheControl.mustRevalidate(),
+        DeploymentCacheControl.maxAge(Duration.seconds(0)),
+      ],
       memoryLimit: 1024,
+      prune: false,
+    });
+
+    new BucketDeployment(this, 'S3AssetsDeployment', {
+      sources: [Source.asset(appAssetsPath)],
+      destinationBucket: webBucket,
+      destinationKeyPrefix: 'assets',
+      distribution: cloudFrontDistribution,
+      distributionPaths: ['/assets/*'],
+      cacheControl: [
+        DeploymentCacheControl.setPublic(),
+        DeploymentCacheControl.immutable(),
+        DeploymentCacheControl.maxAge(Duration.days(365)),
+      ],
+      memoryLimit: 1024,
+      prune: false,
     });
 
     this.webAppUrl = cloudFrontDistribution.domainName;

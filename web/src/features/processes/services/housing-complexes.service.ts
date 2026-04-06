@@ -4,6 +4,10 @@ import { getErrorMessage } from '@/shared/services/api-error'
 export type HousingComplexOption = {
   id: string
   name: string
+  district: string | null
+  city: string | null
+  state: string | null
+  zipcode: string | null
 }
 
 export type HousingComplexOptionsQuery = {
