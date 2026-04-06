@@ -29,7 +29,6 @@ import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save
 import {
   brazilStateOptions,
   emptyProcessFormValues,
-  getHousingComplexDefaults,
   maritalStatusOptions,
   ownerTypeOptions,
   yesNoOptions,
@@ -277,6 +276,21 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
       })),
     [allHousingComplexes],
   )
+  const housingComplexDefaultsByName = useMemo(
+    () =>
+      new Map(
+        allHousingComplexes.map((item) => [
+          item.name,
+          {
+            district: item.district,
+            city: item.city,
+            state: item.state,
+            zipcode: item.zipcode,
+          },
+        ]),
+      ),
+    [allHousingComplexes],
+  )
 
   const handleHcSearchChange = useCallback(
     (search: string) => setHcSearch(search),
@@ -286,12 +300,20 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   function handleHousingComplexChange(value: string) {
     updateValue('housingComplex', value)
 
-    const defaults = getHousingComplexDefaults(value)
+    const defaults = housingComplexDefaultsByName.get(value)
     if (defaults) {
-      updateValue('district', defaults.district)
-      updateValue('city', defaults.city)
-      updateValue('state', defaults.state)
-      updateValue('zipcode', defaults.zipcode)
+      if (defaults.district) {
+        updateValue('district', defaults.district)
+      }
+      if (defaults.city) {
+        updateValue('city', defaults.city)
+      }
+      if (defaults.state) {
+        updateValue('state', defaults.state)
+      }
+      if (defaults.zipcode) {
+        updateValue('zipcode', defaults.zipcode)
+      }
     }
   }
 

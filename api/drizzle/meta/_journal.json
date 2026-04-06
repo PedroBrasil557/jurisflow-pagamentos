@@ -15,6 +15,13 @@
       "when": 1774111737277,
       "tag": "0001_superb_leopardon",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775503234292,
+      "tag": "0002_rare_stark_industries",
+      "breakpoints": true
     }
   ]
 }

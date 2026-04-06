@@ -61,7 +61,11 @@ export const FormSelect = forwardRef(function FormSelect(
         {...props}
       >
         {options.map((option) => (
-          <option key={option.value || 'blank'} value={option.value}>
+          <option
+            className="bg-background text-foreground"
+            key={option.value || 'blank'}
+            value={option.value}
+          >
             {option.label}
           </option>
         ))}

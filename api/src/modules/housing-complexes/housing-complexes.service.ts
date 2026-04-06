@@ -11,10 +11,41 @@ type ListHousingComplexesQuery = {
 
 type CreateHousingComplexPayload = {
   name: string
+  district: string | null
+  city: string | null
+  state: string | null
+  zipcode: string | null
 }
 
 type UpdateHousingComplexPayload = {
   name: string
+  district: string | null
+  city: string | null
+  state: string | null
+  zipcode: string | null
+}
+
+function selectHousingComplexFields() {
+  return {
+    id: housingComplex.id,
+    name: housingComplex.name,
+    district: housingComplex.district,
+    city: housingComplex.city,
+    state: housingComplex.state,
+    zipcode: housingComplex.zipcode,
+    createdAt: housingComplex.createdAt,
+  }
+}
+
+function selectHousingComplexOptionFields() {
+  return {
+    id: housingComplex.id,
+    name: housingComplex.name,
+    district: housingComplex.district,
+    city: housingComplex.city,
+    state: housingComplex.state,
+    zipcode: housingComplex.zipcode,
+  }
 }
 
 export async function listHousingComplexes(query: ListHousingComplexesQuery) {
@@ -25,11 +56,7 @@ export async function listHousingComplexes(query: ListHousingComplexesQuery) {
 
   const [items, totalResult] = await Promise.all([
     db
-      .select({
-        id: housingComplex.id,
-        name: housingComplex.name,
-        createdAt: housingComplex.createdAt,
-      })
+      .select(selectHousingComplexFields())
       .from(housingComplex)
       .where(searchFilter)
       .orderBy(asc(housingComplex.name))
@@ -62,10 +89,7 @@ export async function listHousingComplexOptions(
 
   const [items, totalResult] = await Promise.all([
     db
-      .select({
-        id: housingComplex.id,
-        name: housingComplex.name,
-      })
+      .select(selectHousingComplexOptionFields())
       .from(housingComplex)
       .where(searchFilter)
       .orderBy(asc(housingComplex.name))
@@ -102,12 +126,15 @@ export async function createHousingComplex(
 
   const [created] = await db
     .insert(housingComplex)
-    .values({ id, name: payload.name })
-    .returning({
-      id: housingComplex.id,
-      name: housingComplex.name,
-      createdAt: housingComplex.createdAt,
+    .values({
+      id,
+      name: payload.name,
+      district: payload.district,
+      city: payload.city,
+      state: payload.state,
+      zipcode: payload.zipcode,
     })
+    .returning(selectHousingComplexFields())
 
   return created
 }
@@ -141,13 +168,15 @@ export async function updateHousingComplex(
 
   const [updated] = await db
     .update(housingComplex)
-    .set({ name: payload.name })
-    .where(eq(housingComplex.id, id))
-    .returning({
-      id: housingComplex.id,
-      name: housingComplex.name,
-      createdAt: housingComplex.createdAt,
+    .set({
+      name: payload.name,
+      district: payload.district,
+      city: payload.city,
+      state: payload.state,
+      zipcode: payload.zipcode,
     })
+    .where(eq(housingComplex.id, id))
+    .returning(selectHousingComplexFields())
 
   return updated
 }

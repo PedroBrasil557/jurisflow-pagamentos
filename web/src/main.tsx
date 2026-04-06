@@ -5,6 +5,11 @@ import './styles.css'
 
 const router = getRouter()
 
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault()
+  window.location.reload()
+})
+
 const rootElement = document.getElementById('root')
 
 if (rootElement) {

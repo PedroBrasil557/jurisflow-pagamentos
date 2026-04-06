@@ -29,7 +29,7 @@ export function FormField({
   return (
     <div className={cn('flex w-full flex-col gap-1.5', className)}>
       <label
-        className={cn('text-sm font-medium', labelClassName)}
+        className={cn('text-sm font-medium text-foreground', labelClassName)}
         htmlFor={fieldId}
       >
         {label}

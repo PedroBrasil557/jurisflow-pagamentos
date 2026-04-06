@@ -5,6 +5,10 @@ export const housingComplex = pgTable(
   {
     id: text('id').primaryKey(),
     name: text('name').notNull(),
+    district: text('district'),
+    city: text('city'),
+    state: text('state'),
+    zipcode: text('zipcode'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at')
       .defaultNow()

@@ -28,6 +28,10 @@ jobs:
         working-directory: ${{ github.workspace }}/api
         run: bun install --frozen-lockfile
 
+      - name: API migration journal check
+        working-directory: ${{ github.workspace }}/api
+        run: bun run db:check
+
       - name: API lint
         working-directory: ${{ github.workspace }}/api
         run: bun run lint
