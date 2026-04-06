@@ -126,7 +126,7 @@ export class Api extends Construct {
         DATABASE_URL: databaseUrl,
         PORT: apiPort.toString(),
         BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET ?? '',
-        BETTER_AUTH_URL: `https://${env.apiDomainName}`,
+        BETTER_AUTH_URL: `https://${env.webDomainNames[0]}`,
         WEB_URL: `https://${env.webDomainNames[0]}`,
         TRUSTED_ORIGINS: `https://${env.webDomainNames[0]}`,
         S3_ENDPOINT: 'https://s3.us-east-1.amazonaws.com',

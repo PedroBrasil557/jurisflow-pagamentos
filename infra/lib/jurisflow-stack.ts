@@ -10,8 +10,6 @@ export class JurisflowAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const { webAppUrl } = new WebApp(this, 'WebApp');
-
     const { vpc } = new Vpc(this, 'Vpc');
 
     const { databaseUrl } = new Database(this, 'Database', {
@@ -25,6 +23,8 @@ export class JurisflowAppStack extends cdk.Stack {
       vpc,
       documentsBucket,
     });
+
+    const { webAppUrl } = new WebApp(this, 'WebApp', { apiUrl });
 
     new cdk.CfnOutput(this, 'WebAppUrl', {
       value: webAppUrl,

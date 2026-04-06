@@ -51,7 +51,7 @@ const envSchema = z.object({
       message: 'BETTER_AUTH_SECRET precisa ter pelo menos 32 caracteres.',
     })
     .default('dev-only-secret-change-me-before-production'),
-  BETTER_AUTH_URL: z.url().default('http://localhost:3556'),
+  BETTER_AUTH_URL: z.url().default('http://localhost:3555'),
   WEB_URL: z.url().default('http://localhost:3555'),
   TRUSTED_ORIGINS: z.string().optional(),
   S3_ENDPOINT: z.url().default('http://localhost:3558'),

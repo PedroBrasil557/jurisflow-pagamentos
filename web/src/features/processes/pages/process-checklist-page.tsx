@@ -240,7 +240,7 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
           title="Checklist de documentos"
           description={`${process.fullName} • ${formatCpf(process.cpf)} • ${process.city} - ${process.state} • ${getProcessStatusLabel(process.status)}`}
         >
-          <Link className="no-underline" to="/processos">
+          <Link className="no-underline" preload={false} to="/processos">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="size-4" />
               Voltar
@@ -249,6 +249,7 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
           <Link
             className="no-underline"
             params={{ processId }}
+            preload={false}
             to="/processos/$processId/editar"
           >
             <Button variant="outline" size="sm">

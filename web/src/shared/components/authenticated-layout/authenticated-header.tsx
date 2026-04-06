@@ -62,7 +62,11 @@ export function AuthenticatedHeader({
                 >
                   {breadcrumb.to && !isLastItem ? (
                     <BreadcrumbLink asChild>
-                      <Link className="no-underline" to={breadcrumb.to}>
+                      <Link
+                        className="no-underline"
+                        preload={false}
+                        to={breadcrumb.to}
+                      >
                         {breadcrumb.label}
                       </Link>
                     </BreadcrumbLink>

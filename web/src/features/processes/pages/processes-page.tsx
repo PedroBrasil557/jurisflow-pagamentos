@@ -169,7 +169,7 @@ export function ProcessesPage({
   return (
     <div className="grid gap-6">
       <PageHeader title="Processos">
-        <Link className="no-underline" to="/processos/novo">
+        <Link className="no-underline" preload={false} to="/processos/novo">
           <Button>
             <Plus className="size-4" />
             Criar processo

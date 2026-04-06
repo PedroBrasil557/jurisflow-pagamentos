@@ -41,7 +41,7 @@ export function AuthenticatedSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-              <Link to="/" className="no-underline">
+              <Link to="/" className="no-underline" preload={false}>
                 <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-bold text-primary-foreground">
                   JF
                 </div>
