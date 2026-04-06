@@ -1,10 +1,20 @@
 import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
-import { RemovalPolicy, aws_cloudfront, aws_cloudfront_origins } from 'aws-cdk-lib';
 import {
+  Fn,
+  RemovalPolicy,
+  aws_cloudfront,
+  aws_cloudfront_origins,
+} from 'aws-cdk-lib';
+import {
+  AllowedMethods,
   CachePolicy,
+  CachedMethods,
   type DistributionProps,
+  FunctionCode,
+  FunctionEventType,
+  OriginRequestPolicy,
   S3OriginAccessControl,
 } from 'aws-cdk-lib/aws-cloudfront';
 import path from 'path';
@@ -12,10 +22,14 @@ import { getEnvName } from '../utils/getEnvName';
 // import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
 // import { env } from '../config/env';
 
+interface Props {
+  apiUrl: string;
+}
+
 export class WebApp extends Construct {
   readonly webAppUrl: string;
 
-  constructor(scope: Construct, id: string) {
+  constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
 
     const appPath = path.join(__dirname, '../../../web/dist');
@@ -28,6 +42,40 @@ export class WebApp extends Construct {
     });
 
     const originAccessControl = new S3OriginAccessControl(this, 'OriginAccessControl');
+    const spaRewriteFunction = new aws_cloudfront.Function(
+      this,
+      'SpaRewriteFunction',
+      {
+        code: FunctionCode.fromInline(`
+function handler(event) {
+  var request = event.request;
+  var uri = request.uri;
+
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return request;
+  }
+
+  if (uri.startsWith('/api') || uri.includes('.')) {
+    return request;
+  }
+
+  request.uri = '/index.html';
+  return request;
+}
+        `),
+      },
+    );
+
+    const webOrigin = aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(
+      webBucket,
+      {
+        originAccessControl,
+      },
+    );
+    const apiOriginDomainName = Fn.select(2, Fn.split('/', props.apiUrl));
+    const apiOrigin = new aws_cloudfront_origins.HttpOrigin(apiOriginDomainName, {
+      protocolPolicy: aws_cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+    });
 
     // const certificate = Certificate.fromCertificateArn(
     //   this,
@@ -36,19 +84,30 @@ export class WebApp extends Construct {
     // );
 
     const defaultBehavior = {
-      origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(webBucket, {
-        originAccessControl,
-      }),
+      origin: webOrigin,
+      viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      cachePolicy: CachePolicy.CACHING_DISABLED,
+      functionAssociations: [
+        {
+          function: spaRewriteFunction,
+          eventType: FunctionEventType.VIEWER_REQUEST,
+        },
+      ],
+    };
+
+    const assetBehavior = {
+      origin: webOrigin,
       viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       cachePolicy: CachePolicy.CACHING_OPTIMIZED,
     };
 
-    const noCacheBehavior = {
-      origin: aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(webBucket, {
-        originAccessControl,
-      }),
+    const apiBehavior = {
+      origin: apiOrigin,
       viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      allowedMethods: AllowedMethods.ALLOW_ALL,
+      cachedMethods: CachedMethods.CACHE_GET_HEAD_OPTIONS,
       cachePolicy: CachePolicy.CACHING_DISABLED,
+      originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
     };
 
     const cloudFrontConfig: DistributionProps = {
@@ -57,15 +116,10 @@ export class WebApp extends Construct {
       defaultRootObject: 'index.html',
       defaultBehavior,
       additionalBehaviors: {
-        'index.html': noCacheBehavior,
+        'assets/*': assetBehavior,
+        api: apiBehavior,
+        'api/*': apiBehavior,
       },
-      errorResponses: [
-        {
-          httpStatus: 403,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-        },
-      ],
     };
 
     const cloudFrontDistribution = new aws_cloudfront.Distribution(
