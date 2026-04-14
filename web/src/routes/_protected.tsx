@@ -1,4 +1,5 @@
 import { createFileRoute, Outlet, redirect } from '@tanstack/react-router'
+import { useSession } from '@/features/auth/hooks/use-session'
 import { getSession } from '@/features/auth/services/auth-session'
 import { AuthenticatedLayout } from '@/shared/components/authenticated-layout/authenticated-layout'
 
@@ -36,6 +37,7 @@ export const Route = createFileRoute('/_protected')({
     return {
       session: session.session,
       user: session.user,
+      permissions: session.permissions,
     }
   },
   shouldReload: false,
@@ -43,10 +45,10 @@ export const Route = createFileRoute('/_protected')({
 })
 
 function ProtectedRoute() {
-  const { user } = Route.useRouteContext()
+  const { user, permissions } = useSession()
 
   return (
-    <AuthenticatedLayout user={user}>
+    <AuthenticatedLayout permissions={permissions} user={user}>
       <Outlet />
     </AuthenticatedLayout>
   )

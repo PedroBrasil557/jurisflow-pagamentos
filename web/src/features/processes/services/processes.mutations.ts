@@ -11,6 +11,8 @@ import {
   generateProcessPdfRequest,
   type LegalProcessInput,
   markProcessDocumentationReadyRequest,
+  removeDocumentationAssigneeRequest,
+  setDocumentationAssigneeRequest,
   startProcessRequest,
   submitProcessChecklistItemRequest,
   updateLegalProcessRequest,
@@ -202,6 +204,35 @@ export function useGenerateProcessPdf(processId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: processKeys.pdfModels(processId),
+      })
+    },
+  })
+}
+
+export function useSetDocumentationAssignee(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (assigneeUserId: string) =>
+      setDocumentationAssigneeRequest({ processId, assigneeUserId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+    },
+  })
+}
+
+export function useRemoveDocumentationAssignee(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => removeDocumentationAssigneeRequest(processId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
       })
     },
   })

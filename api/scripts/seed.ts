@@ -1,44 +1,97 @@
-import { eq } from 'drizzle-orm'
-import { db } from '../src/shared/db'
-import { user as userTable } from '../src/modules/auth/auth.schema'
+import { assertSeedIsLocalOnly } from './seed/guard'
 import {
-  createPlatformUser,
-  generateTemporaryPassword,
-} from '../src/modules/auth/auth.user-management.service'
+  housingComplexesSeed,
+  seedHousingComplexes,
+} from './seed/housing-complexes'
+import { customProfilesSeed, seedCustomProfiles } from './seed/profiles'
+import {
+  seedPlatformProcesses,
+  summarizeProcesses,
+} from './seed/processes'
+import {
+  type SeededUser,
+  TEST_USER_PASSWORD,
+  seedPlatformUsers,
+} from './seed/users'
 
-const ADMIN_CPF = process.env.ADMIN_CPF ?? '12345678909'
-const ADMIN_NAME = process.env.ADMIN_NAME ?? 'Administrador'
+function profileLabel(profileId: string | null) {
+  if (!profileId) return '—'
+  const custom = customProfilesSeed.find((profile) => profile.id === profileId)
+  if (custom) return `${custom.name} (custom)`
+  if (profileId === 'system_profile_default_user') return 'Usuario Padrao'
+  if (profileId === 'system_profile_attorney') return 'Advogado'
+  return profileId
+}
+
+function complexLabel(id: string) {
+  return housingComplexesSeed.find((hc) => hc.id === id)?.name ?? id
+}
+
+function printUsersTable(users: SeededUser[]) {
+  console.log('\n==============================================')
+  console.log('Usuarios seedados (senha: jurisflow123)')
+  console.log('==============================================')
+
+  for (const user of users) {
+    const kindLabel = user.kind === 'admin' ? 'Admin' : 'Usuario'
+    const extras = user.extraHousingComplexIds.length
+      ? `extras: ${user.extraHousingComplexIds.map(complexLabel).join(', ')}`
+      : ''
+
+    console.log(
+      [
+        `- ${user.name}`,
+        `CPF: ${user.cpf}`,
+        `Tipo: ${kindLabel}`,
+        `Perfil: ${profileLabel(user.profileId)}`,
+        extras,
+      ]
+        .filter(Boolean)
+        .join(' | '),
+    )
+  }
+}
+
+function printProcessesTable() {
+  const byStatus = summarizeProcesses()
+  console.log('\n==============================================')
+  console.log('Processos seedados (total: 18)')
+  console.log('==============================================')
+  for (const [status, count] of Object.entries(byStatus)) {
+    console.log(`- ${status}: ${count}`)
+  }
+}
 
 async function seed() {
-  const [existing] = await db
-    .select({ id: userTable.id })
-    .from(userTable)
-    .where(eq(userTable.role, 'admin'))
-    .limit(1)
+  assertSeedIsLocalOnly()
 
-  if (existing) {
-    console.log('Admin already exists, skipping seed.')
-    return
-  }
+  console.log('Seeding housing complexes...')
+  await seedHousingComplexes()
 
-  const password = generateTemporaryPassword()
-
-  const result = await createPlatformUser({
-    cpf: ADMIN_CPF,
-    name: ADMIN_NAME,
-    password,
-    role: 'admin',
+  console.log('Seeding custom permission profiles...')
+  await seedCustomProfiles({
+    housingComplexIdsByProfileName: {
+      'Agente de Documentacao': ['hc_jardim_das_flores', 'hc_vila_nova'],
+      'Supervisor de Lote': ['hc_morada_do_sol'],
+    },
   })
 
-  console.log('Admin created successfully.')
-  console.log(`CPF: ${result.user.cpf}`)
-  console.log(`Password: ${password}`)
-  console.log('User must change password on first access.')
+  console.log('Seeding users...')
+  const users = await seedPlatformUsers()
+
+  console.log('Seeding processes...')
+  await seedPlatformProcesses(users)
+
+  printUsersTable(users)
+  printProcessesTable()
+
+  console.log('\nSenha padrao dos usuarios de teste:', TEST_USER_PASSWORD)
+  console.log('Seed concluido com sucesso.')
 }
 
 seed()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error('Seed failed:', error)
+    console.error('Seed falhou:', error)
     process.exit(1)
   })

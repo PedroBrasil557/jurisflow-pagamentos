@@ -58,9 +58,9 @@ async function main() {
   const result = await createPlatformUser({
     cpf: args.cpf,
     email: args.email,
+    isAdmin: true,
     name: args.name,
     password: temporaryPassword,
-    role: 'admin',
   })
 
   console.log('Administrador criado com sucesso.')

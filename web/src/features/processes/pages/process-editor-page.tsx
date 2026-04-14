@@ -1,10 +1,5 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import {
-  getRouteApi,
-  Link,
-  useBlocker,
-  useNavigate,
-} from '@tanstack/react-router'
+import { Link, useBlocker, useNavigate } from '@tanstack/react-router'
 import { ArrowLeft, Loader2, User } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -12,11 +7,13 @@ import { type SubmitHandler, useWatch } from 'react-hook-form'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { getUserRoleLabel } from '@/features/auth/auth.roles'
+import { useSession } from '@/features/auth/hooks/use-session'
 import { SearchableSelect } from '@/shared/components/searchable-select'
 import { StatusBadge } from '@/shared/components/status-badge'
 import { useZodForm } from '@/shared/components/ui/form'
 import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
 import { downloadFile } from '@/shared/lib/download'
+import { ProcessDocumentationAssignee } from '../components/process-documentation-assignee'
 import { ProcessDateField } from '../components/process-form/process-date-field'
 import {
   ProcessRadioGroupField,
@@ -26,6 +23,7 @@ import {
 } from '../components/process-form/process-form-field'
 import { ProcessFormSection } from '../components/process-form/process-form-section'
 import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save-success-dialog'
+import { buildProcessRelationship, canEditProcess } from '../lib/process-access'
 import {
   brazilStateOptions,
   emptyProcessFormValues,
@@ -52,8 +50,6 @@ import {
   getProcessPdfModelsRequest,
 } from '../services/processes.service'
 
-const protectedRouteApi = getRouteApi('/_protected')
-
 type ProcessFormShellProps = {
   mode: ProcessFormMode
   processId?: string
@@ -73,7 +69,7 @@ export function EditProcessPage({ processId }: { processId: string }) {
 }
 
 function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
-  const { user } = protectedRouteApi.useRouteContext()
+  const { permissions, user } = useSession()
   const navigate = useNavigate()
 
   const [hcSearch, setHcSearch] = useState('')
@@ -92,6 +88,17 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     [hcQ.data],
   )
   const draft = detailQ.data?.draft
+  const detailProcess = detailQ.data?.process
+  const isReadOnly = useMemo(() => {
+    if (mode === 'create') return false
+    if (!detailProcess) return false
+    const relationship = buildProcessRelationship({
+      process: detailProcess,
+      userId: user.id,
+      permissions,
+    })
+    return !canEditProcess(permissions, relationship)
+  }, [mode, detailProcess, user.id, permissions])
 
   const initialValues = useMemo(() => {
     if (draft?.values) {
@@ -327,7 +334,11 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     )
   }
 
-  const title = mode === 'create' ? 'Novo processo' : 'Editar processo'
+  const title = isReadOnly
+    ? 'Detalhes do processo'
+    : mode === 'create'
+      ? 'Novo processo'
+      : 'Editar processo'
   const submitLabel = mode === 'create' ? 'Criar processo' : 'Salvar alteracoes'
 
   function getRoleTone(role: string) {
@@ -373,505 +384,545 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
         </div>
       </div>
 
+      {mode === 'edit' &&
+      processId &&
+      user.role === 'admin' &&
+      detailQ.data?.process &&
+      detailQ.data.process.status !== 'FINALIZADO' &&
+      detailQ.data.process.status !== 'CANCELADO' ? (
+        <div className="mb-6">
+          <ProcessDocumentationAssignee
+            currentAssigneeId={detailQ.data.process.documentationAssigneeId}
+            currentAssigneeName={
+              detailQ.data.process.documentationAssigneeName ?? null
+            }
+            processId={processId}
+          />
+        </div>
+      ) : null}
+
+      {isReadOnly ? (
+        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+          Voce esta visualizando este processo em modo somente leitura.
+        </div>
+      ) : null}
+
       <form
         className="grid gap-6"
         noValidate
         onSubmit={handleSubmit(handleProcessSubmit)}
       >
-        <ProcessFormSection title="Tipo de proprietario">
-          <ProcessSelectField
-            {...register('ownerType')}
-            error={errors.ownerType?.message}
-            label="Proprietario (tipo)"
-            onChange={handleSelectChange('ownerType')}
-            options={ownerTypeOptions}
-            required
-            value={values.ownerType}
-          />
-        </ProcessFormSection>
-
-        <ProcessFormSection title="Dados pessoais">
-          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            <div className="md:col-span-2">
-              <ProcessTextField
-                {...register('fullName')}
-                error={errors.fullName?.message}
-                label="Nome completo"
-                onChange={handleTextChange('fullName')}
-                placeholder="Digite o nome completo"
-                required
-                value={values.fullName}
-              />
-            </div>
-
-            <ProcessDateField
-              error={errors.birthDate?.message}
-              label="Data de nascimento"
-              onChange={(v) => updateValue('birthDate', v)}
-              required
-              value={values.birthDate}
-            />
-
-            <ProcessTextField
-              {...register('nationality')}
-              error={errors.nationality?.message}
-              label="Nacionalidade"
-              onChange={handleTextChange('nationality')}
-              readOnly
-              required
-              value={values.nationality}
-            />
-
+        <fieldset className="contents" disabled={isReadOnly}>
+          <ProcessFormSection title="Tipo de proprietario">
             <ProcessSelectField
-              {...register('maritalStatus')}
-              error={errors.maritalStatus?.message}
-              label="Estado civil"
-              onChange={handleSelectChange('maritalStatus')}
-              options={maritalStatusOptions}
-              value={values.maritalStatus}
-            />
-
-            <ProcessTextField
-              {...register('profession')}
-              error={errors.profession?.message}
-              label="Profissao"
-              onChange={handleTextChange('profession')}
-              placeholder="Digite a profissao"
-              value={values.profession}
-            />
-
-            <ProcessTextField
-              {...register('cpf')}
-              error={errors.cpf?.message}
-              label="CPF"
-              maxLength={14}
-              onChange={handleTextChange('cpf')}
-              placeholder="000.000.000-00"
+              {...register('ownerType')}
+              error={errors.ownerType?.message}
+              label="Proprietario (tipo)"
+              onChange={handleSelectChange('ownerType')}
+              options={ownerTypeOptions}
               required
-              value={values.cpf}
+              value={values.ownerType}
             />
+          </ProcessFormSection>
 
-            <ProcessTextField
-              {...register('rg')}
-              error={errors.rg?.message}
-              label="RG"
-              onChange={handleTextChange('rg')}
-              placeholder="00.000.000-0"
-              required
-              value={values.rg}
-            />
-
-            <ProcessSelectField
-              {...register('cadunico')}
-              error={errors.cadunico?.message}
-              label="CadUnico"
-              onChange={handleSelectChange('cadunico')}
-              options={yesNoOptions}
-              value={values.cadunico}
-            />
-          </div>
-        </ProcessFormSection>
-
-        <ProcessFormSection title="Endereco">
-          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-            <div className="lg:col-span-3">
-              <SearchableSelect
-                error={errors.housingComplex?.message}
-                hasNextPage={hcQ.hasNextPage}
-                isLoading={hcQ.isFetchingNextPage}
-                label="Conjunto / Residencial"
-                onChange={handleHousingComplexChange}
-                onLoadMore={() => hcQ.fetchNextPage()}
-                onSearchChange={handleHcSearchChange}
-                options={housingComplexSelectOptions}
-                placeholder="Selecione o conjunto..."
-                required
-                searchPlaceholder="Buscar conjunto..."
-                value={values.housingComplex}
-              />
-            </div>
-
-            <ProcessTextField
-              {...register('zipcode')}
-              error={errors.zipcode?.message}
-              label="CEP"
-              maxLength={9}
-              onChange={handleTextChange('zipcode')}
-              placeholder="00000-000"
-              required
-              value={values.zipcode}
-            />
-
-            <ProcessSelectField
-              {...register('state')}
-              error={errors.state?.message}
-              label="UF"
-              onChange={handleSelectChange('state')}
-              options={brazilStateOptions}
-              value={values.state}
-            />
-
-            <div className="lg:col-span-2">
-              <ProcessTextField
-                {...register('city')}
-                error={errors.city?.message}
-                label="Cidade"
-                onChange={handleTextChange('city')}
-                placeholder="Digite a cidade"
-                required
-                value={values.city}
-              />
-            </div>
-
-            <ProcessTextField
-              {...register('district')}
-              error={errors.district?.message}
-              label="Bairro"
-              onChange={handleTextChange('district')}
-              placeholder="Selecione ou digite o bairro"
-              required
-              value={values.district}
-            />
-
-            <div className="lg:col-span-3">
-              <ProcessTextField
-                {...register('street')}
-                error={errors.street?.message}
-                label="Rua / Logradouro"
-                onChange={handleTextChange('street')}
-                placeholder="Digite o logradouro"
-                required
-                value={values.street}
-              />
-            </div>
-
-            <ProcessTextField
-              {...register('number')}
-              error={errors.number?.message}
-              label="Numero"
-              onChange={handleTextChange('number')}
-              placeholder="Digite o numero"
-              value={values.number}
-            />
-
-            <div className="lg:col-span-2">
-              <ProcessTextField
-                {...register('complement')}
-                error={errors.complement?.message}
-                label="Complemento"
-                onChange={handleTextChange('complement')}
-                placeholder="Apartamento, bloco ou referencia"
-                value={values.complement}
-              />
-            </div>
-          </div>
-        </ProcessFormSection>
-
-        <ProcessFormSection title="Documentacao">
-          <div className="grid gap-5">
-            <div className="max-w-xl">
-              <ProcessSelectField
-                {...register('propertyPaidOff')}
-                error={errors.propertyPaidOff?.message}
-                label="O imovel e quitado?"
-                onChange={handleSelectChange('propertyPaidOff')}
-                options={yesNoUnknownOptions}
-                value={values.propertyPaidOff}
-              />
-
-              {values.propertyPaidOff === 'sim' ? (
-                <div className="mt-3 rounded-[20px] border border-amber-500/25 bg-amber-500/12 px-4 py-3">
-                  <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
-                    Falta documento de quitacao
-                  </span>
-                </div>
-              ) : null}
-            </div>
-
-            {values.ownerType !== '' ? (
-              <ProcessRadioGroupField
-                error={errors.spouseContractSigned?.message}
-                label={
-                  values.ownerType === 'titular_contrato_caixa'
-                    ? 'Contrato com a caixa assinado junto com o conjuge?'
-                    : 'Contrato de compra e venda assinado junto com o conjuge?'
-                }
-                onChange={(v) => updateValue('spouseContractSigned', v)}
-                options={[
-                  { label: 'Sim', value: 'sim' },
-                  { label: 'Nao', value: 'nao' },
-                ]}
-                value={values.spouseContractSigned}
-              />
-            ) : null}
-          </div>
-        </ProcessFormSection>
-
-        {values.spouseContractSigned === 'sim' ? (
-          <>
-            <ProcessFormSection title="Dados do conjuge">
-              <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-                <div className="md:col-span-2">
-                  <ProcessTextField
-                    {...register('spouseFullName')}
-                    error={errors.spouseFullName?.message}
-                    label="Nome completo do conjuge"
-                    onChange={handleTextChange('spouseFullName')}
-                    placeholder="Digite o nome completo"
-                    value={values.spouseFullName}
-                  />
-                </div>
-
-                <ProcessDateField
-                  error={errors.spouseBirthDate?.message}
-                  label="Data de nascimento"
-                  onChange={(v) => updateValue('spouseBirthDate', v)}
-                  value={values.spouseBirthDate}
-                />
-
+          <ProcessFormSection title="Dados pessoais">
+            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+              <div className="md:col-span-2">
                 <ProcessTextField
-                  {...register('spouseNationality')}
-                  error={errors.spouseNationality?.message}
-                  label="Nacionalidade"
-                  onChange={handleTextChange('spouseNationality')}
-                  readOnly
-                  value={values.spouseNationality}
-                />
-
-                <ProcessSelectField
-                  {...register('spouseMaritalStatus')}
-                  error={errors.spouseMaritalStatus?.message}
-                  label="Estado civil"
-                  onChange={handleSelectChange('spouseMaritalStatus')}
-                  options={maritalStatusOptions}
-                  value={values.spouseMaritalStatus}
-                />
-
-                <ProcessTextField
-                  {...register('spouseProfession')}
-                  error={errors.spouseProfession?.message}
-                  label="Profissao"
-                  onChange={handleTextChange('spouseProfession')}
-                  placeholder="Digite a profissao"
-                  value={values.spouseProfession}
-                />
-
-                <ProcessTextField
-                  {...register('spouseCpf')}
-                  error={errors.spouseCpf?.message}
-                  label="CPF"
-                  maxLength={14}
-                  onChange={handleTextChange('spouseCpf')}
-                  placeholder="000.000.000-00"
-                  value={values.spouseCpf}
-                />
-
-                <ProcessTextField
-                  {...register('spouseRg')}
-                  error={errors.spouseRg?.message}
-                  label="RG"
-                  onChange={handleTextChange('spouseRg')}
-                  placeholder="00.000.000-0"
-                  value={values.spouseRg}
-                />
-
-                <ProcessSelectField
-                  {...register('spouseCadunico')}
-                  error={errors.spouseCadunico?.message}
-                  label="CadUnico"
-                  onChange={handleSelectChange('spouseCadunico')}
-                  options={yesNoOptions}
-                  value={values.spouseCadunico}
+                  {...register('fullName')}
+                  error={errors.fullName?.message}
+                  label="Nome completo"
+                  onChange={handleTextChange('fullName')}
+                  placeholder="Digite o nome completo"
+                  required
+                  value={values.fullName}
                 />
               </div>
-            </ProcessFormSection>
 
-            <ProcessFormSection title="Endereco do conjuge">
-              <div className="grid gap-5">
+              <ProcessDateField
+                error={errors.birthDate?.message}
+                label="Data de nascimento"
+                onChange={(v) => updateValue('birthDate', v)}
+                required
+                value={values.birthDate}
+              />
+
+              <ProcessTextField
+                {...register('nationality')}
+                error={errors.nationality?.message}
+                label="Nacionalidade"
+                onChange={handleTextChange('nationality')}
+                readOnly
+                required
+                value={values.nationality}
+              />
+
+              <ProcessSelectField
+                {...register('maritalStatus')}
+                error={errors.maritalStatus?.message}
+                label="Estado civil"
+                onChange={handleSelectChange('maritalStatus')}
+                options={maritalStatusOptions}
+                value={values.maritalStatus}
+              />
+
+              <ProcessTextField
+                {...register('profession')}
+                error={errors.profession?.message}
+                label="Profissao"
+                onChange={handleTextChange('profession')}
+                placeholder="Digite a profissao"
+                value={values.profession}
+              />
+
+              <ProcessTextField
+                {...register('cpf')}
+                error={errors.cpf?.message}
+                label="CPF"
+                maxLength={14}
+                onChange={handleTextChange('cpf')}
+                placeholder="000.000.000-00"
+                required
+                value={values.cpf}
+              />
+
+              <ProcessTextField
+                {...register('rg')}
+                error={errors.rg?.message}
+                label="RG"
+                onChange={handleTextChange('rg')}
+                placeholder="00.000.000-0"
+                required
+                value={values.rg}
+              />
+
+              <ProcessSelectField
+                {...register('cadunico')}
+                error={errors.cadunico?.message}
+                label="CadUnico"
+                onChange={handleSelectChange('cadunico')}
+                options={yesNoOptions}
+                value={values.cadunico}
+              />
+            </div>
+          </ProcessFormSection>
+
+          <ProcessFormSection title="Endereco">
+            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+              <div className="lg:col-span-3">
+                <SearchableSelect
+                  error={errors.housingComplex?.message}
+                  hasNextPage={hcQ.hasNextPage}
+                  isLoading={hcQ.isFetchingNextPage}
+                  label="Conjunto / Residencial"
+                  onChange={handleHousingComplexChange}
+                  onLoadMore={() => hcQ.fetchNextPage()}
+                  onSearchChange={handleHcSearchChange}
+                  options={housingComplexSelectOptions}
+                  placeholder="Selecione o conjunto..."
+                  required
+                  searchPlaceholder="Buscar conjunto..."
+                  value={values.housingComplex}
+                />
+              </div>
+
+              <ProcessTextField
+                {...register('zipcode')}
+                error={errors.zipcode?.message}
+                label="CEP"
+                maxLength={9}
+                onChange={handleTextChange('zipcode')}
+                placeholder="00000-000"
+                required
+                value={values.zipcode}
+              />
+
+              <ProcessSelectField
+                {...register('state')}
+                error={errors.state?.message}
+                label="UF"
+                onChange={handleSelectChange('state')}
+                options={brazilStateOptions}
+                value={values.state}
+              />
+
+              <div className="lg:col-span-2">
+                <ProcessTextField
+                  {...register('city')}
+                  error={errors.city?.message}
+                  label="Cidade"
+                  onChange={handleTextChange('city')}
+                  placeholder="Digite a cidade"
+                  required
+                  value={values.city}
+                />
+              </div>
+
+              <ProcessTextField
+                {...register('district')}
+                error={errors.district?.message}
+                label="Bairro"
+                onChange={handleTextChange('district')}
+                placeholder="Selecione ou digite o bairro"
+                required
+                value={values.district}
+              />
+
+              <div className="lg:col-span-3">
+                <ProcessTextField
+                  {...register('street')}
+                  error={errors.street?.message}
+                  label="Rua / Logradouro"
+                  onChange={handleTextChange('street')}
+                  placeholder="Digite o logradouro"
+                  required
+                  value={values.street}
+                />
+              </div>
+
+              <ProcessTextField
+                {...register('number')}
+                error={errors.number?.message}
+                label="Numero"
+                onChange={handleTextChange('number')}
+                placeholder="Digite o numero"
+                value={values.number}
+              />
+
+              <div className="lg:col-span-2">
+                <ProcessTextField
+                  {...register('complement')}
+                  error={errors.complement?.message}
+                  label="Complemento"
+                  onChange={handleTextChange('complement')}
+                  placeholder="Apartamento, bloco ou referencia"
+                  value={values.complement}
+                />
+              </div>
+            </div>
+          </ProcessFormSection>
+
+          <ProcessFormSection title="Documentacao">
+            <div className="grid gap-5">
+              <div className="max-w-xl">
+                <ProcessSelectField
+                  {...register('propertyPaidOff')}
+                  error={errors.propertyPaidOff?.message}
+                  label="O imovel e quitado?"
+                  onChange={handleSelectChange('propertyPaidOff')}
+                  options={yesNoUnknownOptions}
+                  value={values.propertyPaidOff}
+                />
+
+                {values.propertyPaidOff === 'sim' ? (
+                  <div className="mt-3 rounded-[20px] border border-amber-500/25 bg-amber-500/12 px-4 py-3">
+                    <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                      Falta documento de quitacao
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+
+              {values.ownerType !== '' ? (
                 <ProcessRadioGroupField
-                  error={errors.spouseSameAddress?.message}
-                  label="Mesmo endereco do titular?"
-                  onChange={(nextValue: BinaryChoice) => {
-                    updateValue('spouseSameAddress', nextValue)
-
-                    if (nextValue === 'sim') {
-                      updateValue('spouseState', values.state)
-                      updateValue('spouseCity', values.city)
-                      updateValue('spouseDistrict', values.district)
-                      updateValue('spouseHousingComplex', values.housingComplex)
-                      updateValue('spouseStreet', values.street)
-                      updateValue('spouseNumber', values.number)
-                      updateValue('spouseComplement', values.complement)
-                      updateValue('spouseZipcode', values.zipcode)
-                    }
-                  }}
+                  error={errors.spouseContractSigned?.message}
+                  label={
+                    values.ownerType === 'titular_contrato_caixa'
+                      ? 'Contrato com a caixa assinado junto com o conjuge?'
+                      : 'Contrato de compra e venda assinado junto com o conjuge?'
+                  }
+                  onChange={(v) => updateValue('spouseContractSigned', v)}
                   options={[
                     { label: 'Sim', value: 'sim' },
                     { label: 'Nao', value: 'nao' },
                   ]}
-                  value={values.spouseSameAddress}
+                  value={values.spouseContractSigned}
                 />
+              ) : null}
+            </div>
+          </ProcessFormSection>
 
-                <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-                  <div className="lg:col-span-3">
+          {values.spouseContractSigned === 'sim' ? (
+            <>
+              <ProcessFormSection title="Dados do conjuge">
+                <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+                  <div className="md:col-span-2">
                     <ProcessTextField
-                      {...register('spouseHousingComplex')}
-                      error={errors.spouseHousingComplex?.message}
-                      label="Conjunto / Residencial"
-                      onChange={handleTextChange('spouseHousingComplex')}
-                      placeholder="Digite o conjunto"
-                      disabled={values.spouseSameAddress === 'sim'}
-                      value={values.spouseHousingComplex}
+                      {...register('spouseFullName')}
+                      error={errors.spouseFullName?.message}
+                      label="Nome completo do conjuge"
+                      onChange={handleTextChange('spouseFullName')}
+                      placeholder="Digite o nome completo"
+                      value={values.spouseFullName}
                     />
                   </div>
 
+                  <ProcessDateField
+                    error={errors.spouseBirthDate?.message}
+                    label="Data de nascimento"
+                    onChange={(v) => updateValue('spouseBirthDate', v)}
+                    value={values.spouseBirthDate}
+                  />
+
                   <ProcessTextField
-                    {...register('spouseZipcode')}
-                    error={errors.spouseZipcode?.message}
-                    label="CEP"
-                    maxLength={9}
-                    onChange={handleTextChange('spouseZipcode')}
-                    placeholder="00000-000"
-                    disabled={values.spouseSameAddress === 'sim'}
-                    value={values.spouseZipcode}
+                    {...register('spouseNationality')}
+                    error={errors.spouseNationality?.message}
+                    label="Nacionalidade"
+                    onChange={handleTextChange('spouseNationality')}
+                    readOnly
+                    value={values.spouseNationality}
                   />
 
                   <ProcessSelectField
-                    {...register('spouseState')}
-                    error={errors.spouseState?.message}
-                    label="UF"
-                    onChange={handleSelectChange('spouseState')}
-                    options={brazilStateOptions}
-                    disabled={values.spouseSameAddress === 'sim'}
-                    value={values.spouseState}
+                    {...register('spouseMaritalStatus')}
+                    error={errors.spouseMaritalStatus?.message}
+                    label="Estado civil"
+                    onChange={handleSelectChange('spouseMaritalStatus')}
+                    options={maritalStatusOptions}
+                    value={values.spouseMaritalStatus}
                   />
-
-                  <div className="lg:col-span-2">
-                    <ProcessTextField
-                      {...register('spouseCity')}
-                      error={errors.spouseCity?.message}
-                      label="Cidade"
-                      onChange={handleTextChange('spouseCity')}
-                      placeholder="Digite a cidade"
-                      disabled={values.spouseSameAddress === 'sim'}
-                      value={values.spouseCity}
-                    />
-                  </div>
 
                   <ProcessTextField
-                    {...register('spouseDistrict')}
-                    error={errors.spouseDistrict?.message}
-                    label="Bairro"
-                    onChange={handleTextChange('spouseDistrict')}
-                    placeholder="Digite o bairro"
-                    disabled={values.spouseSameAddress === 'sim'}
-                    value={values.spouseDistrict}
+                    {...register('spouseProfession')}
+                    error={errors.spouseProfession?.message}
+                    label="Profissao"
+                    onChange={handleTextChange('spouseProfession')}
+                    placeholder="Digite a profissao"
+                    value={values.spouseProfession}
                   />
-
-                  <div className="lg:col-span-3">
-                    <ProcessTextField
-                      {...register('spouseStreet')}
-                      error={errors.spouseStreet?.message}
-                      label="Rua / Logradouro"
-                      onChange={handleTextChange('spouseStreet')}
-                      placeholder="Digite o logradouro"
-                      disabled={values.spouseSameAddress === 'sim'}
-                      value={values.spouseStreet}
-                    />
-                  </div>
 
                   <ProcessTextField
-                    {...register('spouseNumber')}
-                    error={errors.spouseNumber?.message}
-                    label="Numero"
-                    onChange={handleTextChange('spouseNumber')}
-                    placeholder="Digite o numero"
-                    disabled={values.spouseSameAddress === 'sim'}
-                    value={values.spouseNumber}
+                    {...register('spouseCpf')}
+                    error={errors.spouseCpf?.message}
+                    label="CPF"
+                    maxLength={14}
+                    onChange={handleTextChange('spouseCpf')}
+                    placeholder="000.000.000-00"
+                    value={values.spouseCpf}
                   />
 
-                  <div className="lg:col-span-2">
+                  <ProcessTextField
+                    {...register('spouseRg')}
+                    error={errors.spouseRg?.message}
+                    label="RG"
+                    onChange={handleTextChange('spouseRg')}
+                    placeholder="00.000.000-0"
+                    value={values.spouseRg}
+                  />
+
+                  <ProcessSelectField
+                    {...register('spouseCadunico')}
+                    error={errors.spouseCadunico?.message}
+                    label="CadUnico"
+                    onChange={handleSelectChange('spouseCadunico')}
+                    options={yesNoOptions}
+                    value={values.spouseCadunico}
+                  />
+                </div>
+              </ProcessFormSection>
+
+              <ProcessFormSection title="Endereco do conjuge">
+                <div className="grid gap-5">
+                  <ProcessRadioGroupField
+                    error={errors.spouseSameAddress?.message}
+                    label="Mesmo endereco do titular?"
+                    onChange={(nextValue: BinaryChoice) => {
+                      updateValue('spouseSameAddress', nextValue)
+
+                      if (nextValue === 'sim') {
+                        updateValue('spouseState', values.state)
+                        updateValue('spouseCity', values.city)
+                        updateValue('spouseDistrict', values.district)
+                        updateValue(
+                          'spouseHousingComplex',
+                          values.housingComplex,
+                        )
+                        updateValue('spouseStreet', values.street)
+                        updateValue('spouseNumber', values.number)
+                        updateValue('spouseComplement', values.complement)
+                        updateValue('spouseZipcode', values.zipcode)
+                      }
+                    }}
+                    options={[
+                      { label: 'Sim', value: 'sim' },
+                      { label: 'Nao', value: 'nao' },
+                    ]}
+                    value={values.spouseSameAddress}
+                  />
+
+                  <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+                    <div className="lg:col-span-3">
+                      <ProcessTextField
+                        {...register('spouseHousingComplex')}
+                        error={errors.spouseHousingComplex?.message}
+                        label="Conjunto / Residencial"
+                        onChange={handleTextChange('spouseHousingComplex')}
+                        placeholder="Digite o conjunto"
+                        disabled={values.spouseSameAddress === 'sim'}
+                        value={values.spouseHousingComplex}
+                      />
+                    </div>
+
                     <ProcessTextField
-                      {...register('spouseComplement')}
-                      error={errors.spouseComplement?.message}
-                      label="Complemento"
-                      onChange={handleTextChange('spouseComplement')}
-                      placeholder="Apartamento, bloco ou referencia"
+                      {...register('spouseZipcode')}
+                      error={errors.spouseZipcode?.message}
+                      label="CEP"
+                      maxLength={9}
+                      onChange={handleTextChange('spouseZipcode')}
+                      placeholder="00000-000"
                       disabled={values.spouseSameAddress === 'sim'}
-                      value={values.spouseComplement}
+                      value={values.spouseZipcode}
                     />
+
+                    <ProcessSelectField
+                      {...register('spouseState')}
+                      error={errors.spouseState?.message}
+                      label="UF"
+                      onChange={handleSelectChange('spouseState')}
+                      options={brazilStateOptions}
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseState}
+                    />
+
+                    <div className="lg:col-span-2">
+                      <ProcessTextField
+                        {...register('spouseCity')}
+                        error={errors.spouseCity?.message}
+                        label="Cidade"
+                        onChange={handleTextChange('spouseCity')}
+                        placeholder="Digite a cidade"
+                        disabled={values.spouseSameAddress === 'sim'}
+                        value={values.spouseCity}
+                      />
+                    </div>
+
+                    <ProcessTextField
+                      {...register('spouseDistrict')}
+                      error={errors.spouseDistrict?.message}
+                      label="Bairro"
+                      onChange={handleTextChange('spouseDistrict')}
+                      placeholder="Digite o bairro"
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseDistrict}
+                    />
+
+                    <div className="lg:col-span-3">
+                      <ProcessTextField
+                        {...register('spouseStreet')}
+                        error={errors.spouseStreet?.message}
+                        label="Rua / Logradouro"
+                        onChange={handleTextChange('spouseStreet')}
+                        placeholder="Digite o logradouro"
+                        disabled={values.spouseSameAddress === 'sim'}
+                        value={values.spouseStreet}
+                      />
+                    </div>
+
+                    <ProcessTextField
+                      {...register('spouseNumber')}
+                      error={errors.spouseNumber?.message}
+                      label="Numero"
+                      onChange={handleTextChange('spouseNumber')}
+                      placeholder="Digite o numero"
+                      disabled={values.spouseSameAddress === 'sim'}
+                      value={values.spouseNumber}
+                    />
+
+                    <div className="lg:col-span-2">
+                      <ProcessTextField
+                        {...register('spouseComplement')}
+                        error={errors.spouseComplement?.message}
+                        label="Complemento"
+                        onChange={handleTextChange('spouseComplement')}
+                        placeholder="Apartamento, bloco ou referencia"
+                        disabled={values.spouseSameAddress === 'sim'}
+                        value={values.spouseComplement}
+                      />
+                    </div>
                   </div>
                 </div>
+              </ProcessFormSection>
+            </>
+          ) : null}
+
+          <ProcessFormSection title="Contato">
+            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+              <div className="lg:col-span-2">
+                <ProcessTextField
+                  {...register('email')}
+                  error={errors.email?.message}
+                  label="E-mail"
+                  onChange={handleTextChange('email')}
+                  placeholder="Digite o e-mail principal"
+                  type="email"
+                  value={values.email}
+                />
               </div>
-            </ProcessFormSection>
-          </>
-        ) : null}
 
-        <ProcessFormSection title="Contato">
-          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-            <div className="lg:col-span-2">
-              <ProcessTextField
-                {...register('email')}
-                error={errors.email?.message}
-                label="E-mail"
-                onChange={handleTextChange('email')}
-                placeholder="Digite o e-mail principal"
-                type="email"
-                value={values.email}
+              <div className="lg:col-span-2">
+                <ProcessTextField
+                  {...register('whatsapp')}
+                  error={errors.whatsapp?.message}
+                  label="Whatsapp"
+                  maxLength={13}
+                  onChange={handleTextChange('whatsapp')}
+                  placeholder="00 00000-0000"
+                  value={values.whatsapp}
+                />
+              </div>
+            </div>
+          </ProcessFormSection>
+
+          <ProcessFormSection title="Observacao">
+            <div className="grid gap-4">
+              <ProcessTextAreaField
+                {...register('observation')}
+                error={errors.observation?.message}
+                hint="Limite de 500 caracteres para a primeira versao."
+                label="Observacao"
+                maxLength={500}
+                onChange={handleTextChange('observation')}
+                placeholder="Digite aqui alguma observacao sobre o processo..."
+                rows={5}
+                value={values.observation}
               />
+
+              <div className="flex justify-end">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {values.observation.length}/500
+                </span>
+              </div>
             </div>
+          </ProcessFormSection>
+        </fieldset>
 
-            <div className="lg:col-span-2">
-              <ProcessTextField
-                {...register('whatsapp')}
-                error={errors.whatsapp?.message}
-                label="Whatsapp"
-                maxLength={13}
-                onChange={handleTextChange('whatsapp')}
-                placeholder="00 00000-0000"
-                value={values.whatsapp}
-              />
-            </div>
-          </div>
-        </ProcessFormSection>
-
-        <ProcessFormSection title="Observacao">
-          <div className="grid gap-4">
-            <ProcessTextAreaField
-              {...register('observation')}
-              error={errors.observation?.message}
-              hint="Limite de 500 caracteres para a primeira versao."
-              label="Observacao"
-              maxLength={500}
-              onChange={handleTextChange('observation')}
-              placeholder="Digite aqui alguma observacao sobre o processo..."
-              rows={5}
-              value={values.observation}
-            />
-
-            <div className="flex justify-end">
-              <span className="text-xs font-medium text-muted-foreground">
-                {values.observation.length}/500
-              </span>
+        {isReadOnly ? (
+          <div className="sticky bottom-0 -mx-4 border-t border-border bg-background/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6 xl:-mx-8 xl:px-8">
+            <div className="mx-auto flex max-w-5xl items-center justify-end">
+              <Link className="no-underline" preload={false} to="/processos">
+                <Button type="button" variant="outline">
+                  Voltar para a lista
+                </Button>
+              </Link>
             </div>
           </div>
-        </ProcessFormSection>
-
-        <div className="sticky bottom-0 -mx-4 border-t border-border bg-background/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6 xl:-mx-8 xl:px-8">
-          <div className="mx-auto flex max-w-5xl items-center justify-between">
-            <button
-              className="text-sm text-muted-foreground hover:text-foreground"
-              disabled={isSubmitting}
-              onClick={handleReset}
-              type="button"
-            >
-              Restaurar campos
-            </button>
-            <Button disabled={isSubmitting} type="submit">
-              {isSubmitting ? 'Salvando...' : submitLabel}
-            </Button>
+        ) : (
+          <div className="sticky bottom-0 -mx-4 border-t border-border bg-background/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6 xl:-mx-8 xl:px-8">
+            <div className="mx-auto flex max-w-5xl items-center justify-between">
+              <button
+                className="text-sm text-muted-foreground hover:text-foreground"
+                disabled={isSubmitting}
+                onClick={handleReset}
+                type="button"
+              >
+                Restaurar campos
+              </button>
+              <Button disabled={isSubmitting} type="submit">
+                {isSubmitting ? 'Salvando...' : submitLabel}
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </form>
 
       {successState ? (

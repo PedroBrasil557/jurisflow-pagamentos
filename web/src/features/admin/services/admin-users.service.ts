@@ -65,8 +65,9 @@ function toAdminUserPayload(
   return {
     cpf: values.cpf,
     email: values.email || undefined,
+    isAdmin: values.isAdmin,
     name: values.name,
-    role: values.role,
+    profileId: values.isAdmin ? undefined : values.profileId || undefined,
   }
 }
 
@@ -86,7 +87,7 @@ export async function createAdminUserRequest(values: AdminUserFormPayload) {
 
 export async function updateAdminUserRequest(input: {
   userId: string
-  payload: { email?: string; name: string; role: 'user' | 'admin' | 'attorney' }
+  payload: { email?: string; isAdmin: boolean; name: string }
 }) {
   const response = await apiClient.api.admin.users[':userId'].$patch({
     param: { userId: input.userId },

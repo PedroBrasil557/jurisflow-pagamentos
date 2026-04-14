@@ -13,12 +13,23 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#/components/ui/tabs'
+import { useSession } from '@/features/auth/hooks/use-session'
 import { ConfirmDialog } from '@/shared/components/confirm-dialog'
 import { PageHeader } from '@/shared/components/page-header'
 import { downloadFile } from '@/shared/lib/download'
 import { BatchSection } from '../components/process-batch-section'
 import { ChecklistItemCard } from '../components/process-checklist-item-card'
 import { ChecklistItemDialog } from '../components/process-checklist-item-dialog'
+import {
+  buildProcessRelationship,
+  canAccessBatch,
+  canAccessChecklist,
+  canDeleteBatchFiles,
+  canDeleteChecklistFiles,
+  canEditProcess,
+  canManageChecklist,
+  canUploadBatchFiles,
+} from '../lib/process-access'
 import { formatCpf } from '../process-form.utils'
 import {
   useDeleteBatchFile,
@@ -50,9 +61,30 @@ type DeleteConfirmation = {
 }
 
 export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
+  const { permissions, user } = useSession()
   const detailQ = useQuery(processDetailOptions(processId))
-  const checklistQ = useQuery(processChecklistOptions(processId))
-  const batchQ = useQuery(processBatchFilesOptions(processId))
+  const detailProcess = detailQ.data?.process
+  const detailRelationship = detailProcess
+    ? buildProcessRelationship({
+        process: detailProcess,
+        userId: user.id,
+        permissions,
+      })
+    : null
+  const canLoadChecklist =
+    detailRelationship !== null &&
+    canAccessChecklist(permissions, detailRelationship)
+  const canLoadBatch =
+    detailRelationship !== null &&
+    canAccessBatch(permissions, detailRelationship)
+  const checklistQ = useQuery({
+    ...processChecklistOptions(processId),
+    enabled: canLoadChecklist,
+  })
+  const batchQ = useQuery({
+    ...processBatchFilesOptions(processId),
+    enabled: canLoadBatch,
+  })
   const submitMutation = useSubmitChecklistItem(processId)
   const markReadyMutation = useMarkDocumentationReady(processId)
   const uploadBatchMutation = useUploadBatchFiles(processId)
@@ -66,13 +98,17 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
   const process = detailQ.data?.process
   const checklist = checklistQ.data
   const batchFiles = batchQ.data?.files ?? []
+  const relationship = detailRelationship
+  const checklistData = checklist ?? null
 
   const isLoading =
-    detailQ.isLoading || checklistQ.isLoading || batchQ.isLoading
+    detailQ.isLoading ||
+    (canLoadChecklist && checklistQ.isLoading) ||
+    (canLoadBatch && batchQ.isLoading)
   const isDeleting =
     deleteBatchMutation.isPending || deleteChecklistFileMutation.isPending
 
-  if (isLoading || !process || !checklist) {
+  if (isLoading || !process || (canLoadChecklist && !checklist)) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="size-6 animate-spin text-muted-foreground" />
@@ -80,12 +116,46 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
     )
   }
 
-  const selectedItem =
-    checklist.items.find((item) => item.id === selectedItemId) ?? null
+  if (!canLoadChecklist && !canLoadBatch) {
+    return (
+      <div className="rounded-3xl border border-dashed border-border bg-muted/25 px-6 py-10 text-center">
+        <p className="text-sm font-medium text-muted-foreground">
+          Seu perfil nao possui acesso as abas deste processo.
+        </p>
+      </div>
+    )
+  }
 
-  const hasChecklistFiles = checklist.items.some(
-    (item) => item.currentFiles.length > 0,
-  )
+  const selectedItem =
+    checklist?.items.find((item) => item.id === selectedItemId) ?? null
+
+  const hasChecklistFiles =
+    checklist?.items.some((item) => item.currentFiles.length > 0) ?? false
+  const canEditCurrentProcess =
+    process && relationship ? canEditProcess(permissions, relationship) : false
+  const canViewChecklistTab =
+    process && relationship
+      ? canAccessChecklist(permissions, relationship)
+      : false
+  const canViewBatchTab =
+    process && relationship ? canAccessBatch(permissions, relationship) : false
+  const canSubmitChecklist =
+    process && relationship
+      ? canManageChecklist(permissions, relationship)
+      : false
+  const canDeleteChecklistCurrentFiles =
+    process && relationship
+      ? canDeleteChecklistFiles(permissions, relationship)
+      : false
+  const canUploadBatchCurrentFiles =
+    process && relationship
+      ? canUploadBatchFiles(permissions, relationship)
+      : false
+  const canDeleteBatchCurrentFiles =
+    process && relationship
+      ? canDeleteBatchFiles(permissions, relationship)
+      : false
+  const defaultTab = canViewChecklistTab ? 'documentos' : 'lote'
 
   async function handleChecklistItemSubmit(input: {
     file?: File | null
@@ -246,93 +316,107 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
               Voltar
             </Button>
           </Link>
-          <Link
-            className="no-underline"
-            params={{ processId }}
-            preload={false}
-            to="/processos/$processId/editar"
-          >
-            <Button variant="outline" size="sm">
-              <Pencil className="size-4" />
-              Editar processo
-            </Button>
-          </Link>
+          {canEditCurrentProcess ? (
+            <Link
+              className="no-underline"
+              params={{ processId }}
+              preload={false}
+              to="/processos/$processId/editar"
+            >
+              <Button variant="outline" size="sm">
+                <Pencil className="size-4" />
+                Editar processo
+              </Button>
+            </Link>
+          ) : null}
         </PageHeader>
 
-        <Tabs defaultValue="documentos">
+        <Tabs defaultValue={defaultTab}>
           <TabsList>
-            <TabsTrigger value="documentos">
-              <FileUp className="size-4" />
-              {`Documentos (${checklist.summary.requiredCompleted}/${checklist.summary.requiredTotal})`}
-            </TabsTrigger>
-            <TabsTrigger value="lote">
-              <Package className="size-4" />
-              {`Em lote (${batchFiles.length})`}
-            </TabsTrigger>
+            {canViewChecklistTab ? (
+              <TabsTrigger value="documentos">
+                <FileUp className="size-4" />
+                {`Documentos (${checklistData?.summary.requiredCompleted ?? 0}/${checklistData?.summary.requiredTotal ?? 0})`}
+              </TabsTrigger>
+            ) : null}
+            {canViewBatchTab ? (
+              <TabsTrigger value="lote">
+                <Package className="size-4" />
+                {`Em lote (${batchFiles.length})`}
+              </TabsTrigger>
+            ) : null}
           </TabsList>
 
-          <TabsContent value="lote">
-            <div className="grid gap-4 pt-4">
-              <BatchSection
-                batchFiles={batchFiles}
-                isUploading={uploadBatchMutation.isPending}
-                onDelete={handleBatchDelete}
-                onDownloadAll={() => void handleDownloadAllBatch()}
-                onDownloadFile={(fileId) =>
-                  void handleBatchFileDownload(fileId)
-                }
-                onUpload={handleBatchUpload}
-              />
-            </div>
-          </TabsContent>
+          {canViewBatchTab ? (
+            <TabsContent value="lote">
+              <div className="grid gap-4 pt-4">
+                <BatchSection
+                  batchFiles={batchFiles}
+                  canDelete={canDeleteBatchCurrentFiles}
+                  canUpload={canUploadBatchCurrentFiles}
+                  isUploading={uploadBatchMutation.isPending}
+                  onDelete={handleBatchDelete}
+                  onDownloadAll={() => void handleDownloadAllBatch()}
+                  onDownloadFile={(fileId) =>
+                    void handleBatchFileDownload(fileId)
+                  }
+                  onUpload={handleBatchUpload}
+                />
+              </div>
+            </TabsContent>
+          ) : null}
 
-          <TabsContent value="documentos">
-            <div className="grid gap-4 pt-4">
-              <div className="flex items-center justify-between">
-                <div
-                  className={`rounded-lg border px-4 py-3 ${
-                    checklist.summary.requiredPending === 0
-                      ? 'border-emerald-500/20 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                      : 'border-amber-500/20 bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                  }`}
-                >
-                  <span className="text-sm font-medium">
-                    {checklist.summary.requiredPending === 0
-                      ? `Documentos obrigatorios completos (${checklist.summary.requiredCompleted}/${checklist.summary.requiredTotal} presentes)`
-                      : `Faltam documentos obrigatorios (${checklist.summary.requiredCompleted}/${checklist.summary.requiredTotal} presentes)`}
-                  </span>
+          {canViewChecklistTab && checklistData ? (
+            <TabsContent value="documentos">
+              <div className="grid gap-4 pt-4">
+                <div className="flex items-center justify-between">
+                  <div
+                    className={`rounded-lg border px-4 py-3 ${
+                      checklistData.summary.requiredPending === 0
+                        ? 'border-emerald-500/20 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                        : 'border-amber-500/20 bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                    }`}
+                  >
+                    <span className="text-sm font-medium">
+                      {checklistData.summary.requiredPending === 0
+                        ? `Documentos obrigatorios completos (${checklistData.summary.requiredCompleted}/${checklistData.summary.requiredTotal} presentes)`
+                        : `Faltam documentos obrigatorios (${checklistData.summary.requiredCompleted}/${checklistData.summary.requiredTotal} presentes)`}
+                    </span>
+                  </div>
+
+                  {hasChecklistFiles ? (
+                    <Button
+                      onClick={() => void handleDownloadAllChecklist()}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <Download className="size-3.5" />
+                      Baixar todos documentos
+                    </Button>
+                  ) : null}
                 </div>
 
-                {hasChecklistFiles ? (
-                  <Button
-                    onClick={() => void handleDownloadAllChecklist()}
-                    size="sm"
-                    variant="outline"
-                  >
-                    <Download className="size-3.5" />
-                    Baixar todos documentos
-                  </Button>
-                ) : null}
+                <section className="grid gap-4 xl:grid-cols-2">
+                  {checklistData.items.map((item) => (
+                    <ChecklistItemCard
+                      item={item}
+                      key={item.id}
+                      onOpen={(nextItem) => {
+                        setSelectedItemId(nextItem.id)
+                      }}
+                    />
+                  ))}
+                </section>
               </div>
-
-              <section className="grid gap-4 xl:grid-cols-2">
-                {checklist.items.map((item) => (
-                  <ChecklistItemCard
-                    item={item}
-                    key={item.id}
-                    onOpen={(nextItem) => {
-                      setSelectedItemId(nextItem.id)
-                    }}
-                  />
-                ))}
-              </section>
-            </div>
-          </TabsContent>
+            </TabsContent>
+          ) : null}
         </Tabs>
       </div>
 
       {selectedItem ? (
         <ChecklistItemDialog
+          canDeleteFiles={canDeleteChecklistCurrentFiles}
+          canSubmit={canSubmitChecklist}
           isSubmitting={submitMutation.isPending}
           item={selectedItem}
           onClose={() => setSelectedItemId(null)}

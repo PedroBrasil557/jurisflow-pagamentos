@@ -14,6 +14,7 @@ import { AuthenticatedSidebar } from './authenticated-sidebar'
 
 export function AuthenticatedLayout({
   children,
+  permissions,
   user,
 }: AuthenticatedLayoutProps) {
   const navigate = useNavigate()
@@ -37,7 +38,7 @@ export function AuthenticatedLayout({
 
   const navigationItems = getVisibleNavigationItems(
     authenticatedNavigationItems,
-    user,
+    { permissions, user },
   )
   const userInitials = getUserInitials(user.name)
   const breadcrumbs = getBreadcrumbItems(location.pathname, navigationItems)

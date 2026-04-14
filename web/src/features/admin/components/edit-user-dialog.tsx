@@ -2,8 +2,10 @@ import { Pencil } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
+import { Checkbox } from '#/components/ui/checkbox'
 import { Input } from '#/components/ui/input'
-import { NativeSelect } from '#/components/ui/native-select'
+import { Label } from '#/components/ui/label'
+import { useSession } from '@/features/auth/hooks/use-session'
 import { AppDialog } from '@/shared/components/app-dialog'
 import { useUpdateAdminUser } from '../services/admin-users.mutations'
 import type { AdminUserListItem } from '../services/admin-users.service'
@@ -14,28 +16,26 @@ type EditUserDialogProps = {
   user: AdminUserListItem
 }
 
-const roleOptions = [
-  { value: 'user', label: 'Usuario' },
-  { value: 'attorney', label: 'Advogado' },
-  { value: 'admin', label: 'Administrador' },
-]
-
 function isInternalEmail(email: string) {
   return email.endsWith('@internal.local')
 }
 
 export function EditUserDialog({ onClose, open, user }: EditUserDialogProps) {
+  const { user: currentUser } = useSession()
   const [name, setName] = useState(user.name)
   const [email, setEmail] = useState(
     isInternalEmail(user.email) ? '' : user.email,
   )
-  const [role, setRole] = useState<'user' | 'admin' | 'attorney'>(user.role)
+  const [isAdmin, setIsAdmin] = useState(user.role === 'admin')
   const updateMutation = useUpdateAdminUser()
+
+  const isEditingSelf = currentUser.id === user.id
+  const isSelfAdmin = isEditingSelf && user.role === 'admin'
 
   useEffect(() => {
     setName(user.name)
     setEmail(isInternalEmail(user.email) ? '' : user.email)
-    setRole(user.role)
+    setIsAdmin(user.role === 'admin')
   }, [user])
 
   async function handleSubmit() {
@@ -50,7 +50,7 @@ export function EditUserDialog({ onClose, open, user }: EditUserDialogProps) {
         payload: {
           name: name.trim(),
           email: email.trim() || undefined,
-          role,
+          isAdmin,
         },
       })
       toast.success('Usuario atualizado com sucesso.')
@@ -64,6 +64,10 @@ export function EditUserDialog({ onClose, open, user }: EditUserDialogProps) {
     }
   }
 
+  const wasAdmin = user.role === 'admin'
+  const isPromotingFromUserToAdmin = !wasAdmin && isAdmin
+  const isDemotingFromAdminToUser = wasAdmin && !isAdmin
+
   return (
     <AppDialog
       description={`CPF: ${user.cpf ?? ''}`}
@@ -75,9 +79,7 @@ export function EditUserDialog({ onClose, open, user }: EditUserDialogProps) {
     >
       <div className="grid gap-4">
         <div className="grid gap-2">
-          <label className="text-sm font-medium" htmlFor="edit-name">
-            Nome
-          </label>
+          <Label htmlFor="edit-name">Nome</Label>
           <Input
             id="edit-name"
             onChange={(e) => setName(e.target.value)}
@@ -87,9 +89,7 @@ export function EditUserDialog({ onClose, open, user }: EditUserDialogProps) {
         </div>
 
         <div className="grid gap-2">
-          <label className="text-sm font-medium" htmlFor="edit-email">
-            E-mail (opcional)
-          </label>
+          <Label htmlFor="edit-email">E-mail (opcional)</Label>
           <Input
             id="edit-email"
             onChange={(e) => setEmail(e.target.value)}
@@ -100,27 +100,58 @@ export function EditUserDialog({ onClose, open, user }: EditUserDialogProps) {
         </div>
 
         <div className="grid gap-2">
-          <label className="text-sm font-medium" htmlFor="edit-role">
-            Perfil
-          </label>
-          <NativeSelect
-            className="w-full"
-            id="edit-role"
-            onChange={(e) =>
-              setRole(e.target.value as 'user' | 'admin' | 'attorney')
+          <span className="text-sm font-medium text-foreground">
+            Tipo de acesso
+          </span>
+          <label
+            className={
+              'flex items-start gap-3 rounded-lg border border-border bg-background p-3 ' +
+              (isSelfAdmin
+                ? 'cursor-not-allowed opacity-60'
+                : 'cursor-pointer hover:bg-muted/40')
             }
-            value={role}
+            htmlFor="edit-is-admin"
           >
-            {roleOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </NativeSelect>
+            <Checkbox
+              checked={isAdmin}
+              className="mt-0.5"
+              disabled={isSelfAdmin}
+              id="edit-is-admin"
+              onCheckedChange={(checked) => {
+                if (checked === 'indeterminate') return
+                setIsAdmin(checked)
+              }}
+            />
+            <div className="grid gap-0.5">
+              <span className="text-sm font-medium text-foreground">
+                Administrador
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Acesso total a plataforma. Quando desmarcado, o usuario passa a
+                usar perfil de permissoes.
+              </span>
+            </div>
+          </label>
+          {isSelfAdmin ? (
+            <p className="text-xs text-muted-foreground">
+              Voce nao pode remover seu proprio acesso de administrador.
+            </p>
+          ) : null}
+          {!isSelfAdmin && isPromotingFromUserToAdmin ? (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              O perfil atual sera removido ao promover para administrador.
+            </p>
+          ) : null}
+          {!isSelfAdmin && isDemotingFromAdminToUser ? (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              O usuario sera vinculado ao perfil "Usuario Padrao". Voce pode
+              ajustar depois em Permissoes.
+            </p>
+          ) : null}
         </div>
       </div>
 
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+      <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button
           disabled={updateMutation.isPending}
           onClick={onClose}

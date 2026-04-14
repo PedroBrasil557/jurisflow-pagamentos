@@ -1,4 +1,5 @@
 import { Badge } from '#/components/ui/badge'
+import type { ResolvedPermissions } from '@/features/permissions/services/permissions.service'
 import { formatCpf } from '../process-form.utils'
 import type { ProcessListItem } from '../services/processes.service'
 import { ProcessActions } from './process-actions'
@@ -11,16 +12,16 @@ export function ProcessMobileCard({
   onGeneratePdf,
   onLegalProcess,
   onViewHistory,
+  permissions,
   process,
-  userRole,
 }: {
   onCancel: (process: ProcessListItem) => void
   onFinalize: (process: ProcessListItem) => void
   onGeneratePdf: (processId: string) => void
   onLegalProcess: (process: ProcessListItem) => void
   onViewHistory: (processId: string) => void
+  permissions: ResolvedPermissions
   process: ProcessListItem
-  userRole: string
 }) {
   return (
     <article className="rounded-3xl border border-border bg-card p-4 shadow-sm">
@@ -40,8 +41,8 @@ export function ProcessMobileCard({
           onGeneratePdf={onGeneratePdf}
           onLegalProcess={onLegalProcess}
           onViewHistory={onViewHistory}
+          permissions={permissions}
           process={process}
-          userRole={userRole}
         />
       </div>
 

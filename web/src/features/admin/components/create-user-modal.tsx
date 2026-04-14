@@ -1,7 +1,11 @@
+import { useQuery } from '@tanstack/react-query'
 import { UserPlus } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Controller } from 'react-hook-form'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
+import { RadioGroup, RadioGroupItem } from '#/components/ui/radio-group'
+import { profileListOptions } from '@/features/permissions/services/permissions.queries'
 import { AppDialog } from '@/shared/components/app-dialog'
 import { FormInput, FormSelect, useZodForm } from '@/shared/components/ui/form'
 import {
@@ -10,13 +14,6 @@ import {
   adminUserFormSchema,
 } from '../schemas/admin-user-form.schema'
 import { useCreateAdminUser } from '../services/admin-users.mutations'
-
-const userRoleOptions = [
-  { label: 'Selecione...', value: '' },
-  { label: 'Usuario', value: 'user' },
-  { label: 'Advogado', value: 'attorney' },
-  { label: 'Administrador', value: 'admin' },
-] as const
 
 export type CreateUserModalProps = {
   onClose: () => void
@@ -28,22 +25,46 @@ export function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
     null,
   )
   const mutation = useCreateAdminUser()
+  const profilesQuery = useQuery(profileListOptions({ limit: 100, page: 1 }))
+  const profiles = useMemo(
+    () => profilesQuery.data?.items ?? [],
+    [profilesQuery.data],
+  )
+
   const {
     clearErrors,
+    control,
     formState: { errors, isSubmitting },
     handleSubmit,
     register,
     reset,
     setError,
+    setValue,
+    watch,
   } = useZodForm<AdminUserFormInput, AdminUserFormPayload>({
     defaultValues: {
       cpf: '',
       email: '',
+      isAdmin: false,
       name: '',
-      role: 'user',
+      profileId: '',
     },
     schema: adminUserFormSchema,
   })
+
+  const isAdmin = watch('isAdmin')
+
+  useEffect(() => {
+    const currentProfileId = watch('profileId')
+    if (!isAdmin && !currentProfileId && profiles.length > 0) {
+      const defaultProfile =
+        profiles.find((profile) => profile.name === 'Usuario Padrao') ??
+        profiles[0]
+      if (defaultProfile) {
+        setValue('profileId', defaultProfile.id, { shouldValidate: false })
+      }
+    }
+  }, [isAdmin, profiles, setValue, watch])
 
   async function handleCreateUser(values: AdminUserFormPayload) {
     try {
@@ -91,14 +112,25 @@ export function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
     setGeneratedPassword(null)
   }
 
+  const profileOptions = useMemo(
+    () => [
+      { label: 'Selecione...', value: '' },
+      ...profiles.map((profile) => ({
+        label: profile.isSystem ? `${profile.name} (sistema)` : profile.name,
+        value: profile.id,
+      })),
+    ],
+    [profiles],
+  )
+
   return (
     <AppDialog
+      description="Cadastre um novo usuario na plataforma."
       icon={UserPlus}
       maxWidth="2xl"
       onClose={onClose}
       open={true}
       title="Novo usuario"
-      description="Cadastre um novo usuario na plataforma."
     >
       {generatedPassword ? (
         <div className="grid gap-5">
@@ -172,26 +204,62 @@ export function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
               })}
             />
 
-            <FormSelect
-              error={errors.role?.message}
-              label="Perfil"
-              options={userRoleOptions}
-              required
-              {...register('role', {
+            <FormInput
+              error={errors.email?.message}
+              label="E-mail"
+              placeholder="usuario@empresa.com (opcional)"
+              type="email"
+              {...register('email', {
                 onChange: () => clearErrors('root'),
               })}
             />
           </div>
 
-          <FormInput
-            error={errors.email?.message}
-            label="E-mail"
-            placeholder="usuario@empresa.com (opcional)"
-            type="email"
-            {...register('email', {
-              onChange: () => clearErrors('root'),
-            })}
-          />
+          <div className="grid gap-2">
+            <span className="text-sm font-medium text-foreground">
+              Tipo de acesso <span className="text-destructive">*</span>
+            </span>
+            <Controller
+              control={control}
+              name="isAdmin"
+              render={({ field }) => (
+                <RadioGroup
+                  className="grid gap-2 sm:grid-cols-2"
+                  onValueChange={(value) => {
+                    field.onChange(value === 'admin')
+                    clearErrors('root')
+                  }}
+                  value={field.value ? 'admin' : 'user'}
+                >
+                  <AccessTypeOption
+                    description="Usa um perfil de permissoes"
+                    isSelected={!field.value}
+                    label="Usuario"
+                    value="user"
+                  />
+                  <AccessTypeOption
+                    description="Acesso total a plataforma"
+                    isSelected={field.value}
+                    label="Administrador"
+                    value="admin"
+                  />
+                </RadioGroup>
+              )}
+            />
+          </div>
+
+          {!isAdmin ? (
+            <FormSelect
+              disabled={profilesQuery.isLoading}
+              error={errors.profileId?.message}
+              label="Perfil"
+              options={profileOptions}
+              required
+              {...register('profileId', {
+                onChange: () => clearErrors('root'),
+              })}
+            />
+          ) : null}
 
           <div className="rounded-3xl border border-border bg-muted/50 px-4 py-3">
             <span className="text-sm leading-6">
@@ -215,5 +283,41 @@ export function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
         </form>
       )}
     </AppDialog>
+  )
+}
+
+type AccessTypeOptionProps = {
+  description: string
+  isSelected: boolean
+  label: string
+  value: string
+}
+
+function AccessTypeOption({
+  description,
+  isSelected,
+  label,
+  value,
+}: AccessTypeOptionProps) {
+  return (
+    <label
+      className={
+        'flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ' +
+        (isSelected
+          ? 'border-primary/60 bg-primary/5'
+          : 'border-border bg-background hover:bg-muted/40')
+      }
+      htmlFor={`access-type-${value}`}
+    >
+      <RadioGroupItem
+        className="mt-0.5"
+        id={`access-type-${value}`}
+        value={value}
+      />
+      <div className="grid gap-0.5">
+        <span className="text-sm font-medium text-foreground">{label}</span>
+        <span className="text-xs text-muted-foreground">{description}</span>
+      </div>
+    </label>
   )
 }

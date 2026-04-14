@@ -8,20 +8,26 @@ import {
   jsonValidator,
   queryValidator,
 } from '../../shared/validation/validators'
+import { resolveUserPermissions } from '../permissions/permissions.service'
 import { user } from './auth.schema'
 import { changeInitialPasswordPayloadSchema } from './auth.schemas'
 import { changeInitialPassword } from './auth.user-management.service'
 
 export const authRoutes = new Hono<AppBindings>()
-  .get('/session', (c) => {
+  .get('/session', async (c) => {
     const session = c.get('session')
     const currentUser = c.get('user')
 
     if (!session || !currentUser) {
-      return c.json({ session: null, user: null }, 401)
+      return c.json({ session: null, user: null, permissions: null }, 401)
     }
 
-    return c.json({ session, user: currentUser }, 200)
+    const permissions = await resolveUserPermissions(
+      currentUser.id,
+      currentUser.role,
+    )
+
+    return c.json({ session, user: currentUser, permissions }, 200)
   })
   .post(
     '/session/change-initial-password',

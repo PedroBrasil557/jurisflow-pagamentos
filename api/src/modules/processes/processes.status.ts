@@ -26,6 +26,8 @@ export const processHistoryEventTypes = [
   'DOCUMENT_OBSERVATION_UPDATED',
   'BATCH_UPLOADED',
   'BATCH_DELETED',
+  'DOCUMENTATION_ASSIGNEE_SET',
+  'DOCUMENTATION_ASSIGNEE_REMOVED',
 ] as const
 
 export type ProcessHistoryEventType = (typeof processHistoryEventTypes)[number]
