@@ -1,7 +1,7 @@
 import type {
   AuthenticatedBreadcrumbItem,
-  AuthenticatedLayoutUser,
   AuthenticatedNavigationItem,
+  AuthenticatedNavigationVisibilityInput,
 } from './authenticated-layout.types'
 
 export function getUserInitials(name: string) {
@@ -12,11 +12,9 @@ export function getUserInitials(name: string) {
 
 export function getVisibleNavigationItems(
   items: readonly AuthenticatedNavigationItem[],
-  user: AuthenticatedLayoutUser,
+  input: AuthenticatedNavigationVisibilityInput,
 ) {
-  return items.filter((item) =>
-    item.isVisible ? item.isVisible(user.role) : true,
-  )
+  return items.filter((item) => (item.isVisible ? item.isVisible(input) : true))
 }
 
 export function getCurrentSection(

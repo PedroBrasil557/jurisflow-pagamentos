@@ -3,6 +3,7 @@ import {
   CheckCircle,
   CheckSquare,
   Clock,
+  Eye,
   FileText,
   Gavel,
   MoreVertical,
@@ -17,6 +18,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '#/components/ui/dropdown-menu'
+import type { ResolvedPermissions } from '@/features/permissions/services/permissions.service'
+import {
+  canAccessChecklist,
+  canAccessHistory,
+  canCancelProcess,
+  canEditLegal,
+  canEditProcess,
+  canFinalizeProcess,
+  canGeneratePdf,
+  canStartLegal,
+  canViewProcessDetails,
+} from '../lib/process-access'
 import type { ProcessListItem } from '../services/processes.service'
 
 type ProcessActionsProps = {
@@ -25,12 +38,11 @@ type ProcessActionsProps = {
   onGeneratePdf: (processId: string) => void
   onLegalProcess: (process: ProcessListItem) => void
   onViewHistory: (processId: string) => void
+  permissions: ResolvedPermissions
   process: ProcessListItem
-  userRole: string
 }
 
 const terminalStatuses = new Set(['FINALIZADO', 'CANCELADO'])
-const legalRoles = new Set(['attorney', 'admin'])
 
 export function ProcessActions({
   onCancel,
@@ -38,17 +50,26 @@ export function ProcessActions({
   onGeneratePdf,
   onLegalProcess,
   onViewHistory,
+  permissions,
   process,
-  userRole,
 }: ProcessActionsProps) {
   const isTerminal = terminalStatuses.has(process.status)
-  const canManageLegal = legalRoles.has(userRole)
-  const canStartLegal =
-    canManageLegal && process.status === 'DOCUMENTACAO_PRONTA'
-  const canEditLegal = canManageLegal && process.status === 'EM_PROCESSO'
-  const canFinalize = canManageLegal && process.status === 'EM_PROCESSO'
-  const canCancel = !isTerminal
-  const canEdit = !isTerminal
+  const relationship = process.relationship
+  const canEdit = !isTerminal && canEditProcess(permissions, relationship)
+  const canViewDetails =
+    !canEdit && canViewProcessDetails(permissions, relationship)
+  const canOpenChecklist = canAccessChecklist(permissions, relationship)
+  const canStartLegalAction =
+    process.status === 'DOCUMENTACAO_PRONTA' &&
+    canStartLegal(permissions, relationship)
+  const canEditLegalAction =
+    process.status === 'EM_PROCESSO' && canEditLegal(permissions, relationship)
+  const canFinalizeAction =
+    process.status === 'EM_PROCESSO' &&
+    canFinalizeProcess(permissions, relationship)
+  const canGeneratePdfAction = canGeneratePdf(permissions, relationship)
+  const canViewHistoryAction = canAccessHistory(permissions, relationship)
+  const canCancel = !isTerminal && canCancelProcess(permissions, relationship)
 
   return (
     <DropdownMenu>
@@ -74,36 +95,50 @@ export function ProcessActions({
               Editar
             </Link>
           </DropdownMenuItem>
+        ) : canViewDetails ? (
+          <DropdownMenuItem asChild>
+            <Link
+              className="no-underline"
+              params={{ processId: process.id }}
+              preload={false}
+              to="/processos/$processId/editar"
+            >
+              <Eye className="mr-2 size-4" />
+              Ver detalhes
+            </Link>
+          </DropdownMenuItem>
         ) : null}
-        <DropdownMenuItem asChild>
-          <Link
-            className="no-underline"
-            params={{ processId: process.id }}
-            preload={false}
-            to="/processos/$processId/checklist"
-          >
-            <CheckSquare className="mr-2 size-4" />
-            Checklist
-          </Link>
-        </DropdownMenuItem>
+        {canOpenChecklist ? (
+          <DropdownMenuItem asChild>
+            <Link
+              className="no-underline"
+              params={{ processId: process.id }}
+              preload={false}
+              to="/processos/$processId/checklist"
+            >
+              <CheckSquare className="mr-2 size-4" />
+              Checklist
+            </Link>
+          </DropdownMenuItem>
+        ) : null}
 
-        {canStartLegal || canEditLegal || canFinalize ? (
+        {canStartLegalAction || canEditLegalAction || canFinalizeAction ? (
           <DropdownMenuSeparator />
         ) : null}
 
-        {canStartLegal ? (
+        {canStartLegalAction ? (
           <DropdownMenuItem onClick={() => onLegalProcess(process)}>
             <Gavel className="mr-2 size-4" />
             Iniciar processo
           </DropdownMenuItem>
         ) : null}
-        {canEditLegal ? (
+        {canEditLegalAction ? (
           <DropdownMenuItem onClick={() => onLegalProcess(process)}>
             <Gavel className="mr-2 size-4" />
             Editar processo juridico
           </DropdownMenuItem>
         ) : null}
-        {canFinalize ? (
+        {canFinalizeAction ? (
           <DropdownMenuItem onClick={() => onFinalize(process)}>
             <CheckCircle className="mr-2 size-4" />
             Finalizar processo
@@ -112,14 +147,18 @@ export function ProcessActions({
 
         <DropdownMenuSeparator />
 
-        <DropdownMenuItem onClick={() => onGeneratePdf(process.id)}>
-          <FileText className="mr-2 size-4" />
-          Gerar PDF
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onViewHistory(process.id)}>
-          <Clock className="mr-2 size-4" />
-          Historico
-        </DropdownMenuItem>
+        {canGeneratePdfAction ? (
+          <DropdownMenuItem onClick={() => onGeneratePdf(process.id)}>
+            <FileText className="mr-2 size-4" />
+            Gerar PDF
+          </DropdownMenuItem>
+        ) : null}
+        {canViewHistoryAction ? (
+          <DropdownMenuItem onClick={() => onViewHistory(process.id)}>
+            <Clock className="mr-2 size-4" />
+            Historico
+          </DropdownMenuItem>
+        ) : null}
 
         {canCancel ? (
           <>

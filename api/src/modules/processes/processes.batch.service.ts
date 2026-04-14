@@ -10,6 +10,15 @@ import {
 import type { AppBindings } from '../../shared/types/app'
 import { buildBatchDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
+import {
+  assertCanAccessBatch,
+  assertProcessAction,
+} from '../permissions/permissions.service'
+import type { ResolvedPermissions } from '../permissions/permissions.types'
+import {
+  getProcessContextOrThrow,
+  getProcessRecordOrThrow,
+} from './processes.access'
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { process, processBatchFile } from './processes.schema'
@@ -49,20 +58,6 @@ function assertBatchUploadAllowed(currentStatus: ProcessStatus) {
     409,
     'Nao e possivel enviar arquivos em lote para um processo nesta etapa.',
   )
-}
-
-async function getProcessRecordOrThrow(processId: string) {
-  const [currentProcess] = await db
-    .select()
-    .from(process)
-    .where(eq(process.id, processId))
-    .limit(1)
-
-  if (!currentProcess) {
-    throw new ProcessServiceError(404, 'Processo nao encontrado.')
-  }
-
-  return currentProcess
 }
 
 async function getBatchFileCount(processId: string) {
@@ -134,8 +129,16 @@ export async function uploadBatchFiles(input: {
   processId: string
   files: File[]
   actor: ProcessActor
+  perms: ResolvedPermissions
 }) {
-  const currentProcess = await getProcessRecordOrThrow(input.processId)
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  assertCanAccessBatch(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'uploadBatch')
   assertBatchUploadAllowed(currentProcess.status)
 
   if (input.files.length === 0) {
@@ -224,8 +227,17 @@ export async function uploadBatchFiles(input: {
   }
 }
 
-export async function listBatchFiles(processId: string) {
-  await getProcessRecordOrThrow(processId)
+export async function listBatchFiles(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { relationship } = await getProcessContextOrThrow({
+    processId,
+    userId,
+    perms,
+  })
+  assertCanAccessBatch(perms, relationship)
 
   return db
     .select({
@@ -249,8 +261,16 @@ export async function deleteBatchFile(input: {
   processId: string
   fileId: string
   actor: ProcessActor
+  perms: ResolvedPermissions
 }) {
-  const currentProcess = await getProcessRecordOrThrow(input.processId)
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  assertCanAccessBatch(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'deleteBatch')
   assertBatchUploadAllowed(currentProcess.status)
 
   const [fileRecord] = await db
@@ -303,7 +323,16 @@ export async function deleteBatchFile(input: {
 export async function getBatchFileDownload(input: {
   processId: string
   fileId: string
+  userId: string
+  perms: ResolvedPermissions
 }) {
+  const { relationship } = await getProcessContextOrThrow({
+    processId: input.processId,
+    userId: input.userId,
+    perms: input.perms,
+  })
+  assertCanAccessBatch(input.perms, relationship)
+
   const currentProcess = await getProcessRecordOrThrow(input.processId)
 
   const [fileRecord] = await db
@@ -372,7 +401,18 @@ export async function getBatchFileDownload(input: {
   }
 }
 
-export async function downloadAllBatchFiles(processId: string) {
+export async function downloadAllBatchFiles(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { relationship } = await getProcessContextOrThrow({
+    processId,
+    userId,
+    perms,
+  })
+  assertCanAccessBatch(perms, relationship)
+
   const currentProcess = await getProcessRecordOrThrow(processId)
 
   const files = await db

@@ -7,12 +7,14 @@ import { formatBytes } from '@/shared/lib/format'
 import type { ProcessBatchFile } from '../services/processes.service'
 
 function BatchFileRow({
+  canDelete,
   file,
   isSelected,
   onDelete,
   onDownload,
   onToggleSelect,
 }: {
+  canDelete: boolean
   file: ProcessBatchFile
   isSelected: boolean
   onDelete: (fileId: string) => void
@@ -52,6 +54,7 @@ function BatchFileRow({
           type="button"
           variant="outline"
           className="text-destructive hover:text-destructive"
+          disabled={!canDelete}
         >
           <Trash2 className="size-3.5" />
           Remover
@@ -63,6 +66,8 @@ function BatchFileRow({
 
 type BatchSectionProps = {
   batchFiles: ProcessBatchFile[]
+  canDelete?: boolean
+  canUpload?: boolean
   isUploading: boolean
   onDelete: (fileId: string) => void
   onDownloadAll: () => void
@@ -72,6 +77,8 @@ type BatchSectionProps = {
 
 export function BatchSection({
   batchFiles,
+  canDelete = true,
+  canUpload = true,
   isUploading,
   onDelete,
   onDownloadAll,
@@ -138,29 +145,42 @@ export function BatchSection({
       ) : null}
 
       <div className="rounded-[1.75rem] border border-dashed border-border bg-muted/35 p-5">
-        <label
-          className="flex cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-card px-5 py-8 text-center transition hover:border-primary/35 hover:bg-primary/5"
-          htmlFor={fileInputId}
-        >
-          <FileUp className="mb-2 size-8 text-muted-foreground" />
-          <span className="text-base font-semibold text-foreground">
-            {isUploading
-              ? 'Enviando...'
-              : 'Clique aqui para enviar arquivos em lote'}
-          </span>
-          <span className="mt-1 text-sm text-muted-foreground">
-            Selecione um ou mais arquivos (max 25 MB cada)
-          </span>
-        </label>
+        {canUpload ? (
+          <>
+            <label
+              className="flex cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-card px-5 py-8 text-center transition hover:border-primary/35 hover:bg-primary/5"
+              htmlFor={fileInputId}
+            >
+              <FileUp className="mb-2 size-8 text-muted-foreground" />
+              <span className="text-base font-semibold text-foreground">
+                {isUploading
+                  ? 'Enviando...'
+                  : 'Clique aqui para enviar arquivos em lote'}
+              </span>
+              <span className="mt-1 text-sm text-muted-foreground">
+                Selecione um ou mais arquivos (max 25 MB cada)
+              </span>
+            </label>
 
-        <input
-          className="hidden"
-          id={fileInputId}
-          multiple
-          onChange={handleFilesSelected}
-          ref={fileInputRef}
-          type="file"
-        />
+            <input
+              className="hidden"
+              id={fileInputId}
+              multiple
+              onChange={handleFilesSelected}
+              ref={fileInputRef}
+              type="file"
+            />
+          </>
+        ) : (
+          <div className="rounded-[1.5rem] border border-dashed border-border bg-card px-5 py-8 text-center">
+            <p className="text-base font-semibold text-foreground">
+              Upload em lote indisponivel
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Seu perfil permite apenas visualizar os arquivos deste processo.
+            </p>
+          </div>
+        )}
 
         {batchFiles.length > 0 ? (
           <div className="mt-4 grid gap-3">
@@ -192,10 +212,17 @@ export function BatchSection({
 
             {batchFiles.map((file) => (
               <BatchFileRow
+                canDelete={canDelete}
                 file={file}
                 isSelected={selectedFileIds.has(file.id)}
                 key={file.id}
-                onDelete={onDelete}
+                onDelete={(fileId) => {
+                  if (!canDelete) {
+                    return
+                  }
+
+                  onDelete(fileId)
+                }}
                 onDownload={onDownloadFile}
                 onToggleSelect={handleToggleSelect}
               />

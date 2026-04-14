@@ -12,6 +12,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import { user } from '../auth/auth.schema'
+import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import {
   processDocumentStatuses,
   processHistoryEventTypes,
@@ -104,6 +105,14 @@ export const process = pgTable(
     finalizedAt: timestamp('finalized_at'),
     cancelledAt: timestamp('cancelled_at'),
     cancellationReason: text('cancellation_reason'),
+    housingComplexId: text('housing_complex_id').references(
+      () => housingComplex.id,
+      { onDelete: 'restrict' },
+    ),
+    documentationAssigneeId: text('documentation_assignee_id').references(
+      () => user.id,
+      { onDelete: 'set null' },
+    ),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at')
       .defaultNow()
@@ -116,6 +125,10 @@ export const process = pgTable(
     index('process_assigned_attorney_id_idx').on(table.assignedAttorneyId),
     index('process_witness_1_id_idx').on(table.witness1Id),
     index('process_witness_2_id_idx').on(table.witness2Id),
+    index('process_housing_complex_id_idx').on(table.housingComplexId),
+    index('process_documentation_assignee_id_idx').on(
+      table.documentationAssigneeId,
+    ),
   ],
 )
 

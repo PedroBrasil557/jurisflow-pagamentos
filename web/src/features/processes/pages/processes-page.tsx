@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { getRouteApi, Link, useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { Loader2, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent } from '#/components/ui/card'
+import { useSession } from '@/features/auth/hooks/use-session'
 import { PageHeader } from '@/shared/components/page-header'
 import { SearchInput } from '@/shared/components/search-input'
 import {
@@ -22,6 +23,7 @@ import { ProcessLastMovement } from '../components/process-last-movement'
 import { LegalProcessDialog } from '../components/process-legal/legal-process-dialog'
 import { ProcessMobileCard } from '../components/process-mobile-card'
 import { ProcessStatusBadge } from '../components/process-status-badge'
+import { canCreateProcess } from '../lib/process-access'
 import { formatCpf } from '../process-form.utils'
 import { processListOptions } from '../services/processes.queries'
 import {
@@ -97,13 +99,11 @@ const processTableColumns: readonly DataTableColumn<ProcessListItem>[] = [
   },
 ] as const
 
-const protectedRouteApi = getRouteApi('/_protected')
-
 export function ProcessesPage({
   currentPage,
   currentSearch,
 }: ProcessesPageProps) {
-  const { user } = protectedRouteApi.useRouteContext()
+  const { permissions } = useSession()
   const navigate = useNavigate()
   const [search, setSearch] = useState(currentSearch)
   const [historyProcessId, setHistoryProcessId] = useState<string | null>(null)
@@ -169,12 +169,14 @@ export function ProcessesPage({
   return (
     <div className="grid gap-6">
       <PageHeader title="Processos">
-        <Link className="no-underline" preload={false} to="/processos/novo">
-          <Button>
-            <Plus className="size-4" />
-            Criar processo
-          </Button>
-        </Link>
+        {canCreateProcess(permissions) ? (
+          <Link className="no-underline" preload={false} to="/processos/novo">
+            <Button>
+              <Plus className="size-4" />
+              Criar processo
+            </Button>
+          </Link>
+        ) : null}
       </PageHeader>
 
       <SearchInput
@@ -204,10 +206,10 @@ export function ProcessesPage({
                   <ProcessActions
                     onCancel={setCancelTarget}
                     onFinalize={setFinalizeTarget}
-                    userRole={user.role}
                     onGeneratePdf={(id) => void handleGeneratePdf(id)}
                     onLegalProcess={setLegalTarget}
                     onViewHistory={setHistoryProcessId}
+                    permissions={permissions}
                     process={process}
                   />
                 ),
@@ -245,10 +247,10 @@ export function ProcessesPage({
               <ProcessMobileCard
                 onCancel={setCancelTarget}
                 onFinalize={setFinalizeTarget}
-                userRole={user.role}
                 onGeneratePdf={(id) => void handleGeneratePdf(id)}
                 onLegalProcess={setLegalTarget}
                 onViewHistory={setHistoryProcessId}
+                permissions={permissions}
                 process={process}
               />
             )}

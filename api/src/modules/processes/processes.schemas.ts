@@ -356,6 +356,16 @@ export const processBatchFileParamsSchema = z.object({
   }),
 })
 
+export const setDocumentationAssigneePayloadSchema = z.object({
+  assigneeUserId: z.string().trim().min(1, {
+    message: 'Informe o usuário responsável.',
+  }),
+})
+
+export type SetDocumentationAssigneePayload = z.output<
+  typeof setDocumentationAssigneePayloadSchema
+>
+
 export function normalizeProcessPayload(input: unknown) {
   return createProcessPayloadSchema.parse(input)
 }

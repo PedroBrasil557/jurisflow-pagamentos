@@ -1,8 +1,21 @@
 import { and, desc, eq, ilike, inArray, lt, or, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import type { AppBindings } from '../../shared/types/app'
-import { defaultUserRole, isUserRole, type UserRole } from '../auth/auth.roles'
 import { user } from '../auth/auth.schema'
+import { housingComplex } from '../housing-complexes/housing-complexes.schema'
+import {
+  assertCan,
+  assertCanAccessHistory,
+  assertCanViewProcess,
+  assertProcessAction,
+  buildProcessRelationship,
+} from '../permissions/permissions.service'
+import type { ResolvedPermissions } from '../permissions/permissions.types'
+import {
+  buildProcessVisibilityFilter,
+  getProcessContextOrThrow,
+  getProcessRecordOrThrow,
+} from './processes.access'
 import {
   ensureProcessChecklistItems,
   getProcessChecklist,
@@ -90,21 +103,6 @@ type ProcessListHistoryRecord = {
   actorName: string
 }
 
-function getActorRole(actor: ProcessActor): UserRole {
-  return isUserRole(actor.role) ? actor.role : defaultUserRole
-}
-
-function assertAttorneyOrAdmin(actor: ProcessActor) {
-  const actorRole = getActorRole(actor)
-
-  if (actorRole !== 'attorney' && actorRole !== 'admin') {
-    throw new ProcessServiceError(
-      403,
-      'Apenas advogados ou administradores podem executar esta acao.',
-    )
-  }
-}
-
 function assertProcessCanBeEdited(currentProcess: ProcessRecord) {
   if (isTerminalProcessStatus(currentProcess.status)) {
     throw new ProcessServiceError(
@@ -136,6 +134,27 @@ function buildProcessCode() {
   const suffix = crypto.randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase()
 
   return `PROC-${datePrefix}-${suffix}`
+}
+
+async function resolveHousingComplexIdOrThrow(housingComplexName: string) {
+  const normalizedName = housingComplexName.trim().toUpperCase()
+
+  const [resolvedHousingComplex] = await db
+    .select({
+      id: housingComplex.id,
+    })
+    .from(housingComplex)
+    .where(sql`upper(trim(${housingComplex.name})) = ${normalizedName}`)
+    .limit(1)
+
+  if (!resolvedHousingComplex) {
+    throw new ProcessServiceError(
+      400,
+      'O conjunto habitacional informado nao esta cadastrado.',
+    )
+  }
+
+  return resolvedHousingComplex.id
 }
 
 function getLegalProcessLabel(currentProcess: ProcessRecord) {
@@ -183,6 +202,10 @@ function getHistoryEventLabel(historyEntry: ProcessListHistoryRecord) {
       return 'Arquivos enviados em lote'
     case 'BATCH_DELETED':
       return 'Arquivo em lote removido'
+    case 'DOCUMENTATION_ASSIGNEE_SET':
+      return 'Responsavel pela documentacao designado'
+    case 'DOCUMENTATION_ASSIGNEE_REMOVED':
+      return 'Responsavel pela documentacao removido'
     case 'STATUS_CHANGED':
       switch (historyEntry.toStatus) {
         case 'CADASTRADO':
@@ -274,17 +297,7 @@ function buildChangedFields(
 }
 
 export async function getProcessOrThrow(processId: string) {
-  const [currentProcess] = await db
-    .select()
-    .from(process)
-    .where(eq(process.id, processId))
-    .limit(1)
-
-  if (!currentProcess) {
-    throw new ProcessServiceError(404, 'Processo nao encontrado.')
-  }
-
-  return currentProcess
+  return getProcessRecordOrThrow(processId)
 }
 
 async function updateProcessStatus(input: {
@@ -320,8 +333,17 @@ async function updateProcessStatus(input: {
   return updatedProcess
 }
 
-export async function listProcesses(query: ListProcessesQuery) {
+export async function listProcesses(
+  query: ListProcessesQuery,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
   const filters = []
+
+  const visibilityFilter = buildProcessVisibilityFilter(userId, perms)
+  if (visibilityFilter) {
+    filters.push(visibilityFilter)
+  }
 
   if (query.status) {
     filters.push(eq(process.status, query.status))
@@ -417,6 +439,7 @@ export async function listProcesses(query: ListProcessesQuery) {
 
   return {
     items: items.map((item) => {
+      const relationship = buildProcessRelationship(item, userId, perms)
       const assignedAttorneyName = item.assignedAttorneyId
         ? (attorneysById.get(item.assignedAttorneyId) ?? null)
         : null
@@ -432,6 +455,7 @@ export async function listProcesses(query: ListProcessesQuery) {
         state: item.state,
         housingComplex: item.housingComplex,
         district: item.district,
+        relationship,
         legalProcess: {
           label: getLegalProcessLabel(item),
           attorneyName: assignedAttorneyName,
@@ -458,15 +482,48 @@ export async function listProcesses(query: ListProcessesQuery) {
   }
 }
 
-export async function getProcessById(processId: string) {
-  return getProcessOrThrow(processId)
+export async function getProcessById(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId,
+      userId,
+      perms,
+    })
+
+  assertCanViewProcess(perms, relationship)
+
+  let documentationAssigneeName: string | null = null
+  if (currentProcess.documentationAssigneeId) {
+    const [assignee] = await db
+      .select({ name: user.name })
+      .from(user)
+      .where(eq(user.id, currentProcess.documentationAssigneeId))
+      .limit(1)
+    documentationAssigneeName = assignee?.name ?? null
+  }
+
+  return {
+    ...currentProcess,
+    documentationAssigneeName,
+  }
 }
 
 export async function getProcessHistory(
   processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
   options?: { cursor?: string; limit?: number },
 ) {
-  await getProcessOrThrow(processId)
+  const { relationship } = await getProcessContextOrThrow({
+    processId,
+    userId,
+    perms,
+  })
+  assertCanAccessHistory(perms, relationship)
 
   const limit = Math.min(options?.limit ?? 20, 50)
   const conditions = [eq(processHistory.processId, processId)]
@@ -509,9 +566,15 @@ export async function getProcessHistory(
 export async function createProcess(
   payload: CreateProcessPayload,
   actor: ProcessActor,
+  perms: ResolvedPermissions,
 ) {
+  assertCan(perms, 'create')
+
   const processId = crypto.randomUUID()
   const processCode = buildProcessCode()
+  const housingComplexId = await resolveHousingComplexIdOrThrow(
+    payload.housingComplex,
+  )
 
   const [createdProcess] = await db
     .insert(process)
@@ -526,6 +589,7 @@ export async function createProcess(
       finalizedAt: null,
       cancelledAt: null,
       cancellationReason: null,
+      housingComplexId,
       ...payload,
       witness1Id: null,
       witness2Id: null,
@@ -549,10 +613,17 @@ export async function updateProcess(
   processId: string,
   payload: UpdateProcessPayload,
   actor: ProcessActor,
+  perms: ResolvedPermissions,
 ) {
-  const currentProcess = await getProcessOrThrow(processId)
+  const { process: currentProcess, relationship: rel } =
+    await getProcessContextOrThrow({
+      processId,
+      userId: actor.id,
+      perms,
+    })
 
   assertProcessCanBeEdited(currentProcess)
+  assertProcessAction(perms, rel, 'edit')
 
   const currentValues = pickEditableValues(currentProcess)
   const mergedValues = normalizeProcessPayload({
@@ -569,11 +640,16 @@ export async function updateProcess(
     return currentProcess
   }
 
+  const housingComplexId = await resolveHousingComplexIdOrThrow(
+    mergedValues.housingComplex,
+  )
+
   const [updatedProcess] = await db
     .update(process)
     .set({
       ...mergedValues,
       ...normalizedWitnessValues,
+      housingComplexId,
     })
     .where(eq(process.id, processId))
     .returning()
@@ -592,7 +668,7 @@ export async function updateProcess(
     changedFields.propertyPaidOff
   ) {
     await ensureProcessChecklistItems(processId)
-    const checklist = await getProcessChecklist(processId)
+    const checklist = await getProcessChecklist(processId, actor.id, perms)
     const syncedProcess = await syncProcessStatusAfterChecklistChange({
       processId,
       actor,
@@ -608,8 +684,16 @@ export async function updateProcess(
 export async function markProcessDocumentationReady(
   processId: string,
   actor: ProcessActor,
+  perms: ResolvedPermissions,
 ) {
-  const checklist = await getProcessChecklist(processId)
+  const { relationship: rel } = await getProcessContextOrThrow({
+    processId,
+    userId: actor.id,
+    perms,
+  })
+  assertProcessAction(perms, rel, 'markDocumentationReady')
+
+  const checklist = await getProcessChecklist(processId, actor.id, perms)
 
   if (checklist.summary.requiredPending > 0) {
     throw new ProcessServiceError(
@@ -638,8 +722,14 @@ export async function startProcess(
     causeValue: string
     protocolDate: string
   },
+  perms: ResolvedPermissions,
 ) {
-  assertAttorneyOrAdmin(actor)
+  const { relationship: rel } = await getProcessContextOrThrow({
+    processId,
+    userId: actor.id,
+    perms,
+  })
+  assertProcessAction(perms, rel, 'startLegal')
 
   return updateProcessStatus({
     processId,
@@ -665,10 +755,15 @@ export async function updateLegalProcess(
     causeValue: string
     protocolDate: string
   },
+  perms: ResolvedPermissions,
 ) {
-  assertAttorneyOrAdmin(actor)
-
-  const currentProcess = await getProcessOrThrow(processId)
+  const { process: currentProcess, relationship: rel } =
+    await getProcessContextOrThrow({
+      processId,
+      userId: actor.id,
+      perms,
+    })
+  assertProcessAction(perms, rel, 'editLegal')
 
   if (currentProcess.status !== 'EM_PROCESSO') {
     throw new ProcessServiceError(
@@ -697,10 +792,18 @@ export async function updateLegalProcess(
   return updatedProcess
 }
 
-export async function finalizeProcess(processId: string, actor: ProcessActor) {
-  assertAttorneyOrAdmin(actor)
-
-  const currentProcess = await getProcessOrThrow(processId)
+export async function finalizeProcess(
+  processId: string,
+  actor: ProcessActor,
+  perms: ResolvedPermissions,
+) {
+  const { process: currentProcess, relationship: rel } =
+    await getProcessContextOrThrow({
+      processId,
+      userId: actor.id,
+      perms,
+    })
+  assertProcessAction(perms, rel, 'finalize')
 
   if (
     !currentProcess.legalProcessNumber ||
@@ -729,8 +832,15 @@ export async function cancelProcess(
   processId: string,
   actor: ProcessActor,
   payload: CancelProcessPayload,
+  perms: ResolvedPermissions,
 ) {
-  const currentProcess = await getProcessOrThrow(processId)
+  const { process: currentProcess, relationship: rel } =
+    await getProcessContextOrThrow({
+      processId,
+      userId: actor.id,
+      perms,
+    })
+  assertProcessAction(perms, rel, 'cancel')
 
   assertValidStatusTransition(currentProcess.status, 'CANCELADO')
 
@@ -756,4 +866,83 @@ export async function cancelProcess(
   })
 
   return cancelledProcess
+}
+
+export async function setDocumentationAssignee(
+  processId: string,
+  assigneeUserId: string,
+  actorUserId: string,
+) {
+  const currentProcess = await getProcessOrThrow(processId)
+
+  if (isTerminalProcessStatus(currentProcess.status)) {
+    throw new ProcessServiceError(
+      409,
+      'Nao e possivel designar responsavel em um processo finalizado ou cancelado.',
+    )
+  }
+
+  const [assignee] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.id, assigneeUserId))
+    .limit(1)
+
+  if (!assignee) {
+    throw new ProcessServiceError(404, 'Usuario responsavel nao encontrado.')
+  }
+
+  return await db.transaction(async (tx) => {
+    const [updatedProcess] = await tx
+      .update(process)
+      .set({ documentationAssigneeId: assigneeUserId })
+      .where(eq(process.id, processId))
+      .returning()
+
+    await createProcessHistoryEntry({
+      processId,
+      actorUserId,
+      eventType: 'DOCUMENTATION_ASSIGNEE_SET',
+      notes: 'Responsavel pela documentacao designado.',
+      executor: tx,
+    })
+
+    return updatedProcess
+  })
+}
+
+export async function removeDocumentationAssignee(
+  processId: string,
+  actorUserId: string,
+) {
+  const currentProcess = await getProcessOrThrow(processId)
+
+  if (isTerminalProcessStatus(currentProcess.status)) {
+    throw new ProcessServiceError(
+      409,
+      'Nao e possivel alterar responsavel em um processo finalizado ou cancelado.',
+    )
+  }
+
+  if (!currentProcess.documentationAssigneeId) {
+    return currentProcess
+  }
+
+  return await db.transaction(async (tx) => {
+    const [updatedProcess] = await tx
+      .update(process)
+      .set({ documentationAssigneeId: null })
+      .where(eq(process.id, processId))
+      .returning()
+
+    await createProcessHistoryEntry({
+      processId,
+      actorUserId,
+      eventType: 'DOCUMENTATION_ASSIGNEE_REMOVED',
+      notes: 'Responsavel pela documentacao removido.',
+      executor: tx,
+    })
+
+    return updatedProcess
+  })
 }

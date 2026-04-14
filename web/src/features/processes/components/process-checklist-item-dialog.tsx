@@ -12,6 +12,8 @@ import {
 import type { ProcessChecklistItem } from '../services/processes.service'
 
 type ChecklistItemDialogProps = {
+  canDeleteFiles?: boolean
+  canSubmit?: boolean
   isSubmitting: boolean
   item: ProcessChecklistItem | null
   onClose: () => void
@@ -33,6 +35,8 @@ type ChecklistItemDialogProps = {
 }
 
 export function ChecklistItemDialog({
+  canDeleteFiles = true,
+  canSubmit = true,
   isSubmitting,
   item,
   onClose,
@@ -173,16 +177,19 @@ export function ChecklistItemDialog({
                     </Button>
                     <Button
                       onClick={() =>
-                        onDeleteFile({
-                          fileId: file.id,
-                          fileName: file.originalFileName,
-                          processDocumentId: currentItem.id,
-                        })
+                        canDeleteFiles
+                          ? onDeleteFile({
+                              fileId: file.id,
+                              fileName: file.originalFileName,
+                              processDocumentId: currentItem.id,
+                            })
+                          : undefined
                       }
                       size="sm"
                       type="button"
                       variant="outline"
                       className="text-destructive hover:text-destructive"
+                      disabled={!canDeleteFiles}
                     >
                       <Trash2 className="size-3.5" />
                       Remover
@@ -194,88 +201,95 @@ export function ChecklistItemDialog({
           )}
         </div>
 
-        <div className="grid gap-3">
-          <label
-            className="flex cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-card px-5 py-10 text-center transition hover:border-primary/35 hover:bg-primary/5"
-            htmlFor={fileInputId}
-          >
-            <span className="text-base font-semibold text-foreground">
-              {selectedFile
-                ? selectedFile.name
-                : item.currentFiles.length > 0 &&
-                    !item.documentType.allowsMultipleFiles
-                  ? 'Selecione um novo arquivo para substituir'
-                  : 'Clique aqui para selecionar e enviar o documento'}
-            </span>
-            <span className="mt-2 text-sm text-muted-foreground">
-              {selectedFile
-                ? formatBytes(selectedFile.size)
-                : 'Tamanho maximo: 25 MB'}
-            </span>
-          </label>
+        {canSubmit ? (
+          <div className="grid gap-3">
+            <label
+              className="flex cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-card px-5 py-10 text-center transition hover:border-primary/35 hover:bg-primary/5"
+              htmlFor={fileInputId}
+            >
+              <span className="text-base font-semibold text-foreground">
+                {selectedFile
+                  ? selectedFile.name
+                  : item.currentFiles.length > 0 &&
+                      !item.documentType.allowsMultipleFiles
+                    ? 'Selecione um novo arquivo para substituir'
+                    : 'Clique aqui para selecionar e enviar o documento'}
+              </span>
+              <span className="mt-2 text-sm text-muted-foreground">
+                {selectedFile
+                  ? formatBytes(selectedFile.size)
+                  : 'Tamanho maximo: 25 MB'}
+              </span>
+            </label>
 
-          <Controller
-            control={control}
-            name="file"
-            render={({ field }) => (
-              <input
-                className="hidden"
-                id={fileInputId}
-                onChange={(event) => {
-                  const nextFile = event.target.files?.[0] ?? null
+            <Controller
+              control={control}
+              name="file"
+              render={({ field }) => (
+                <input
+                  className="hidden"
+                  id={fileInputId}
+                  onChange={(event) => {
+                    const nextFile = event.target.files?.[0] ?? null
 
-                  field.onChange(nextFile)
+                    field.onChange(nextFile)
 
-                  if (nextFile) {
-                    setValue('markOkWithoutFile', false, {
-                      shouldDirty: true,
-                      shouldTouch: true,
-                      shouldValidate: true,
-                    })
-                  }
-                }}
-                ref={(element) => {
-                  fileInputRef.current = element
-                  field.ref(element)
-                }}
-                type="file"
-              />
-            )}
-          />
+                    if (nextFile) {
+                      setValue('markOkWithoutFile', false, {
+                        shouldDirty: true,
+                        shouldTouch: true,
+                        shouldValidate: true,
+                      })
+                    }
+                  }}
+                  ref={(element) => {
+                    fileInputRef.current = element
+                    field.ref(element)
+                  }}
+                  type="file"
+                />
+              )}
+            />
 
-          <Button
-            onClick={() => {
-              const nextValue = !markOkWithoutFile
+            <Button
+              onClick={() => {
+                const nextValue = !markOkWithoutFile
 
-              setValue('markOkWithoutFile', nextValue, {
-                shouldDirty: true,
-                shouldTouch: true,
-                shouldValidate: true,
-              })
-
-              if (nextValue) {
-                setValue('file', null, {
+                setValue('markOkWithoutFile', nextValue, {
                   shouldDirty: true,
                   shouldTouch: true,
                   shouldValidate: true,
                 })
-                if (fileInputRef.current) {
-                  fileInputRef.current.value = ''
-                }
-              }
-            }}
-            type="button"
-            variant={markOkWithoutFile ? 'default' : 'outline'}
-          >
-            Marcar ok sem arquivo
-          </Button>
 
-          {errors.file?.message || errors.markOkWithoutFile?.message ? (
-            <p className="text-sm text-destructive">
-              {errors.file?.message ?? errors.markOkWithoutFile?.message}
-            </p>
-          ) : null}
-        </div>
+                if (nextValue) {
+                  setValue('file', null, {
+                    shouldDirty: true,
+                    shouldTouch: true,
+                    shouldValidate: true,
+                  })
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = ''
+                  }
+                }
+              }}
+              type="button"
+              variant={markOkWithoutFile ? 'default' : 'outline'}
+            >
+              Marcar ok sem arquivo
+            </Button>
+
+            {errors.file?.message || errors.markOkWithoutFile?.message ? (
+              <p className="text-sm text-destructive">
+                {errors.file?.message ?? errors.markOkWithoutFile?.message}
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-border bg-card px-4 py-4 text-sm text-muted-foreground">
+            Seu perfil permite visualizar este item, mas nao editar a
+            documentacao.
+          </div>
+        )}
       </div>
 
       <div className="grid gap-3">
@@ -314,13 +328,15 @@ export function ChecklistItemDialog({
         <Button onClick={onClose} type="button" variant="ghost">
           Fechar
         </Button>
-        <Button
-          disabled={isSubmitting}
-          onClick={() => void handleSubmit(handleFormSubmit)()}
-          type="button"
-        >
-          {isSubmitting ? 'Salvando...' : 'Salvar'}
-        </Button>
+        {canSubmit ? (
+          <Button
+            disabled={isSubmitting}
+            onClick={() => void handleSubmit(handleFormSubmit)()}
+            type="button"
+          >
+            {isSubmitting ? 'Salvando...' : 'Salvar'}
+          </Button>
+        ) : null}
       </div>
     </AppDialog>
   )

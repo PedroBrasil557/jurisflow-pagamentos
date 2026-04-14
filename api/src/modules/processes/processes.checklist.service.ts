@@ -11,6 +11,16 @@ import type { AppBindings } from '../../shared/types/app'
 import { buildChecklistDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
 import {
+  assertCanAccessChecklist,
+  assertCanAccessDocumentation,
+  assertProcessAction,
+} from '../permissions/permissions.service'
+import type { ResolvedPermissions } from '../permissions/permissions.types'
+import {
+  getProcessContextOrThrow,
+  getProcessRecordOrThrow,
+} from './processes.access'
+import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
 } from './processes.documents'
@@ -44,34 +54,6 @@ const checklistUploadAllowedStatuses = [
   'EM_DOCUMENTACAO',
   'DOCUMENTACAO_PRONTA',
 ] as const satisfies readonly ProcessStatus[]
-
-async function ensureProcessExists(processId: string) {
-  const [currentProcess] = await db
-    .select({
-      id: process.id,
-    })
-    .from(process)
-    .where(eq(process.id, processId))
-    .limit(1)
-
-  if (!currentProcess) {
-    throw new ProcessServiceError(404, 'Processo nao encontrado.')
-  }
-}
-
-async function getProcessRecordOrThrow(processId: string) {
-  const [currentProcess] = await db
-    .select()
-    .from(process)
-    .where(eq(process.id, processId))
-    .limit(1)
-
-  if (!currentProcess) {
-    throw new ProcessServiceError(404, 'Processo nao encontrado.')
-  }
-
-  return currentProcess
-}
 
 function assertChecklistUploadAllowed(currentStatus: ProcessStatus) {
   if (
@@ -201,7 +183,7 @@ function getConditionalDocumentKeys(
 }
 
 export async function ensureProcessChecklistItems(processId: string) {
-  await ensureProcessExists(processId)
+  await getProcessRecordOrThrow(processId)
 
   const [activeDocumentTypes, existingItems] = await Promise.all([
     listActiveDocumentTypes(),
@@ -859,8 +841,19 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   return updatedProcess
 }
 
-export async function getProcessChecklist(processId: string) {
-  const currentProcess = await getProcessRecordOrThrow(processId)
+export async function getProcessChecklist(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId,
+      userId,
+      perms,
+    })
+  assertCanAccessChecklist(perms, relationship)
+
   await ensureProcessChecklistItems(processId)
 
   const allConditionalKeys = new Set<string>(
@@ -893,14 +886,28 @@ export async function submitProcessChecklistItem(input: {
   processId: string
   processDocumentId: string
   actor: ProcessActor
+  perms: ResolvedPermissions
   file?: File | null
   markOkWithoutFile?: boolean
   observation?: string
 }): Promise<ChecklistSubmitResult> {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  assertCanAccessDocumentation(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'uploadChecklist')
+
   const checklistItem = await getChecklistItemOrThrow(
     input.processId,
     input.processDocumentId,
   )
+
+  if (currentProcess.id !== checklistItem.processId) {
+    throw new ProcessServiceError(404, 'Item do checklist nao encontrado.')
+  }
 
   assertChecklistUploadAllowed(checklistItem.processStatus)
 
@@ -984,8 +991,12 @@ export async function submitProcessChecklistItem(input: {
     })
   }
 
-  const checklist = await getProcessChecklist(input.processId)
-  const currentProcess = await syncProcessStatusAfterChecklistChange({
+  const checklist = await getProcessChecklist(
+    input.processId,
+    input.actor.id,
+    input.perms,
+  )
+  const updatedProcess = await syncProcessStatusAfterChecklistChange({
     processId: input.processId,
     actor: input.actor,
     checklist,
@@ -1000,7 +1011,7 @@ export async function submitProcessChecklistItem(input: {
       replacedFile: didReplaceFile,
       uploadedFile: didUploadFile,
     }),
-    process: currentProcess,
+    process: updatedProcess,
   }
 }
 
@@ -1009,6 +1020,7 @@ export async function uploadProcessChecklistFile(input: {
   processDocumentId: string
   file: File
   actor: ProcessActor
+  perms: ResolvedPermissions
 }) {
   return {
     ...(await submitProcessChecklistItem({
@@ -1016,6 +1028,7 @@ export async function uploadProcessChecklistFile(input: {
       processDocumentId: input.processDocumentId,
       file: input.file,
       actor: input.actor,
+      perms: input.perms,
     })),
   }
 }
@@ -1024,7 +1037,16 @@ export async function getProcessChecklistFileDownload(input: {
   processId: string
   processDocumentId: string
   fileId: string
+  userId: string
+  perms: ResolvedPermissions
 }) {
+  const { relationship } = await getProcessContextOrThrow({
+    processId: input.processId,
+    userId: input.userId,
+    perms: input.perms,
+  })
+  assertCanAccessChecklist(input.perms, relationship)
+
   const [currentProcess, checklistItem, fileRecord] = await Promise.all([
     getProcessRecordOrThrow(input.processId),
     getChecklistItemOrThrow(input.processId, input.processDocumentId),
@@ -1077,7 +1099,16 @@ export async function deleteChecklistFile(input: {
   processDocumentId: string
   fileId: string
   actor: ProcessActor
+  perms: ResolvedPermissions
 }) {
+  const { relationship } = await getProcessContextOrThrow({
+    processId: input.processId,
+    userId: input.actor.id,
+    perms: input.perms,
+  })
+  assertCanAccessDocumentation(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'deleteChecklistFile')
+
   const checklistItem = await getChecklistItemOrThrow(
     input.processId,
     input.processDocumentId,
@@ -1142,7 +1173,11 @@ export async function deleteChecklistFile(input: {
     notes: `Arquivo removido: ${checklistItem.documentType.label} (${fileRecord.originalFileName}).`,
   })
 
-  const checklist = await getProcessChecklist(input.processId)
+  const checklist = await getProcessChecklist(
+    input.processId,
+    input.actor.id,
+    input.perms,
+  )
   const currentProcess = await syncProcessStatusAfterChecklistChange({
     processId: input.processId,
     actor: input.actor,
@@ -1156,7 +1191,18 @@ export async function deleteChecklistFile(input: {
   }
 }
 
-export async function downloadAllChecklistFiles(processId: string) {
+export async function downloadAllChecklistFiles(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { relationship } = await getProcessContextOrThrow({
+    processId,
+    userId,
+    perms,
+  })
+  assertCanAccessChecklist(perms, relationship)
+
   const currentProcess = await getProcessRecordOrThrow(processId)
 
   const files = await db

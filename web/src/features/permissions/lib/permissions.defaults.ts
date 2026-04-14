@@ -1,0 +1,59 @@
+import type { ProfilePermissions } from '../services/permissions.service'
+
+export const DEFAULT_USER_PERMISSIONS: ProfilePermissions = {
+  process: {
+    create: true,
+    viewOwn: true,
+    editOwn: true,
+    editAny: false,
+    startLegal: false,
+    editLegal: false,
+    finalize: false,
+    cancelOwn: true,
+    cancelAny: false,
+    markDocumentationReady: false,
+    uploadChecklist: false,
+    deleteChecklistFile: false,
+    viewBatch: true,
+    uploadBatch: true,
+    deleteBatch: false,
+    generatePdf: true,
+  },
+  sections: {
+    dashboard: true,
+    checklist: true,
+    documentation: false,
+    legalData: false,
+    history: true,
+    batch: true,
+  },
+}
+
+export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
+  process: {
+    create: true,
+    viewOwn: true,
+    editOwn: true,
+    editAny: true,
+    startLegal: true,
+    editLegal: true,
+    finalize: true,
+    cancelOwn: true,
+    cancelAny: true,
+    markDocumentationReady: true,
+    uploadChecklist: true,
+    deleteChecklistFile: true,
+    viewBatch: true,
+    uploadBatch: true,
+    deleteBatch: true,
+    generatePdf: true,
+  },
+  sections: {
+    dashboard: true,
+    checklist: true,
+    documentation: true,
+    legalData: true,
+    history: true,
+    batch: true,
+  },
+}

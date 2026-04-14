@@ -1,8 +1,9 @@
 import { zValidator } from '@hono/zod-validator'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import {
   getAuthenticatedUser,
   requireAuth,
+  requireRole,
 } from '../../shared/middleware/auth-guard'
 import { handleServiceError } from '../../shared/middleware/error-handler'
 import type { AppBindings } from '../../shared/types/app'
@@ -11,6 +12,7 @@ import {
   paramsValidator,
   queryValidator,
 } from '../../shared/validation/validators'
+import { resolveUserPermissions } from '../permissions/permissions.service'
 import {
   deleteBatchFile,
   downloadAllBatchFiles,
@@ -39,6 +41,7 @@ import {
   processChecklistItemParamsSchema,
   processIdParamsSchema,
   processPdfModelParamsSchema,
+  setDocumentationAssigneePayloadSchema,
   startProcessPayloadSchema,
   submitChecklistItemFormSchema,
   updateLegalProcessPayloadSchema,
@@ -52,16 +55,30 @@ import {
   getProcessHistory,
   listProcesses,
   markProcessDocumentationReady,
+  removeDocumentationAssignee,
+  setDocumentationAssignee,
   startProcess,
   updateLegalProcess,
   updateProcess,
 } from './processes.service'
 
+async function getCurrentUserWithPermissions(c: Context<AppBindings>) {
+  const currentUser = getAuthenticatedUser(c)
+  const perms = await resolveUserPermissions(currentUser.id, currentUser.role)
+
+  return { currentUser, perms }
+}
+
 export const processRoutes = new Hono<AppBindings>()
   .use('*', requireAuth())
   .get('/', queryValidator(listProcessesQuerySchema), async (c) => {
     try {
-      const result = await listProcesses(c.req.valid('query'))
+      const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+      const result = await listProcesses(
+        c.req.valid('query'),
+        currentUser.id,
+        perms,
+      )
 
       return c.json(result, 200)
     } catch (error) {
@@ -70,9 +87,11 @@ export const processRoutes = new Hono<AppBindings>()
   })
   .post('/', jsonValidator(createProcessPayloadSchema), async (c) => {
     try {
+      const { currentUser, perms } = await getCurrentUserWithPermissions(c)
       const result = await createProcess(
         c.req.valid('json'),
-        getAuthenticatedUser(c),
+        currentUser,
+        perms,
       )
 
       return c.json(
@@ -90,7 +109,12 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processIdParamsSchema),
     async (c) => {
       try {
-        const result = await getProcessChecklist(c.req.valid('param').processId)
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const result = await getProcessChecklist(
+          c.req.valid('param').processId,
+          currentUser.id,
+          perms,
+        )
 
         return c.json(result, 200)
       } catch (error) {
@@ -109,10 +133,12 @@ export const processRoutes = new Hono<AppBindings>()
       const markOkWithoutFileValue = formData.markOkWithoutFile
 
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await submitProcessChecklistItem({
           processId: c.req.valid('param').processId,
           processDocumentId: c.req.valid('param').processDocumentId,
-          actor: getAuthenticatedUser(c),
+          actor: currentUser,
+          perms,
           file: fileValue instanceof File ? fileValue : null,
           observation: observationValue,
           markOkWithoutFile:
@@ -156,11 +182,13 @@ export const processRoutes = new Hono<AppBindings>()
       }
 
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await uploadProcessChecklistFile({
           processId: c.req.valid('param').processId,
           processDocumentId: c.req.valid('param').processDocumentId,
           file,
-          actor: getAuthenticatedUser(c),
+          actor: currentUser,
+          perms,
         })
 
         return c.json(
@@ -183,9 +211,12 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processChecklistFileParamsSchema),
     async (c) => {
       try {
-        const result = await getProcessChecklistFileDownload(
-          c.req.valid('param'),
-        )
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const result = await getProcessChecklistFileDownload({
+          ...c.req.valid('param'),
+          userId: currentUser.id,
+          perms,
+        })
 
         return c.json(result, 200)
       } catch (error) {
@@ -198,9 +229,11 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processChecklistFileParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await deleteChecklistFile({
           ...c.req.valid('param'),
-          actor: getAuthenticatedUser(c),
+          actor: currentUser,
+          perms,
         })
 
         return c.json(
@@ -237,10 +270,12 @@ export const processRoutes = new Hono<AppBindings>()
       }
 
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await uploadBatchFiles({
           processId: c.req.valid('param').processId,
           files,
-          actor: getAuthenticatedUser(c),
+          actor: currentUser,
+          perms,
         })
 
         return c.json(result, 201)
@@ -254,7 +289,12 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processIdParamsSchema),
     async (c) => {
       try {
-        const files = await listBatchFiles(c.req.valid('param').processId)
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const files = await listBatchFiles(
+          c.req.valid('param').processId,
+          currentUser.id,
+          perms,
+        )
 
         return c.json({ files }, 200)
       } catch (error) {
@@ -267,10 +307,12 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processBatchFileParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await deleteBatchFile({
           processId: c.req.valid('param').processId,
           fileId: c.req.valid('param').fileId,
-          actor: getAuthenticatedUser(c),
+          actor: currentUser,
+          perms,
         })
 
         return c.json(result, 200)
@@ -284,9 +326,12 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processBatchFileParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await getBatchFileDownload({
           processId: c.req.valid('param').processId,
           fileId: c.req.valid('param').fileId,
+          userId: currentUser.id,
+          perms,
         })
 
         return c.json(result, 200)
@@ -300,8 +345,11 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processIdParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await downloadAllBatchFiles(
           c.req.valid('param').processId,
+          currentUser.id,
+          perms,
         )
 
         return c.json(result, 200)
@@ -315,8 +363,11 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processIdParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await downloadAllChecklistFiles(
           c.req.valid('param').processId,
+          currentUser.id,
+          perms,
         )
 
         return c.json(result, 200)
@@ -330,8 +381,11 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processIdParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await listProcessPdfModels(
           c.req.valid('param').processId,
+          currentUser.id,
+          perms,
         )
 
         return c.json(result, 200)
@@ -345,10 +399,12 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processPdfModelParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await generateProcessPdf({
           processId: c.req.valid('param').processId,
           modelKey: c.req.valid('param').modelKey,
-          actor: getAuthenticatedUser(c),
+          actor: currentUser,
+          perms,
         })
 
         return c.json(result, 201)
@@ -362,14 +418,20 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processIdParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const cursor = c.req.query('cursor') || undefined
         const limit = c.req.query('limit')
           ? Number(c.req.query('limit'))
           : undefined
-        const result = await getProcessHistory(c.req.valid('param').processId, {
-          cursor,
-          limit,
-        })
+        const result = await getProcessHistory(
+          c.req.valid('param').processId,
+          currentUser.id,
+          perms,
+          {
+            cursor,
+            limit,
+          },
+        )
 
         return c.json(result, 200)
       } catch (error) {
@@ -382,9 +444,11 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processIdParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await markProcessDocumentationReady(
           c.req.valid('param').processId,
-          getAuthenticatedUser(c),
+          currentUser,
+          perms,
         )
 
         return c.json(
@@ -404,10 +468,12 @@ export const processRoutes = new Hono<AppBindings>()
     jsonValidator(startProcessPayloadSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await startProcess(
           c.req.valid('param').processId,
-          getAuthenticatedUser(c),
+          currentUser,
           c.req.valid('json'),
+          perms,
         )
 
         return c.json(
@@ -427,10 +493,12 @@ export const processRoutes = new Hono<AppBindings>()
     jsonValidator(updateLegalProcessPayloadSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await updateLegalProcess(
           c.req.valid('param').processId,
-          getAuthenticatedUser(c),
+          currentUser,
           c.req.valid('json'),
+          perms,
         )
 
         return c.json(
@@ -449,9 +517,11 @@ export const processRoutes = new Hono<AppBindings>()
     paramsValidator(processIdParamsSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await finalizeProcess(
           c.req.valid('param').processId,
-          getAuthenticatedUser(c),
+          currentUser,
+          perms,
         )
 
         return c.json(
@@ -471,10 +541,12 @@ export const processRoutes = new Hono<AppBindings>()
     jsonValidator(cancelProcessPayloadSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await cancelProcess(
           c.req.valid('param').processId,
-          getAuthenticatedUser(c),
+          currentUser,
           c.req.valid('json'),
+          perms,
         )
 
         return c.json(
@@ -490,7 +562,12 @@ export const processRoutes = new Hono<AppBindings>()
   )
   .get('/:processId', paramsValidator(processIdParamsSchema), async (c) => {
     try {
-      const result = await getProcessById(c.req.valid('param').processId)
+      const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+      const result = await getProcessById(
+        c.req.valid('param').processId,
+        currentUser.id,
+        perms,
+      )
 
       return c.json(
         {
@@ -502,16 +579,54 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
+  .put(
+    '/:processId/documentation-assignee',
+    requireRole('admin'),
+    paramsValidator(processIdParamsSchema),
+    jsonValidator(setDocumentationAssigneePayloadSchema),
+    async (c) => {
+      try {
+        const currentUser = getAuthenticatedUser(c)
+        const result = await setDocumentationAssignee(
+          c.req.valid('param').processId,
+          c.req.valid('json').assigneeUserId,
+          currentUser.id,
+        )
+        return c.json({ process: result }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .delete(
+    '/:processId/documentation-assignee',
+    requireRole('admin'),
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const currentUser = getAuthenticatedUser(c)
+        const result = await removeDocumentationAssignee(
+          c.req.valid('param').processId,
+          currentUser.id,
+        )
+        return c.json({ process: result }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .patch(
     '/:processId',
     paramsValidator(processIdParamsSchema),
     jsonValidator(updateProcessPayloadSchema),
     async (c) => {
       try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await updateProcess(
           c.req.valid('param').processId,
           c.req.valid('json'),
-          getAuthenticatedUser(c),
+          currentUser,
+          perms,
         )
 
         return c.json(
