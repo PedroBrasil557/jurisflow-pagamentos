@@ -1,4 +1,5 @@
 import { randomInt } from 'node:crypto'
+import { hashPassword } from 'better-auth/crypto'
 import { count, desc, eq, ilike, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { db } from '../../shared/db'
@@ -11,7 +12,7 @@ import {
 } from '../permissions/permissions.schema'
 import type { UserRole } from './auth.roles'
 import { user as userTable } from './auth.schema'
-import { auth, hashPasswordSync } from './auth.service'
+import { auth } from './auth.service'
 
 export class AuthUserManagementError extends ServiceError {}
 
@@ -317,7 +318,7 @@ export async function resetUserAccount(userId: string) {
 
   const temporaryPassword = generateTemporaryPassword()
 
-  const hashedPassword = await hashPasswordSync(temporaryPassword)
+  const hashedPassword = await hashPassword(temporaryPassword)
   await authContext.internalAdapter.updatePassword(userId, hashedPassword)
   await authContext.internalAdapter.updateUser(userId, {
     mustChangePassword: true,
@@ -473,7 +474,7 @@ export async function changeInitialPassword(input: {
     )
   }
 
-  const hashedPassword = await hashPasswordSync(input.newPassword)
+  const hashedPassword = await hashPassword(input.newPassword)
   await authContext.internalAdapter.updatePassword(input.userId, hashedPassword)
   await authContext.internalAdapter.updateUser(input.userId, {
     mustChangePassword: false,

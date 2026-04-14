@@ -1,5 +1,7 @@
-import { eq } from 'drizzle-orm'
-import { user as userTable } from '../../src/modules/auth/auth.schema'
+import { verifyPassword } from 'better-auth/crypto'
+import { and, eq } from 'drizzle-orm'
+import { account, user as userTable } from '../../src/modules/auth/auth.schema'
+import { auth } from '../../src/modules/auth/auth.service'
 import { createPlatformUser } from '../../src/modules/auth/auth.user-management.service'
 import { SYSTEM_PROFILE_IDS } from '../../src/modules/permissions/permissions.defaults'
 import {
@@ -123,27 +125,101 @@ function assertAllCpfsAreValid() {
   }
 }
 
+const MAX_CREATE_ATTEMPTS = 8
+
+const VERIFY_ATTEMPTS_PER_CHECK = 20
+const VERIFY_MIN_SUCCESS_RATIO = 0.8
+
+async function getUserCredentialHash(userId: string) {
+  const [row] = await db
+    .select({ password: account.password })
+    .from(account)
+    .where(
+      and(eq(account.userId, userId), eq(account.providerId, 'credential')),
+    )
+    .limit(1)
+  return row?.password ?? null
+}
+
+async function isHashUsable(hash: string, password: string) {
+  let successes = 0
+  for (let i = 0; i < VERIFY_ATTEMPTS_PER_CHECK; i += 1) {
+    try {
+      if (await verifyPassword({ hash, password })) {
+        successes += 1
+      }
+    } catch {
+      // Segue para a proxima tentativa
+    }
+  }
+  return (
+    successes / VERIFY_ATTEMPTS_PER_CHECK >= VERIFY_MIN_SUCCESS_RATIO
+  )
+}
+
+async function createUserWithVerifiedHash(
+  entry: SeedUserDefinition,
+  password: string,
+): Promise<string> {
+  const authContext = await auth.$context
+  const isAdmin = entry.kind === 'admin'
+
+  for (let attempt = 1; attempt <= MAX_CREATE_ATTEMPTS; attempt += 1) {
+    const result = await createPlatformUser({
+      cpf: entry.cpf,
+      name: entry.name,
+      email: entry.email,
+      password,
+      isAdmin,
+      profileId: isAdmin ? undefined : entry.profileId,
+    })
+    const userId = result.user.id
+
+    const hash = await getUserCredentialHash(userId)
+    if (hash && (await isHashUsable(hash, password))) {
+      if (attempt > 1) {
+        console.log(
+          `  recriado ${entry.name} apos ${attempt - 1} tentativa(s) com hash invalido`,
+        )
+      }
+      return userId
+    }
+
+    await authContext.internalAdapter
+      .deleteUser(userId)
+      .catch(() => undefined)
+  }
+
+  throw new Error(
+    `Nao foi possivel criar ${entry.name} (${entry.cpf}) com hash verificavel apos ${MAX_CREATE_ATTEMPTS} tentativas.`,
+  )
+}
+
 export async function seedPlatformUsers(): Promise<SeededUser[]> {
   assertAllCpfsAreValid()
   const seeded: SeededUser[] = []
+
+  const authContext = await auth.$context
 
   for (const entry of seedUsers) {
     const existing = await findUserByCpf(entry.cpf)
     let userId: string
 
     if (existing) {
-      userId = existing.id
+      const hash = await getUserCredentialHash(existing.id)
+      if (hash && (await isHashUsable(hash, TEST_USER_PASSWORD))) {
+        userId = existing.id
+      } else {
+        console.log(
+          `  ${entry.name} ja existia com hash inutilizavel — recriando`,
+        )
+        await authContext.internalAdapter
+          .deleteUser(existing.id)
+          .catch(() => undefined)
+        userId = await createUserWithVerifiedHash(entry, TEST_USER_PASSWORD)
+      }
     } else {
-      const isAdmin = entry.kind === 'admin'
-      const result = await createPlatformUser({
-        cpf: entry.cpf,
-        name: entry.name,
-        email: entry.email,
-        password: TEST_USER_PASSWORD,
-        isAdmin,
-        profileId: isAdmin ? undefined : entry.profileId,
-      })
-      userId = result.user.id
+      userId = await createUserWithVerifiedHash(entry, TEST_USER_PASSWORD)
     }
 
     // Always force the seeded password to stay logged in without the initial-change flow.
