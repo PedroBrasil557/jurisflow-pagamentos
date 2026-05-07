@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { sessionKeys } from '@/features/auth/services/auth-session.queries'
 import { adminUserKeys } from './admin-users.queries'
 import {
   createAdminUserRequest,
@@ -22,6 +23,7 @@ export function useUpdateAdminUser() {
     mutationFn: updateAdminUserRequest,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: adminUserKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.session() })
     },
   })
 }

@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
+import type { ResolvedPermissions } from '@/features/permissions/services/permissions.service'
 
 export type AuthenticatedLayoutUser = {
   name: string
@@ -7,12 +8,17 @@ export type AuthenticatedLayoutUser = {
   role: string
 }
 
+export type AuthenticatedNavigationVisibilityInput = {
+  permissions: ResolvedPermissions
+  user: AuthenticatedLayoutUser
+}
+
 export type AuthenticatedNavigationItem = {
   label: string
   description: string
   to: '/' | '/processos' | '/cadastros'
   icon: LucideIcon
-  isVisible?: (role: string) => boolean
+  isVisible?: (input: AuthenticatedNavigationVisibilityInput) => boolean
 }
 
 export type AuthenticatedBreadcrumbItem = {
@@ -22,5 +28,6 @@ export type AuthenticatedBreadcrumbItem = {
 
 export type AuthenticatedLayoutProps = {
   children: ReactNode
+  permissions: ResolvedPermissions
   user: AuthenticatedLayoutUser
 }

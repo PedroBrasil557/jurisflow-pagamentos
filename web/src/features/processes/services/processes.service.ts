@@ -29,6 +29,8 @@ const processCancelClientRoute = processClientRoute.cancel
 const processStartClientRoute = processClientRoute.start
 const processLegalClientRoute = processClientRoute.legal
 const processFinalizeClientRoute = processClientRoute.finalize
+const processDocumentationAssigneeClientRoute =
+  processClientRoute['documentation-assignee']
 
 type ListProcessesResponse = InferResponseType<
   typeof apiClient.api.processes.$get,
@@ -92,6 +94,14 @@ type UpdateLegalProcessResponse = InferResponseType<
 >
 type CancelProcessResponse = InferResponseType<
   typeof processCancelClientRoute.$post,
+  200
+>
+type SetDocumentationAssigneeResponse = InferResponseType<
+  typeof processDocumentationAssigneeClientRoute.$put,
+  200
+>
+type RemoveDocumentationAssigneeResponse = InferResponseType<
+  typeof processDocumentationAssigneeClientRoute.$delete,
   200
 >
 type SubmitProcessChecklistResponse = InferResponseType<
@@ -676,6 +686,44 @@ export async function finalizeProcessRequest(processId: string) {
   }
 
   return (await response.json()) as FinalizeProcessResponse
+}
+
+export async function setDocumentationAssigneeRequest(input: {
+  processId: string
+  assigneeUserId: string
+}) {
+  const response = await processDocumentationAssigneeClientRoute.$put({
+    param: { processId: input.processId },
+    json: { assigneeUserId: input.assigneeUserId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel designar o responsavel pela documentacao.',
+      ),
+    )
+  }
+
+  return (await response.json()) as SetDocumentationAssigneeResponse
+}
+
+export async function removeDocumentationAssigneeRequest(processId: string) {
+  const response = await processDocumentationAssigneeClientRoute.$delete({
+    param: { processId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel remover o responsavel pela documentacao.',
+      ),
+    )
+  }
+
+  return (await response.json()) as RemoveDocumentationAssigneeResponse
 }
 
 export async function fetchBatchFiles(

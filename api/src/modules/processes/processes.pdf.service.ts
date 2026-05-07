@@ -10,6 +10,9 @@ import {
 import type { AppBindings } from '../../shared/types/app'
 import { normalizeCpf } from '../../shared/utils/cpf'
 import { user } from '../auth/auth.schema'
+import { assertProcessAction } from '../permissions/permissions.service'
+import type { ResolvedPermissions } from '../permissions/permissions.types'
+import { getProcessContextOrThrow } from './processes.access'
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
 import {
@@ -287,8 +290,18 @@ function renderPdfForModel(input: {
   }
 }
 
-export async function listProcessPdfModels(processId: string) {
-  const currentProcess = await getProcessOrThrow(processId)
+export async function listProcessPdfModels(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId,
+      userId,
+      perms,
+    })
+  assertProcessAction(perms, relationship, 'generatePdf')
 
   if (currentProcess.status === 'CANCELADO') {
     return {
@@ -315,9 +328,16 @@ export async function generateProcessPdf(input: {
   actor: ProcessActor
   modelKey: string
   processId: string
+  perms: ResolvedPermissions
 }) {
   const generatedAt = new Date()
-  const currentProcess = await getProcessOrThrow(input.processId)
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  assertProcessAction(input.perms, relationship, 'generatePdf')
 
   // Handle cancellation PDF (static template)
   if (

@@ -1,6 +1,8 @@
-import { count, eq, sql } from 'drizzle-orm'
+import { and, count, eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { user } from '../auth/auth.schema'
+import type { ResolvedPermissions } from '../permissions/permissions.types'
+import { buildProcessVisibilityFilter } from '../processes/processes.access'
 import { process } from '../processes/processes.schema'
 
 const statusLabels: Record<string, string> = {
@@ -33,7 +35,11 @@ const monthNames = [
   'dez',
 ]
 
-export async function getDashboardStats() {
+export async function getDashboardStats(
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const visibilityFilter = buildProcessVisibilityFilter(userId, perms)
   const [
     summaryRows,
     statusRows,
@@ -61,7 +67,8 @@ export async function getDashboardStats() {
           sql`CASE WHEN ${process.status} = 'CANCELADO' THEN 1 END`,
         ),
       })
-      .from(process),
+      .from(process)
+      .where(visibilityFilter),
 
     db
       .select({
@@ -69,6 +76,7 @@ export async function getDashboardStats() {
         count: count(),
       })
       .from(process)
+      .where(visibilityFilter)
       .groupBy(process.status),
 
     db
@@ -77,6 +85,7 @@ export async function getDashboardStats() {
         count: count(),
       })
       .from(process)
+      .where(visibilityFilter)
       .groupBy(process.ownerType),
 
     db
@@ -87,6 +96,7 @@ export async function getDashboardStats() {
       })
       .from(process)
       .innerJoin(user, eq(process.createdByUserId, user.id))
+      .where(visibilityFilter)
       .groupBy(process.createdByUserId, user.name)
       .orderBy(sql`count(*) DESC`)
       .limit(10),
@@ -98,7 +108,9 @@ export async function getDashboardStats() {
       })
       .from(process)
       .where(
-        sql`${process.createdAt} >= date_trunc('month', now() - interval '11 months')`,
+        visibilityFilter
+          ? sql`${visibilityFilter} and ${process.createdAt} >= date_trunc('month', now() - interval '11 months')`
+          : sql`${process.createdAt} >= date_trunc('month', now() - interval '11 months')`,
       )
       .groupBy(sql`date_trunc('month', ${process.createdAt})`)
       .orderBy(sql`date_trunc('month', ${process.createdAt})`),
@@ -109,7 +121,11 @@ export async function getDashboardStats() {
         count: count(),
       })
       .from(process)
-      .where(sql`${process.housingComplex} != ''`)
+      .where(
+        visibilityFilter
+          ? and(sql`${process.housingComplex} != ''`, visibilityFilter)
+          : sql`${process.housingComplex} != ''`,
+      )
       .groupBy(process.housingComplex)
       .orderBy(sql`count(*) DESC`)
       .limit(10),

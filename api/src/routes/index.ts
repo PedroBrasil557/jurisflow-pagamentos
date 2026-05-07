@@ -7,6 +7,10 @@ import {
   housingComplexAdminRoutes,
   housingComplexOptionsRoutes,
 } from '../modules/housing-complexes/housing-complexes.routes'
+import {
+  permissionProfileAdminRoutes,
+  permissionUserAdminRoutes,
+} from '../modules/permissions/permissions.admin.routes'
 import { processRoutes } from '../modules/processes/processes.routes'
 import { systemRoutes } from '../modules/system/system.routes'
 import { createCorsMiddleware } from '../shared/middleware/cors'
@@ -32,6 +36,8 @@ export function createAppRouter(options: CreateAppRouterOptions) {
     .route('/api', authRoutes)
     .route('/api/admin', adminRoutes)
     .route('/api/admin/housing-complexes', housingComplexAdminRoutes)
+    .route('/api/admin/profiles', permissionProfileAdminRoutes)
+    .route('/api/admin/users', permissionUserAdminRoutes)
     .route('/api/housing-complexes', housingComplexOptionsRoutes)
     .route('/api/dashboard', dashboardRoutes)
     .route('/api/processes', processRoutes)

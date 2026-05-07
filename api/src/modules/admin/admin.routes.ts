@@ -45,9 +45,10 @@ export const adminRoutes = new Hono<AppBindings>()
         cpf: payload.cpf,
         createdByUserId: currentUser.id,
         email: payload.email,
+        isAdmin: payload.isAdmin,
         name: payload.name,
         password: temporaryPassword,
-        role: payload.role,
+        profileId: payload.profileId,
       })
 
       return c.json(
@@ -68,9 +69,11 @@ export const adminRoutes = new Hono<AppBindings>()
     jsonValidator(updateAdminUserPayloadSchema),
     async (c) => {
       try {
+        const currentUser = getAuthenticatedUser(c)
         const result = await updatePlatformUser(
           c.req.valid('param').userId,
           c.req.valid('json'),
+          currentUser.id,
         )
 
         return c.json(

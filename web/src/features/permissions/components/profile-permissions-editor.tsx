@@ -1,0 +1,244 @@
+import {
+  Eye,
+  FilePlus,
+  Files,
+  FileText,
+  Gavel,
+  Layers,
+  XCircle,
+} from 'lucide-react'
+import { Checkbox } from '#/components/ui/checkbox'
+import { Label } from '#/components/ui/label'
+import type { ProfilePermissions } from '../services/permissions.service'
+
+type PermissionItem = {
+  key:
+    | keyof ProfilePermissions['process']
+    | keyof ProfilePermissions['sections']
+  section: 'process' | 'sections'
+  label: string
+  description?: string
+}
+
+type PermissionGroup = {
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  items: PermissionItem[]
+}
+
+const permissionGroups: PermissionGroup[] = [
+  {
+    label: 'Processos',
+    icon: FilePlus,
+    items: [
+      { key: 'create', section: 'process', label: 'Criar processo' },
+      {
+        key: 'editOwn',
+        section: 'process',
+        label: 'Editar processos proprios',
+      },
+      {
+        key: 'editAny',
+        section: 'process',
+        label: 'Editar qualquer processo visivel',
+      },
+    ],
+  },
+  {
+    label: 'Workflow juridico',
+    icon: Gavel,
+    items: [
+      {
+        key: 'startLegal',
+        section: 'process',
+        label: 'Iniciar processo juridico',
+      },
+      { key: 'editLegal', section: 'process', label: 'Editar dados juridicos' },
+      { key: 'finalize', section: 'process', label: 'Finalizar processo' },
+    ],
+  },
+  {
+    label: 'Cancelamento',
+    icon: XCircle,
+    items: [
+      {
+        key: 'cancelOwn',
+        section: 'process',
+        label: 'Cancelar processos proprios',
+      },
+      {
+        key: 'cancelAny',
+        section: 'process',
+        label: 'Cancelar qualquer processo visivel',
+      },
+    ],
+  },
+  {
+    label: 'Lote de documentos',
+    icon: Files,
+    items: [
+      { key: 'viewBatch', section: 'process', label: 'Ver arquivos do lote' },
+      {
+        key: 'uploadBatch',
+        section: 'process',
+        label: 'Enviar arquivos em lote',
+      },
+      {
+        key: 'deleteBatch',
+        section: 'process',
+        label: 'Excluir arquivos do lote',
+      },
+    ],
+  },
+  {
+    label: 'Documentacao (checklist)',
+    icon: FileText,
+    items: [
+      {
+        key: 'uploadChecklist',
+        section: 'process',
+        label: 'Organizar itens do checklist',
+        description: 'Permite enviar e organizar documentos nos itens',
+      },
+      {
+        key: 'deleteChecklistFile',
+        section: 'process',
+        label: 'Excluir arquivos do checklist',
+      },
+      {
+        key: 'markDocumentationReady',
+        section: 'process',
+        label: 'Marcar documentacao como pronta',
+      },
+    ],
+  },
+  {
+    label: 'Outras acoes',
+    icon: Layers,
+    items: [
+      {
+        key: 'generatePdf',
+        section: 'process',
+        label: 'Gerar PDF do processo',
+      },
+    ],
+  },
+  {
+    label: 'Secoes visiveis',
+    icon: Eye,
+    items: [
+      { key: 'dashboard', section: 'sections', label: 'Dashboard' },
+      {
+        key: 'batch',
+        section: 'sections',
+        label: 'Aba de lote (arquivos brutos)',
+      },
+      {
+        key: 'documentation',
+        section: 'sections',
+        label: 'Aba de documentacao',
+        description: 'Organizacao dos itens',
+      },
+      {
+        key: 'checklist',
+        section: 'sections',
+        label: 'Aba de checklist',
+        description: 'Status consolidado',
+      },
+      { key: 'legalData', section: 'sections', label: 'Dados juridicos' },
+      {
+        key: 'history',
+        section: 'sections',
+        label: 'Historico de movimentacoes',
+      },
+    ],
+  },
+]
+
+type ProfilePermissionsEditorProps = {
+  value: ProfilePermissions
+  onChange: (value: ProfilePermissions) => void
+  disabled?: boolean
+}
+
+export function ProfilePermissionsEditor({
+  value,
+  onChange,
+  disabled = false,
+}: ProfilePermissionsEditorProps) {
+  function toggle(
+    section: 'process' | 'sections',
+    key: string,
+    checked: boolean,
+  ) {
+    onChange({
+      ...value,
+      [section]: {
+        ...value[section],
+        [key]: checked,
+      },
+    })
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      {permissionGroups.map((group) => {
+        const Icon = group.icon
+        return (
+          <div
+            className="rounded-lg border border-border bg-muted/20 p-3"
+            key={group.label}
+          >
+            <div className="mb-3 flex items-center gap-2">
+              <Icon className="size-4 text-muted-foreground" />
+              <p className="text-sm font-medium text-foreground">
+                {group.label}
+              </p>
+            </div>
+            <div className="grid gap-2">
+              {group.items.map((item) => {
+                const checked =
+                  item.section === 'process'
+                    ? value.process[
+                        item.key as keyof ProfilePermissions['process']
+                      ]
+                    : value.sections[
+                        item.key as keyof ProfilePermissions['sections']
+                      ]
+
+                const id = `perm-${item.section}-${item.key}`
+
+                return (
+                  <div className="flex items-start gap-2.5" key={item.key}>
+                    <Checkbox
+                      checked={checked}
+                      className="mt-0.5"
+                      disabled={disabled}
+                      id={id}
+                      onCheckedChange={(c) =>
+                        toggle(item.section, item.key as string, c === true)
+                      }
+                    />
+                    <div className="grid gap-0.5">
+                      <Label
+                        className="cursor-pointer text-sm font-normal leading-tight"
+                        htmlFor={id}
+                      >
+                        {item.label}
+                      </Label>
+                      {item.description ? (
+                        <p className="text-xs text-muted-foreground">
+                          {item.description}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}

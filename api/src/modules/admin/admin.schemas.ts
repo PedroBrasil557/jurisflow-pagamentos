@@ -9,17 +9,23 @@ export const listAdminUsersQuerySchema = z.object({
   search: z.string().trim().max(150).optional(),
 })
 
-export const createAdminUserPayloadSchema = z.object({
-  cpf: cpfSchema,
-  email: emailSchema.optional(),
-  name: nameSchema,
-  role: z.enum(['user', 'admin', 'attorney']),
-})
+export const createAdminUserPayloadSchema = z
+  .object({
+    cpf: cpfSchema,
+    email: emailSchema.optional(),
+    name: nameSchema,
+    isAdmin: z.boolean().default(false),
+    profileId: z.string().min(1).optional(),
+  })
+  .refine((value) => value.isAdmin || !!value.profileId, {
+    message: 'Selecione um perfil para o usuario.',
+    path: ['profileId'],
+  })
 
 export const updateAdminUserPayloadSchema = z.object({
   email: emailSchema.optional(),
   name: nameSchema,
-  role: z.enum(['user', 'admin', 'attorney']),
+  isAdmin: z.boolean(),
 })
 
 export const userIdParamsSchema = z.object({

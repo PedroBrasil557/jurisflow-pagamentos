@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
-import { getRouteApi, useNavigate } from '@tanstack/react-router'
+import { useNavigate } from '@tanstack/react-router'
 import {
   Building2,
+  Eye,
   KeyRound,
   Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
+  ShieldCheck,
   Trash2,
   Users,
 } from 'lucide-react'
@@ -22,6 +24,15 @@ import {
   DropdownMenuTrigger,
 } from '#/components/ui/dropdown-menu'
 import { getUserRoleLabel } from '@/features/auth/auth.roles'
+import { useSession } from '@/features/auth/hooks/use-session'
+import { DeleteProfileDialog } from '@/features/permissions/components/delete-profile-dialog'
+import { ProfileEditorDialog } from '@/features/permissions/components/profile-editor-dialog'
+import { UserPermissionsDialog } from '@/features/permissions/components/user-permissions-dialog'
+import { profileListOptions } from '@/features/permissions/services/permissions.queries'
+import type {
+  ProcessScope,
+  ProfileListItem,
+} from '@/features/permissions/services/permissions.service'
 import { formatCpf } from '@/features/processes/process-form.utils'
 import { PageHeader } from '@/shared/components/page-header'
 import { SearchInput } from '@/shared/components/search-input'
@@ -50,7 +61,7 @@ import {
   defaultAdminUsersPageLimit,
 } from '../services/admin-users.service'
 
-const protectedRouteApi = getRouteApi('/_protected')
+const defaultProfilesPageLimit = 10
 
 function isInternalEmail(email: string) {
   return email.endsWith('@internal.local')
@@ -61,7 +72,7 @@ export type RegistersPageProps = {
   currentSearch: string
 }
 
-type ActiveTab = 'users' | 'housing-complexes'
+type ActiveTab = 'users' | 'housing-complexes' | 'permissions'
 
 function getUserRoleTone(role: string) {
   switch (role) {
@@ -74,10 +85,29 @@ function getUserRoleTone(role: string) {
   }
 }
 
+function getProcessScopeLabel(scope: ProcessScope) {
+  switch (scope) {
+    case 'all':
+      return 'Todos os processos'
+    case 'housing_complex':
+      return 'Por conjunto'
+    default:
+      return 'Apenas proprios'
+  }
+}
+
 function UserRoleBadge({ role }: { role: string }) {
   return (
     <StatusBadge tone={getUserRoleTone(role)}>
       {getUserRoleLabel(role)}
+    </StatusBadge>
+  )
+}
+
+function ProfileTypeBadge({ isSystem }: { isSystem: boolean }) {
+  return (
+    <StatusBadge tone={isSystem ? 'info' : 'ghost'}>
+      {isSystem ? 'Sistema' : 'Customizado'}
     </StatusBadge>
   )
 }
@@ -91,6 +121,26 @@ function UserStatusBadges({ user }: { user: AdminUserListItem }) {
       {user.mustChangePassword ? (
         <Badge variant="outline">Troca de senha pendente</Badge>
       ) : null}
+    </div>
+  )
+}
+
+function UserProfileCell({ user }: { user: AdminUserListItem }) {
+  if (user.role === 'admin') {
+    return <UserRoleBadge role={user.role} />
+  }
+
+  return (
+    <div className="grid gap-1">
+      <p className="font-medium text-foreground">
+        {user.profileName ?? 'Sem perfil vinculado'}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <UserRoleBadge role={user.role} />
+        {!user.profileName ? (
+          <Badge variant="outline">Revisar vinculo</Badge>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -110,16 +160,38 @@ function CreatedByCell({ user }: { user: AdminUserListItem }) {
   )
 }
 
+function ProfileScopeCell({ profile }: { profile: ProfileListItem }) {
+  return (
+    <div className="grid gap-1">
+      <p className="font-medium text-foreground">
+        {getProcessScopeLabel(profile.processScope)}
+      </p>
+      {profile.processScope === 'housing_complex' ? (
+        <p className="text-xs text-muted-foreground">
+          {profile.housingComplexes.length > 0
+            ? profile.housingComplexes
+                .map((housingComplex) => housingComplex.name)
+                .join(', ')
+            : 'Nenhum conjunto vinculado'}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 export function RegistersPage({
   currentPage,
   currentSearch,
 }: RegistersPageProps) {
-  const { user } = protectedRouteApi.useRouteContext()
+  const { user } = useSession()
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<ActiveTab>('users')
+
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [resetTarget, setResetTarget] = useState<AdminUserListItem | null>(null)
   const [editTarget, setEditTarget] = useState<AdminUserListItem | null>(null)
+  const [permissionsTarget, setPermissionsTarget] =
+    useState<AdminUserListItem | null>(null)
   const [search, setSearch] = useState(currentSearch)
   const debouncedSearch = useDebouncedValue(search)
 
@@ -131,6 +203,16 @@ export function RegistersPage({
   const [hcSearch, setHcSearch] = useState('')
   const debouncedHcSearch = useDebouncedValue(hcSearch)
   const [hcPage, setHcPage] = useState(1)
+
+  const [isCreateProfileDialogOpen, setIsCreateProfileDialogOpen] =
+    useState(false)
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null)
+  const [viewingProfileId, setViewingProfileId] = useState<string | null>(null)
+  const [deleteProfileTarget, setDeleteProfileTarget] =
+    useState<ProfileListItem | null>(null)
+  const [profileSearch, setProfileSearch] = useState('')
+  const debouncedProfileSearch = useDebouncedValue(profileSearch)
+  const [profilePage, setProfilePage] = useState(1)
 
   const usersQuery = useQuery(
     adminUserListOptions({
@@ -148,8 +230,17 @@ export function RegistersPage({
     }),
   )
 
+  const profilesQuery = useQuery(
+    profileListOptions({
+      limit: defaultProfilesPageLimit,
+      page: profilePage,
+      search: debouncedProfileSearch,
+    }),
+  )
+
   const usersData = usersQuery.data
   const hcData = hcQuery.data
+  const profilesData = profilesQuery.data
 
   useEffect(() => {
     if (activeTab !== 'users') {
@@ -177,6 +268,14 @@ export function RegistersPage({
       setHcPage(1)
     }
   }, [debouncedHcSearch])
+
+  const prevProfileSearchRef = useRef(debouncedProfileSearch)
+  useEffect(() => {
+    if (prevProfileSearchRef.current !== debouncedProfileSearch) {
+      prevProfileSearchRef.current = debouncedProfileSearch
+      setProfilePage(1)
+    }
+  }, [debouncedProfileSearch])
 
   function handleCreatedUser(payload: { temporaryPassword?: string | null }) {
     toast.success(
@@ -210,7 +309,7 @@ export function RegistersPage({
       {
         id: 'role',
         header: 'Perfil',
-        render: (item) => <UserRoleBadge role={item.role} />,
+        render: (item) => <UserProfileCell user={item} />,
       },
       {
         id: 'status',
@@ -237,6 +336,12 @@ export function RegistersPage({
                 <Pencil className="size-4" />
                 Editar
               </DropdownMenuItem>
+              {item.role !== 'admin' ? (
+                <DropdownMenuItem onClick={() => setPermissionsTarget(item)}>
+                  <ShieldCheck className="size-4" />
+                  Permissoes
+                </DropdownMenuItem>
+              ) : null}
               {item.id !== user.id ? (
                 <DropdownMenuItem onClick={() => setResetTarget(item)}>
                   <KeyRound className="size-4" />
@@ -300,6 +405,89 @@ export function RegistersPage({
     [],
   )
 
+  const profileColumns = useMemo<readonly DataTableColumn<ProfileListItem>[]>(
+    () => [
+      {
+        id: 'name',
+        header: 'Perfil',
+        render: (item) => (
+          <div className="grid gap-1">
+            <p className="font-medium text-foreground">{item.name}</p>
+            {item.description ? (
+              <p className="text-sm text-muted-foreground">
+                {item.description}
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">Sem descricao</p>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: 'scope',
+        header: 'Escopo',
+        render: (item) => <ProfileScopeCell profile={item} />,
+      },
+      {
+        id: 'usage',
+        header: 'Vinculos',
+        render: (item) => (
+          <div className="grid gap-1">
+            <p className="font-medium text-foreground">
+              {item.userCount} usuario(s)
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {item.processScope === 'housing_complex'
+                ? `${item.housingComplexes.length} conjunto(s) vinculados`
+                : 'Sem restricao adicional por conjunto'}
+            </p>
+          </div>
+        ),
+      },
+      {
+        id: 'type',
+        header: 'Tipo',
+        render: (item) => <ProfileTypeBadge isSystem={item.isSystem} />,
+      },
+      {
+        id: 'actions',
+        header: 'Acoes',
+        render: (item) => (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button aria-label="Acoes do perfil" size="icon" variant="ghost">
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={() => setViewingProfileId(item.id)}>
+                <Eye className="size-4" />
+                Ver permissoes
+              </DropdownMenuItem>
+              {item.isSystem ? null : (
+                <>
+                  <DropdownMenuItem
+                    onClick={() => setEditingProfileId(item.id)}
+                  >
+                    <Pencil className="size-4" />
+                    Editar
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => setDeleteProfileTarget(item)}
+                  >
+                    <Trash2 className="size-4" />
+                    Excluir
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ),
+      },
+    ],
+    [],
+  )
+
   return (
     <div className="grid gap-6">
       <PageHeader
@@ -320,6 +508,12 @@ export function RegistersPage({
             isActive: activeTab === 'housing-complexes',
             label: 'Conjuntos',
             onClick: () => handleTabChange('housing-complexes'),
+          },
+          {
+            icon: ShieldCheck,
+            isActive: activeTab === 'permissions',
+            label: 'Permissoes',
+            onClick: () => handleTabChange('permissions'),
           },
         ]}
       >
@@ -410,10 +604,20 @@ export function RegistersPage({
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-48">
-                              <DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => setEditTarget(item)}
+                              >
                                 <Pencil className="size-4" />
                                 Editar
                               </DropdownMenuItem>
+                              {item.role !== 'admin' ? (
+                                <DropdownMenuItem
+                                  onClick={() => setPermissionsTarget(item)}
+                                >
+                                  <ShieldCheck className="size-4" />
+                                  Permissoes
+                                </DropdownMenuItem>
+                              ) : null}
                               {item.id !== user.id ? (
                                 <DropdownMenuItem
                                   onClick={() => setResetTarget(item)}
@@ -426,9 +630,7 @@ export function RegistersPage({
                           </DropdownMenu>
                         </div>
 
-                        <div className="flex flex-wrap gap-2">
-                          <UserRoleBadge role={item.role} />
-                        </div>
+                        <UserProfileCell user={item} />
 
                         <UserStatusBadges user={item} />
 
@@ -447,7 +649,7 @@ export function RegistersPage({
               </CardContent>
             </Card>
           </div>
-        ) : (
+        ) : activeTab === 'housing-complexes' ? (
           <div className="grid gap-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <SearchInput
@@ -545,6 +747,134 @@ export function RegistersPage({
               </CardContent>
             </Card>
           </div>
+        ) : (
+          <div className="grid gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <SearchInput
+                containerClassName="w-full sm:max-w-sm"
+                onChange={(event) => {
+                  setProfileSearch(event.target.value)
+                }}
+                placeholder="Buscar por nome do perfil..."
+                value={profileSearch}
+              />
+
+              <Button
+                onClick={() => setIsCreateProfileDialogOpen(true)}
+                type="button"
+              >
+                <Plus className="size-4" />
+                Novo perfil
+              </Button>
+            </div>
+
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              {profilesQuery.isFetching ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : null}
+              <span>{profilesData?.total ?? 0} registros</span>
+            </div>
+
+            <Card className="overflow-hidden">
+              <CardContent className="overflow-x-auto px-0 sm:px-0">
+                <DataTable
+                  ariaLabel="Tabela de perfis de permissao"
+                  columns={profileColumns}
+                  emptyState={
+                    <div className="rounded-[1.75rem] border border-dashed border-border bg-muted/25 px-6 py-10 text-center">
+                      <p className="text-sm font-medium text-muted-foreground">
+                        Nenhum perfil encontrado
+                      </p>
+                    </div>
+                  }
+                  getItemKey={(item) => item.id}
+                  items={profilesData?.items ?? []}
+                  pagination={{
+                    itemLabel: 'perfis',
+                    onPageChange: (nextPage) => {
+                      setProfilePage(nextPage)
+                    },
+                    page: profilePage,
+                    pageSize:
+                      profilesData?.pageSize ?? defaultProfilesPageLimit,
+                    total: profilesData?.total ?? 0,
+                  }}
+                  renderMobileCard={(item) => (
+                    <article className="rounded-3xl border border-border bg-card p-5 shadow-sm">
+                      <div className="grid gap-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="grid gap-2">
+                            <div className="flex flex-wrap gap-2">
+                              <ProfileTypeBadge isSystem={item.isSystem} />
+                            </div>
+                            <div className="grid gap-1">
+                              <p className="font-medium text-foreground">
+                                {item.name}
+                              </p>
+                              {item.description ? (
+                                <p className="text-sm text-muted-foreground">
+                                  {item.description}
+                                </p>
+                              ) : null}
+                            </div>
+                          </div>
+
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                aria-label="Acoes do perfil"
+                                size="icon"
+                                variant="ghost"
+                              >
+                                <MoreHorizontal className="size-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuItem
+                                onClick={() => setViewingProfileId(item.id)}
+                              >
+                                <Eye className="size-4" />
+                                Ver permissoes
+                              </DropdownMenuItem>
+                              {item.isSystem ? null : (
+                                <>
+                                  <DropdownMenuItem
+                                    onClick={() => setEditingProfileId(item.id)}
+                                  >
+                                    <Pencil className="size-4" />
+                                    Editar
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => setDeleteProfileTarget(item)}
+                                  >
+                                    <Trash2 className="size-4" />
+                                    Excluir
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+
+                        <ProfileScopeCell profile={item} />
+
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="outline">
+                            {item.userCount} usuario(s)
+                          </Badge>
+                          {item.processScope === 'housing_complex' ? (
+                            <Badge variant="outline">
+                              {item.housingComplexes.length} conjunto(s)
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </div>
+                    </article>
+                  )}
+                />
+              </CardContent>
+            </Card>
+          </div>
         )}
       </SettingsLayout>
 
@@ -570,6 +900,13 @@ export function RegistersPage({
         />
       ) : null}
 
+      {permissionsTarget ? (
+        <UserPermissionsDialog
+          onClose={() => setPermissionsTarget(null)}
+          user={permissionsTarget}
+        />
+      ) : null}
+
       {isCreateHcDialogOpen ? (
         <CreateHousingComplexDialog
           onClose={() => setIsCreateHcDialogOpen(false)}
@@ -587,6 +924,34 @@ export function RegistersPage({
         <DeleteHousingComplexDialog
           housingComplex={deleteHcTarget}
           onClose={() => setDeleteHcTarget(null)}
+        />
+      ) : null}
+
+      {isCreateProfileDialogOpen ? (
+        <ProfileEditorDialog
+          onClose={() => setIsCreateProfileDialogOpen(false)}
+        />
+      ) : null}
+
+      {editingProfileId ? (
+        <ProfileEditorDialog
+          onClose={() => setEditingProfileId(null)}
+          profileId={editingProfileId}
+        />
+      ) : null}
+
+      {viewingProfileId ? (
+        <ProfileEditorDialog
+          onClose={() => setViewingProfileId(null)}
+          profileId={viewingProfileId}
+          readOnly
+        />
+      ) : null}
+
+      {deleteProfileTarget ? (
+        <DeleteProfileDialog
+          onClose={() => setDeleteProfileTarget(null)}
+          profile={deleteProfileTarget}
         />
       ) : null}
     </div>

@@ -1,5 +1,5 @@
 import { ClipboardCheck, LayoutDashboard, UserPlus } from 'lucide-react'
-import { isAdminRole } from '@/features/auth/auth.roles'
+import { canAccessDashboard } from '@/features/processes/lib/process-access'
 import type { AuthenticatedNavigationItem } from './authenticated-layout.types'
 
 export const authenticatedNavigationItems = [
@@ -8,6 +8,7 @@ export const authenticatedNavigationItems = [
     description: 'Visao geral',
     to: '/',
     icon: LayoutDashboard,
+    isVisible: ({ permissions }) => canAccessDashboard(permissions),
   },
   {
     label: 'Processos',
@@ -20,6 +21,6 @@ export const authenticatedNavigationItems = [
     description: 'Area administrativa',
     to: '/cadastros',
     icon: UserPlus,
-    isVisible: (role: string) => isAdminRole(role),
+    isVisible: ({ permissions }) => permissions.isAdmin,
   },
 ] satisfies readonly AuthenticatedNavigationItem[]
