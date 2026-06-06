@@ -30,6 +30,7 @@ export function getBreadcrumbItems(
 ) {
   const processesItem = items.find((item) => item.to === '/processos')
   const registersItem = items.find((item) => item.to === '/cadastros')
+  const settingsItem = items.find((item) => item.to === '/configuracoes')
   const breadcrumbs: AuthenticatedBreadcrumbItem[] = []
 
   if (pathname === '/') {
@@ -70,6 +71,14 @@ export function getBreadcrumbItems(
   if (pathname.startsWith('/cadastros')) {
     if (registersItem) {
       breadcrumbs.push({ label: registersItem.label })
+    }
+
+    return breadcrumbs
+  }
+
+  if (pathname.startsWith('/configuracoes')) {
+    if (settingsItem) {
+      breadcrumbs.push({ label: settingsItem.label })
     }
 
     return breadcrumbs

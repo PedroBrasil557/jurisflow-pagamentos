@@ -1,4 +1,9 @@
-import { ClipboardCheck, LayoutDashboard, UserPlus } from 'lucide-react'
+import {
+  ClipboardCheck,
+  LayoutDashboard,
+  Settings,
+  UserPlus,
+} from 'lucide-react'
 import { canAccessDashboard } from '@/features/processes/lib/process-access'
 import type { AuthenticatedNavigationItem } from './authenticated-layout.types'
 
@@ -21,6 +26,13 @@ export const authenticatedNavigationItems = [
     description: 'Area administrativa',
     to: '/cadastros',
     icon: UserPlus,
+    isVisible: ({ permissions }) => permissions.isAdmin,
+  },
+  {
+    label: 'Configuracoes',
+    description: 'Ajustes do sistema',
+    to: '/configuracoes',
+    icon: Settings,
     isVisible: ({ permissions }) => permissions.isAdmin,
   },
 ] satisfies readonly AuthenticatedNavigationItem[]

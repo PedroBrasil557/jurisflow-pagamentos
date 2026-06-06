@@ -12,6 +12,7 @@ import {
   permissionUserAdminRoutes,
 } from '../modules/permissions/permissions.admin.routes'
 import { processRoutes } from '../modules/processes/processes.routes'
+import { settingsAdminRoutes } from '../modules/settings/settings.routes'
 import { systemRoutes } from '../modules/system/system.routes'
 import { createCorsMiddleware } from '../shared/middleware/cors'
 import { requestLogger } from '../shared/middleware/logger'
@@ -38,6 +39,7 @@ export function createAppRouter(options: CreateAppRouterOptions) {
     .route('/api/admin/housing-complexes', housingComplexAdminRoutes)
     .route('/api/admin/profiles', permissionProfileAdminRoutes)
     .route('/api/admin/users', permissionUserAdminRoutes)
+    .route('/api/admin/settings', settingsAdminRoutes)
     .route('/api/housing-complexes', housingComplexOptionsRoutes)
     .route('/api/dashboard', dashboardRoutes)
     .route('/api/processes', processRoutes)

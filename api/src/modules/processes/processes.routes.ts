@@ -12,7 +12,10 @@ import {
   paramsValidator,
   queryValidator,
 } from '../../shared/validation/validators'
-import { resolveUserPermissions } from '../permissions/permissions.service'
+import {
+  assertCan,
+  resolveUserPermissions,
+} from '../permissions/permissions.service'
 import {
   deleteBatchFile,
   downloadAllBatchFiles,
@@ -28,6 +31,11 @@ import {
   submitProcessChecklistItem,
   uploadProcessChecklistFile,
 } from './processes.checklist.service'
+import { extractDocumentsFromFiles } from './processes.extraction.service'
+import {
+  importBundleDocumentsSchema,
+  importDocumentBundle,
+} from './processes.import.service'
 import {
   generateProcessPdf,
   listProcessPdfModels,
@@ -104,6 +112,78 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
+  .post('/extract-documents', async (c) => {
+    const formData = await c.req.raw.formData()
+    const files: File[] = []
+
+    for (const value of formData.getAll('files')) {
+      if (value instanceof File) {
+        files.push(value)
+      }
+    }
+
+    if (files.length === 0) {
+      return c.json({ message: 'Informe ao menos um documento.' }, 400)
+    }
+
+    try {
+      const { perms } = await getCurrentUserWithPermissions(c)
+      assertCan(perms, 'create')
+
+      const result = await extractDocumentsFromFiles(files)
+
+      return c.json(result, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .post(
+    '/:processId/import-bundle',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      const formData = await c.req.raw.formData()
+      const file = formData.get('file')
+      const documentsRaw = formData.get('documents')
+
+      if (!(file instanceof File)) {
+        return c.json({ message: 'Informe o arquivo PDF.' }, 400)
+      }
+
+      if (typeof documentsRaw !== 'string') {
+        return c.json(
+          { message: 'Informe a classificacao dos documentos.' },
+          400,
+        )
+      }
+
+      let parsedDocuments: unknown
+      try {
+        parsedDocuments = JSON.parse(documentsRaw)
+      } catch {
+        return c.json({ message: 'Classificacao de documentos invalida.' }, 400)
+      }
+
+      const documents = importBundleDocumentsSchema.safeParse(parsedDocuments)
+      if (!documents.success) {
+        return c.json({ message: 'Classificacao de documentos invalida.' }, 400)
+      }
+
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const result = await importDocumentBundle({
+          processId: c.req.valid('param').processId,
+          file,
+          documents: documents.data,
+          actor: currentUser,
+          perms,
+        })
+
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .get(
     '/:processId/checklist',
     paramsValidator(processIdParamsSchema),

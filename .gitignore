@@ -1,0 +1,13 @@
+# ─── RuFlo / claude-flow (setup local, não versionado) ───
+# Runtime, dados, logs e sessões gerados pela ferramenta
+.claude-flow/
+.swarm/
+
+# Bancos de dados locais (binários grandes, estado da máquina)
+*.db
+ruvector.db
+
+# Configuração de agentes/skills/hooks e MCP — mantidos locais
+# enquanto o time não decide adotar o ruflo no projeto
+.claude/
+.mcp.json

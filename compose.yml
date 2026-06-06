@@ -37,6 +37,8 @@ services:
       S3_SECRET_KEY: "minioadmin123"
       S3_FORCE_PATH_STYLE: "true"
       S3_PROCESS_DOCUMENTS_BUCKET: "process-documents"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-opus-4-8}"
     volumes:
       - ./:/workspace
       - api_node_modules:/workspace/api/node_modules

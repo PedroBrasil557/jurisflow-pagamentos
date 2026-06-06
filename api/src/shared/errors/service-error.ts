@@ -6,6 +6,7 @@ type ServiceErrorStatusCode =
   | 409
   | 413
   | 415
+  | 422
   | 500
   | 503
 

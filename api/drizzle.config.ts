@@ -9,6 +9,7 @@ export default defineConfig({
     './src/modules/housing-complexes/housing-complexes.schema.ts',
     './src/modules/processes/processes.schema.ts',
     './src/modules/permissions/permissions.schema.ts',
+    './src/modules/settings/settings.schema.ts',
   ],
   out: './drizzle',
   dialect: 'postgresql',
