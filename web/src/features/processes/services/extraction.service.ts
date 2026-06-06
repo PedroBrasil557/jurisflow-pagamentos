@@ -3,6 +3,8 @@ import { apiClient } from '@/shared/services/api-client'
 import { getErrorMessage } from '@/shared/services/api-error'
 
 const extractDocumentsClientRoute = apiClient.api.processes['extract-documents']
+const importBundleClientRoute =
+  apiClient.api.processes[':processId']['import-bundle']
 
 export type ExtractDocumentsResponse = InferResponseType<
   typeof extractDocumentsClientRoute.$post,
@@ -10,17 +12,15 @@ export type ExtractDocumentsResponse = InferResponseType<
 >
 
 export type ExtractedField = ExtractDocumentsResponse['fields'][number]
+export type ExtractedDocument = ExtractDocumentsResponse['documents'][number]
 
-// Envia os documentos (RG/CNH + comprovante) para extracao via IA.
-// Stateless: o backend nao grava nada — os arquivos seguem em memoria no cliente.
+// Envia o PDF unico (com todos os documentos) para extracao + classificacao via IA.
+// Stateless: o backend nao grava nada — o arquivo segue em memoria no cliente.
 export async function extractDocumentsRequest(
-  files: File[],
+  file: File,
 ): Promise<ExtractDocumentsResponse> {
   const formData = new FormData()
-
-  for (const file of files) {
-    formData.append('files', file)
-  }
+  formData.append('files', file)
 
   const url = extractDocumentsClientRoute.$url()
 
@@ -34,10 +34,45 @@ export async function extractDocumentsRequest(
     throw new Error(
       await getErrorMessage(
         response,
-        'Nao foi possivel extrair os dados dos documentos.',
+        'Nao foi possivel extrair os dados do documento.',
       ),
     )
   }
 
   return (await response.json()) as ExtractDocumentsResponse
+}
+
+// Desmembra o PDF no backend e anexa cada parte ao checklist do processo.
+export async function importBundleRequest(input: {
+  processId: string
+  file: File
+  documents: ExtractedDocument[]
+}) {
+  const formData = new FormData()
+  formData.append('file', input.file)
+  formData.append('documents', JSON.stringify(input.documents))
+
+  const url = importBundleClientRoute.$url({
+    param: { processId: input.processId },
+  })
+
+  const response = await fetch(url, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel anexar os documentos ao checklist.',
+      ),
+    )
+  }
+
+  return (await response.json()) as InferResponseType<
+    typeof importBundleClientRoute.$post,
+    200
+  >
 }

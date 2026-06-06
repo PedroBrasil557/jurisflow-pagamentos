@@ -22,10 +22,7 @@ import {
   ProcessTextField,
 } from '../components/process-form/process-form-field'
 import { ProcessFormSection } from '../components/process-form/process-form-section'
-import {
-  type ImportDocumentFiles,
-  ImportFromDocumentDialog,
-} from '../components/process-import/import-from-document-dialog'
+import { ImportFromDocumentDialog } from '../components/process-import/import-from-document-dialog'
 import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save-success-dialog'
 import { buildProcessRelationship, canEditProcess } from '../lib/process-access'
 import {
@@ -43,7 +40,11 @@ import type {
 } from '../process-form.types'
 import { formatCpf, formatWhatsapp, formatZipCode } from '../process-form.utils'
 import { processFormSchema } from '../schemas/process-form.schema'
-import type { ExtractedField } from '../services/extraction.service'
+import type {
+  ExtractedDocument,
+  ExtractedField,
+} from '../services/extraction.service'
+import { importBundleRequest } from '../services/extraction.service'
 import { housingComplexOptionsInfiniteQuery } from '../services/housing-complexes.queries'
 import {
   useCreateProcess,
@@ -51,62 +52,18 @@ import {
 } from '../services/processes.mutations'
 import { processDetailOptions } from '../services/processes.queries'
 import {
-  fetchProcessChecklist,
   generateProcessPdfRequest,
   getProcessPdfModelsRequest,
-  submitProcessChecklistItemRequest,
 } from '../services/processes.service'
 
-const emptyImportedFiles: ImportDocumentFiles = {
-  identity: [],
-  address: [],
-  spouse: [],
+type ImportedBundle = {
+  file: File | null
+  documents: ExtractedDocument[]
 }
 
-// Mapeia cada slot de documento importado para a chave do item de checklist.
-const importedFileChecklistKeys: Array<[keyof ImportDocumentFiles, string]> = [
-  ['identity', 'rg_cpf_cnh'],
-  ['address', 'comprovante_endereco'],
-  ['spouse', 'rg_cpf_cnh_conjuge'],
-]
-
-async function attachImportedDocumentsToChecklist(
-  processId: string,
-  files: ImportDocumentFiles,
-) {
-  const hasFiles = importedFileChecklistKeys.some(
-    ([slot]) => files[slot].length > 0,
-  )
-
-  if (!hasFiles) {
-    return
-  }
-
-  const checklist = await fetchProcessChecklist(processId)
-
-  for (const [slot, documentKey] of importedFileChecklistKeys) {
-    const slotFiles = files[slot]
-
-    if (slotFiles.length === 0) {
-      continue
-    }
-
-    const item = checklist.items.find(
-      (checklistItem) => checklistItem.documentType.key === documentKey,
-    )
-
-    if (!item) {
-      continue
-    }
-
-    for (const file of slotFiles) {
-      await submitProcessChecklistItemRequest({
-        processId,
-        processDocumentId: item.id,
-        file,
-      })
-    }
-  }
+const emptyImportedBundle: ImportedBundle = {
+  file: null,
+  documents: [],
 }
 
 type ProcessFormShellProps = {
@@ -170,7 +127,7 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     useState<ProcessSaveSuccessState | null>(null)
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
-  const importedFilesRef = useRef<ImportDocumentFiles>(emptyImportedFiles)
+  const importedBundleRef = useRef<ImportedBundle>(emptyImportedBundle)
 
   const createMutation = useCreateProcess()
   const updateMutation = useUpdateProcess(processId ?? '')
@@ -303,20 +260,18 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
 
   function handleImportApply(
     fields: ExtractedField[],
-    files: ImportDocumentFiles,
+    file: File,
+    documents: ExtractedDocument[],
   ) {
     for (const field of fields) {
       updateValue(field.key as keyof ProcessFormValues, field.value as never)
     }
 
-    importedFilesRef.current = files
-
-    const fileCount =
-      files.identity.length + files.address.length + files.spouse.length
+    importedBundleRef.current = { file, documents }
 
     toast.success(
-      fileCount > 0
-        ? 'Dados aplicados. Os documentos serao anexados ao checklist apos criar o processo.'
+      documents.length > 0
+        ? 'Dados aplicados. Os documentos serao separados e anexados ao checklist apos criar o processo.'
         : 'Dados aplicados ao formulario.',
     )
   }
@@ -328,18 +283,27 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
       if (mode === 'create') {
         const result = await createMutation.mutateAsync(values)
 
-        try {
-          await attachImportedDocumentsToChecklist(
-            result.process.id,
-            importedFilesRef.current,
-          )
-        } catch {
-          toast.error(
-            'Processo criado, mas nao foi possivel anexar os documentos importados ao checklist.',
-          )
+        const bundle = importedBundleRef.current
+        if (bundle.file && bundle.documents.length > 0) {
+          try {
+            await importBundleRequest({
+              processId: result.process.id,
+              file: bundle.file,
+              documents: bundle.documents,
+            })
+            // So limpa o bundle apos anexar com sucesso.
+            importedBundleRef.current = emptyImportedBundle
+          } catch (error) {
+            // Mantem o bundle (nao limpa) e mostra o motivo real do backend.
+            toast.error(
+              error instanceof Error
+                ? `${error.message} Voce pode anexa-los manualmente no checklist do processo.`
+                : 'Processo criado, mas nao foi possivel anexar os documentos. Anexe-os manualmente no checklist.',
+            )
+          }
+        } else {
+          importedBundleRef.current = emptyImportedBundle
         }
-
-        importedFilesRef.current = emptyImportedFiles
 
         setSuccessState({
           processId: result.process.id,
@@ -1050,7 +1014,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
           onApply={handleImportApply}
           onClose={() => setIsImportDialogOpen(false)}
           open={isImportDialogOpen}
-          spouseEnabled={values.spouseContractSigned === 'sim'}
         />
       ) : null}
 

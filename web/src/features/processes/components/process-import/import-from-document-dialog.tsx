@@ -1,5 +1,5 @@
-import { FileUp, Loader2, Sparkles, X } from 'lucide-react'
-import { useId, useMemo, useRef, useState } from 'react'
+import { FileText, Loader2, Sparkles, X } from 'lucide-react'
+import { useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Checkbox } from '#/components/ui/checkbox'
@@ -7,22 +7,20 @@ import { AppDialog } from '@/shared/components/app-dialog'
 import { StatusBadge } from '@/shared/components/status-badge'
 import { formatBytes } from '@/shared/lib/format'
 import { useExtractDocuments } from '../../services/extraction.mutations'
-import type { ExtractedField } from '../../services/extraction.service'
-
-// Arquivos agrupados por slot — usados depois da criacao para anexar ao checklist.
-export type ImportDocumentFiles = {
-  identity: File[]
-  address: File[]
-  spouse: File[]
-}
-
-type DocumentSlot = keyof ImportDocumentFiles
+import type {
+  ExtractDocumentsResponse,
+  ExtractedDocument,
+  ExtractedField,
+} from '../../services/extraction.service'
 
 type ImportFromDocumentDialogProps = {
   open: boolean
   onClose: () => void
-  spouseEnabled: boolean
-  onApply: (fields: ExtractedField[], files: ImportDocumentFiles) => void
+  onApply: (
+    fields: ExtractedField[],
+    file: File,
+    documents: ExtractedDocument[],
+  ) => void
 }
 
 const confidenceTone = {
@@ -37,153 +35,62 @@ const confidenceLabel = {
   baixa: 'Confianca baixa',
 } as const
 
-function FileSlot({
-  description,
-  files,
-  label,
-  onChange,
-}: {
-  description: string
-  files: File[]
-  label: string
-  onChange: (files: File[]) => void
-}) {
+export function ImportFromDocumentDialog({
+  open,
+  onClose,
+  onApply,
+}: ImportFromDocumentDialogProps) {
+  const [file, setFile] = useState<File | null>(null)
+  const [consent, setConsent] = useState(false)
+  const [result, setResult] = useState<ExtractDocumentsResponse | null>(null)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+
+  const consentId = useId()
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  function handleSelected(event: React.ChangeEvent<HTMLInputElement>) {
-    const fileList = event.target.files
+  const extractMutation = useExtractDocuments()
+  const isExtracting = extractMutation.isPending
 
-    if (!fileList || fileList.length === 0) {
-      return
-    }
+  function handleClose() {
+    setFile(null)
+    setConsent(false)
+    setResult(null)
+    setSelectedKeys(new Set())
+    extractMutation.reset()
+    onClose()
+  }
 
-    onChange([...files, ...Array.from(fileList)])
+  function handleSelectFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const selected = event.target.files?.[0] ?? null
+    setFile(selected)
 
     if (inputRef.current) {
       inputRef.current.value = ''
     }
   }
 
-  function handleRemove(index: number) {
-    onChange(files.filter((_, i) => i !== index))
-  }
-
-  return (
-    <div className="grid gap-2">
-      <div className="grid gap-0.5">
-        <span className="text-sm font-medium text-foreground">{label}</span>
-        <span className="text-xs text-muted-foreground">{description}</span>
-      </div>
-
-      <label
-        className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card px-4 py-4 text-center text-sm font-medium text-muted-foreground transition hover:border-primary/35 hover:bg-primary/5"
-        htmlFor={inputId}
-      >
-        <FileUp className="size-4" />
-        Selecionar arquivo(s)
-      </label>
-
-      <input
-        accept="application/pdf,image/jpeg,image/png,image/webp"
-        className="hidden"
-        id={inputId}
-        multiple
-        onChange={handleSelected}
-        ref={inputRef}
-        type="file"
-      />
-
-      {files.length > 0 ? (
-        <ul className="grid gap-1.5">
-          {files.map((file, index) => (
-            <li
-              className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2"
-              key={`${file.name}-${file.size}-${file.lastModified}`}
-            >
-              <span className="min-w-0 truncate text-sm text-foreground">
-                {file.name}
-              </span>
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {formatBytes(file.size)}
-                </span>
-                <button
-                  className="text-muted-foreground hover:text-destructive"
-                  onClick={() => handleRemove(index)}
-                  type="button"
-                >
-                  <X className="size-3.5" />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  )
-}
-
-export function ImportFromDocumentDialog({
-  open,
-  onClose,
-  spouseEnabled,
-  onApply,
-}: ImportFromDocumentDialogProps) {
-  const [files, setFiles] = useState<ImportDocumentFiles>({
-    identity: [],
-    address: [],
-    spouse: [],
-  })
-  const [consent, setConsent] = useState(false)
-  const [result, setResult] = useState<ExtractedField[] | null>(null)
-  const [warnings, setWarnings] = useState<string[]>([])
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
-  const consentId = useId()
-
-  const extractMutation = useExtractDocuments()
-
-  const allFiles = useMemo(
-    () => [...files.identity, ...files.address, ...files.spouse],
-    [files],
-  )
-
-  function updateSlot(slot: DocumentSlot) {
-    return (next: File[]) => setFiles((prev) => ({ ...prev, [slot]: next }))
-  }
-
-  function handleClose() {
-    setFiles({ identity: [], address: [], spouse: [] })
-    setConsent(false)
-    setResult(null)
-    setWarnings([])
-    setSelectedKeys(new Set())
-    extractMutation.reset()
-    onClose()
-  }
-
   async function handleExtract() {
-    if (allFiles.length === 0) {
-      toast.error('Envie ao menos um documento.')
+    if (!file) {
+      toast.error('Selecione o arquivo PDF.')
       return
     }
 
     if (!consent) {
-      toast.error('Confirme o consentimento para enviar os documentos.')
+      toast.error('Confirme o consentimento para enviar o documento.')
       return
     }
 
     try {
-      const extraction = await extractMutation.mutateAsync(allFiles)
+      const extraction = await extractMutation.mutateAsync(file)
 
-      setResult(extraction.fields)
-      setWarnings(extraction.warnings)
+      setResult(extraction)
       setSelectedKeys(
         new Set(extraction.fields.filter((f) => f.valid).map((f) => f.key)),
       )
 
-      if (extraction.fields.length === 0) {
-        toast.warning('Nenhum dado foi reconhecido nos documentos enviados.')
+      if (extraction.fields.length === 0 && extraction.documents.length === 0) {
+        toast.warning('Nada foi reconhecido no PDF enviado.')
       }
     } catch (error) {
       toast.error(
@@ -209,26 +116,21 @@ export function ImportFromDocumentDialog({
   }
 
   function handleApply() {
-    if (!result) {
+    if (!result || !file) {
       return
     }
 
-    const selected = result.filter((field) => selectedKeys.has(field.key))
+    const selected = result.fields.filter((field) =>
+      selectedKeys.has(field.key),
+    )
 
-    if (selected.length === 0) {
-      toast.error('Selecione ao menos um campo para aplicar.')
-      return
-    }
-
-    onApply(selected, files)
+    onApply(selected, file, result.documents)
     handleClose()
   }
 
-  const isExtracting = extractMutation.isPending
-
   return (
     <AppDialog
-      description="Envie o RG/CNH e o comprovante de endereco. Os dados serao lidos por IA para preencher o cadastro; voce revisa antes de salvar."
+      description="Envie um unico PDF com todos os documentos. A IA preenche o cadastro e separa os documentos para anexar ao checklist apos criar o processo."
       icon={Sparkles}
       maxWidth="2xl"
       onClose={handleClose}
@@ -240,12 +142,14 @@ export function ImportFromDocumentDialog({
         {result ? (
           <div className="grid gap-4">
             <p className="text-sm text-muted-foreground">
-              Revise os dados lidos e escolha quais aplicar ao formulario.
+              Revise os dados lidos e escolha quais aplicar ao formulario. Os
+              documentos abaixo serao anexados ao checklist apos criar o
+              processo.
             </p>
 
-            {warnings.length > 0 ? (
+            {result.warnings.length > 0 ? (
               <div className="grid gap-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-                {warnings.map((warning) => (
+                {result.warnings.map((warning) => (
                   <p
                     className="text-sm text-amber-700 dark:text-amber-400"
                     key={warning}
@@ -256,47 +160,69 @@ export function ImportFromDocumentDialog({
               </div>
             ) : null}
 
-            {result.length > 0 ? (
-              <ul className="grid gap-2">
-                {result.map((field) => (
-                  <li
-                    className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3"
-                    key={field.key}
-                  >
-                    <Checkbox
-                      checked={selectedKeys.has(field.key)}
-                      className="mt-0.5"
-                      onCheckedChange={() => toggleField(field.key)}
-                    />
-                    <div className="grid min-w-0 flex-1 gap-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-medium text-foreground">
-                          {field.label}
-                        </span>
-                        <StatusBadge tone={confidenceTone[field.confidence]}>
-                          {confidenceLabel[field.confidence]}
-                        </StatusBadge>
-                        <span className="text-xs text-muted-foreground">
-                          {field.source}
-                        </span>
-                      </div>
-                      <span className="truncate text-sm text-muted-foreground">
-                        {field.value}
-                      </span>
-                      {field.warning ? (
-                        <span className="text-xs text-amber-600 dark:text-amber-400">
-                          {field.warning}
-                        </span>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+            {result.documents.length > 0 ? (
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">
+                  Documentos identificados
+                </span>
+                <ul className="flex flex-wrap gap-2">
+                  {result.documents.map((document) => (
+                    <li key={document.documentTypeKey}>
+                      <StatusBadge tone="info">
+                        {`${document.label} (${document.pages.length} pag.)`}
+                      </StatusBadge>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ) : (
               <p className="rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
-                Nenhum dado reconhecido. Tente enviar imagens mais nitidas.
+                Nenhum documento foi reconhecido para anexar ao checklist.
               </p>
             )}
+
+            {result.fields.length > 0 ? (
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">
+                  Dados para o formulario
+                </span>
+                <ul className="grid gap-2">
+                  {result.fields.map((field) => (
+                    <li
+                      className="flex items-start gap-3 rounded-lg border border-border bg-card px-4 py-3"
+                      key={field.key}
+                    >
+                      <Checkbox
+                        checked={selectedKeys.has(field.key)}
+                        className="mt-0.5"
+                        onCheckedChange={() => toggleField(field.key)}
+                      />
+                      <div className="grid min-w-0 flex-1 gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-medium text-foreground">
+                            {field.label}
+                          </span>
+                          <StatusBadge tone={confidenceTone[field.confidence]}>
+                            {confidenceLabel[field.confidence]}
+                          </StatusBadge>
+                          <span className="text-xs text-muted-foreground">
+                            {field.source}
+                          </span>
+                        </div>
+                        <span className="truncate text-sm text-muted-foreground">
+                          {field.value}
+                        </span>
+                        {field.warning ? (
+                          <span className="text-xs text-amber-600 dark:text-amber-400">
+                            {field.warning}
+                          </span>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button
@@ -304,37 +230,61 @@ export function ImportFromDocumentDialog({
                 type="button"
                 variant="outline"
               >
-                Trocar documentos
+                Trocar documento
               </Button>
               <Button onClick={handleApply} type="button">
-                Usar dados selecionados
+                Usar dados
               </Button>
             </div>
           </div>
         ) : (
           <div className="grid gap-5">
-            <FileSlot
-              description="RG, CNH ou documento de identidade do titular."
-              files={files.identity}
-              label="Documento de identidade (RG/CNH)"
-              onChange={updateSlot('identity')}
-            />
+            <div className="grid gap-2">
+              <span className="text-sm font-medium text-foreground">
+                Arquivo PDF unico
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Um unico PDF contendo todos os documentos (RG/CNH, comprovante,
+                procuracao, etc.), na ordem em que serao separados.
+              </span>
 
-            <FileSlot
-              description="Conta de luz, agua ou outro comprovante recente."
-              files={files.address}
-              label="Comprovante de endereco"
-              onChange={updateSlot('address')}
-            />
+              <label
+                className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm font-medium text-muted-foreground transition hover:border-primary/35 hover:bg-primary/5"
+                htmlFor={inputId}
+              >
+                <FileText className="size-4" />
+                {file ? 'Trocar arquivo PDF' : 'Selecionar arquivo PDF'}
+              </label>
 
-            {spouseEnabled ? (
-              <FileSlot
-                description="RG, CNH ou documento de identidade do conjuge."
-                files={files.spouse}
-                label="Documento de identidade do conjuge (opcional)"
-                onChange={updateSlot('spouse')}
+              <input
+                accept="application/pdf"
+                className="hidden"
+                id={inputId}
+                onChange={handleSelectFile}
+                ref={inputRef}
+                type="file"
               />
-            ) : null}
+
+              {file ? (
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+                  <span className="min-w-0 truncate text-sm text-foreground">
+                    {file.name}
+                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-xs text-muted-foreground">
+                      {formatBytes(file.size)}
+                    </span>
+                    <button
+                      className="text-muted-foreground hover:text-destructive"
+                      onClick={() => setFile(null)}
+                      type="button"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
 
             <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
               <Checkbox
@@ -347,9 +297,9 @@ export function ImportFromDocumentDialog({
                 className="text-sm text-muted-foreground"
                 htmlFor={consentId}
               >
-                Estou ciente de que os documentos enviados serao processados por
-                um servico de inteligencia artificial (Anthropic) para extracao
-                dos dados.
+                Estou ciente de que o documento enviado sera processado por um
+                servico de inteligencia artificial (Anthropic) para extracao dos
+                dados.
               </label>
             </div>
 
@@ -358,19 +308,19 @@ export function ImportFromDocumentDialog({
                 Cancelar
               </Button>
               <Button
-                disabled={isExtracting || allFiles.length === 0 || !consent}
+                disabled={isExtracting || !file || !consent}
                 onClick={() => void handleExtract()}
                 type="button"
               >
                 {isExtracting ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
-                    Extraindo...
+                    Processando...
                   </>
                 ) : (
                   <>
                     <Sparkles className="size-4" />
-                    Extrair dados
+                    Extrair e separar
                   </>
                 )}
               </Button>

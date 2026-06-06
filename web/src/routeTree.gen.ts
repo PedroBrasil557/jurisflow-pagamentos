@@ -14,6 +14,7 @@ import { Route as ProtectedRouteImport } from './routes/_protected'
 import { Route as ProtectedIndexRouteImport } from './routes/_protected/index'
 import { Route as ProtectedProcessosRouteImport } from './routes/_protected/processos'
 import { Route as ProtectedPrimeiroAcessoRouteImport } from './routes/_protected/primeiro-acesso'
+import { Route as ProtectedConfiguracoesRouteImport } from './routes/_protected/configuracoes'
 import { Route as ProtectedCadastrosRouteImport } from './routes/_protected/cadastros'
 import { Route as ProtectedProcessosIndexRouteImport } from './routes/_protected/processos.index'
 import { Route as ProtectedProcessosNovoRouteImport } from './routes/_protected/processos.novo'
@@ -42,6 +43,11 @@ const ProtectedProcessosRoute = ProtectedProcessosRouteImport.update({
 const ProtectedPrimeiroAcessoRoute = ProtectedPrimeiroAcessoRouteImport.update({
   id: '/primeiro-acesso',
   path: '/primeiro-acesso',
+  getParentRoute: () => ProtectedRoute,
+} as any)
+const ProtectedConfiguracoesRoute = ProtectedConfiguracoesRouteImport.update({
+  id: '/configuracoes',
+  path: '/configuracoes',
   getParentRoute: () => ProtectedRoute,
 } as any)
 const ProtectedCadastrosRoute = ProtectedCadastrosRouteImport.update({
@@ -76,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/': typeof ProtectedIndexRoute
   '/login': typeof LoginRoute
   '/cadastros': typeof ProtectedCadastrosRoute
+  '/configuracoes': typeof ProtectedConfiguracoesRoute
   '/primeiro-acesso': typeof ProtectedPrimeiroAcessoRoute
   '/processos': typeof ProtectedProcessosRouteWithChildren
   '/processos/novo': typeof ProtectedProcessosNovoRoute
@@ -86,6 +93,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/cadastros': typeof ProtectedCadastrosRoute
+  '/configuracoes': typeof ProtectedConfiguracoesRoute
   '/primeiro-acesso': typeof ProtectedPrimeiroAcessoRoute
   '/': typeof ProtectedIndexRoute
   '/processos/novo': typeof ProtectedProcessosNovoRoute
@@ -98,6 +106,7 @@ export interface FileRoutesById {
   '/_protected': typeof ProtectedRouteWithChildren
   '/login': typeof LoginRoute
   '/_protected/cadastros': typeof ProtectedCadastrosRoute
+  '/_protected/configuracoes': typeof ProtectedConfiguracoesRoute
   '/_protected/primeiro-acesso': typeof ProtectedPrimeiroAcessoRoute
   '/_protected/processos': typeof ProtectedProcessosRouteWithChildren
   '/_protected/': typeof ProtectedIndexRoute
@@ -112,6 +121,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/cadastros'
+    | '/configuracoes'
     | '/primeiro-acesso'
     | '/processos'
     | '/processos/novo'
@@ -122,6 +132,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/cadastros'
+    | '/configuracoes'
     | '/primeiro-acesso'
     | '/'
     | '/processos/novo'
@@ -133,6 +144,7 @@ export interface FileRouteTypes {
     | '/_protected'
     | '/login'
     | '/_protected/cadastros'
+    | '/_protected/configuracoes'
     | '/_protected/primeiro-acesso'
     | '/_protected/processos'
     | '/_protected/'
@@ -182,6 +194,13 @@ declare module '@tanstack/react-router' {
       path: '/primeiro-acesso'
       fullPath: '/primeiro-acesso'
       preLoaderRoute: typeof ProtectedPrimeiroAcessoRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
+    '/_protected/configuracoes': {
+      id: '/_protected/configuracoes'
+      path: '/configuracoes'
+      fullPath: '/configuracoes'
+      preLoaderRoute: typeof ProtectedConfiguracoesRouteImport
       parentRoute: typeof ProtectedRoute
     }
     '/_protected/cadastros': {
@@ -243,6 +262,7 @@ const ProtectedProcessosRouteWithChildren =
 
 interface ProtectedRouteChildren {
   ProtectedCadastrosRoute: typeof ProtectedCadastrosRoute
+  ProtectedConfiguracoesRoute: typeof ProtectedConfiguracoesRoute
   ProtectedPrimeiroAcessoRoute: typeof ProtectedPrimeiroAcessoRoute
   ProtectedProcessosRoute: typeof ProtectedProcessosRouteWithChildren
   ProtectedIndexRoute: typeof ProtectedIndexRoute
@@ -250,6 +270,7 @@ interface ProtectedRouteChildren {
 
 const ProtectedRouteChildren: ProtectedRouteChildren = {
   ProtectedCadastrosRoute: ProtectedCadastrosRoute,
+  ProtectedConfiguracoesRoute: ProtectedConfiguracoesRoute,
   ProtectedPrimeiroAcessoRoute: ProtectedPrimeiroAcessoRoute,
   ProtectedProcessosRoute: ProtectedProcessosRouteWithChildren,
   ProtectedIndexRoute: ProtectedIndexRoute,

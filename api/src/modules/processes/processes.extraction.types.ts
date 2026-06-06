@@ -41,11 +41,17 @@ export interface RawEndereco {
   confianca?: number
 }
 
+export interface RawPageClassification {
+  pagina: number
+  tipo: string
+}
+
 export interface RawExtraction {
   documentosDetectados?: string[]
   titular?: RawTitular
   endereco?: RawEndereco
   camposNaoEncontrados?: string[]
+  paginas?: RawPageClassification[]
 }
 
 // Interface plugavel — permite trocar/empilhar provedores (Claude, etc.).
@@ -69,8 +75,17 @@ export interface ExtractionField {
   source: string
 }
 
+// Plano de desmembramento: paginas do PDF agrupadas por tipo de documento
+// (key do checklist). Usado para dividir o PDF e anexar cada parte.
+export interface ExtractedDocument {
+  documentTypeKey: string
+  label: string
+  pages: number[]
+}
+
 export interface ExtractionResult {
   documentsDetected: string[]
   fields: ExtractionField[]
   warnings: string[]
+  documents: ExtractedDocument[]
 }

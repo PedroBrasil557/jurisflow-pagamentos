@@ -7,8 +7,19 @@ import type {
 } from './processes.extraction.types'
 
 const SYSTEM = `Voce e um extrator de dados de documentos brasileiros para um sistema juridico.
-Leia os arquivos (podem conter RG, CNH, comprovante de residencia, contratos). Extraia os dados do TITULAR a partir do RG ou CNH e o ENDERECO a partir do comprovante de residencia (conta de luz/agua).
-Regras: NUNCA invente dados; se um campo nao estiver legivel, deixe-o de fora e liste em camposNaoEncontrados. Datas sempre em ISO yyyy-mm-dd. Atencao ao modelo novo de RG, onde o numero do topo pode ser o proprio CPF (o RG verdadeiro vem em outra linha). Sempre chame a ferramenta registrar_titular.`
+O arquivo enviado e um PDF unico que reune VARIOS documentos do titular, um apos o outro.
+
+Tarefa 1 — Extraia os dados do TITULAR a partir do RG ou CNH e o ENDERECO a partir do comprovante de residencia (conta de luz/agua).
+Tarefa 2 — Classifique CADA pagina do PDF em um dos tipos abaixo e devolva em "paginas" (numero da pagina 1-based + tipo):
+- procuracao_advogado: procuracao para o advogado.
+- rg_cpf_cnh: RG, CPF ou CNH (documento de identidade).
+- comprovante_endereco: comprovante de residencia/endereco (conta de luz, agua, etc.).
+- termo_entrega_recebimento_imovel: termo de entrega/recebimento do imovel pela instituicao bancaria (Caixa).
+- declaracao_hipossuficiencia: declaracao de hipossuficiencia.
+- contrato_honorarios_advocaticios: contrato de honorarios advocaticios.
+- outro: qualquer pagina que nao se encaixe nos tipos acima.
+
+Regras: NUNCA invente dados; se um campo nao estiver legivel, deixe-o de fora e liste em camposNaoEncontrados. Datas sempre em ISO yyyy-mm-dd. Atencao ao modelo novo de RG, onde o numero do topo pode ser o proprio CPF (o RG verdadeiro vem em outra linha). Classifique TODAS as paginas, sem pular nenhuma. Sempre chame a ferramenta registrar_titular.`
 
 const extractionTool: Anthropic.Tool = {
   name: 'registrar_titular',
@@ -70,6 +81,33 @@ const extractionTool: Anthropic.Tool = {
         type: 'array',
         items: { type: 'string' },
       },
+      paginas: {
+        type: 'array',
+        description:
+          'Classificacao de TODAS as paginas do PDF (1-based) por tipo de documento.',
+        items: {
+          type: 'object',
+          properties: {
+            pagina: {
+              type: 'number',
+              description: 'Numero da pagina (1-based).',
+            },
+            tipo: {
+              type: 'string',
+              enum: [
+                'procuracao_advogado',
+                'rg_cpf_cnh',
+                'comprovante_endereco',
+                'termo_entrega_recebimento_imovel',
+                'declaracao_hipossuficiencia',
+                'contrato_honorarios_advocaticios',
+                'outro',
+              ],
+            },
+          },
+          required: ['pagina', 'tipo'],
+        },
+      },
     },
     required: ['titular'],
   },
@@ -111,7 +149,7 @@ export function createAnthropicVisionProvider(
       try {
         message = await client.messages.create({
           model,
-          max_tokens: 4000,
+          max_tokens: 8000,
           system: SYSTEM,
           tools: [extractionTool],
           tool_choice: { type: 'tool', name: 'registrar_titular' },
@@ -122,7 +160,7 @@ export function createAnthropicVisionProvider(
                 ...documentBlocks,
                 {
                   type: 'text',
-                  text: 'Extraia os dados do titular e o endereco deste dossie.',
+                  text: 'Extraia os dados do titular e o endereco, e classifique cada pagina deste dossie por tipo de documento.',
                 },
               ],
             },
@@ -136,6 +174,14 @@ export function createAnthropicVisionProvider(
         throw new ServiceError(
           503,
           'Nao foi possivel contatar o servico de extracao. Verifique a conexao e a chave de API.',
+        )
+      }
+
+      // Resposta truncada: a classificacao de paginas pode vir incompleta.
+      if (message.stop_reason === 'max_tokens') {
+        throw new ServiceError(
+          422,
+          'O documento e grande demais para processar de uma vez. Reduza o numero de paginas do PDF e tente novamente.',
         )
       }
 

@@ -1,5 +1,6 @@
 import { env } from '../../shared/config/env'
 import { ServiceError } from '../../shared/errors/service-error'
+import { getAnthropicApiKey } from '../settings/settings.service'
 import { normalizeExtraction } from './processes.extraction.normalizer'
 import { createAnthropicVisionProvider } from './processes.extraction.provider'
 import type {
@@ -8,28 +9,18 @@ import type {
   ExtractionResult,
 } from './processes.extraction.types'
 
-const MAX_FILES = 8
-const MAX_FILE_SIZE_IN_BYTES = 15 * 1024 * 1024 // 15 MB por arquivo
-
-const SUPPORTED_MEDIA_TYPES: Record<string, ExtractionMediaType> = {
-  'application/pdf': 'application/pdf',
-  'image/jpeg': 'image/jpeg',
-  'image/jpg': 'image/jpeg',
-  'image/png': 'image/png',
-  'image/webp': 'image/webp',
-}
+// O PDF empacotado reune varios documentos; limite alinhado ao Claude (~32 MB).
+export const MAX_FILE_SIZE_IN_BYTES = 32 * 1024 * 1024
 
 function resolveMediaType(file: File): ExtractionMediaType {
-  const mediaType = SUPPORTED_MEDIA_TYPES[file.type.toLowerCase()]
-
-  if (!mediaType) {
+  if (file.type.toLowerCase() !== 'application/pdf') {
     throw new ServiceError(
       415,
-      `Formato nao suportado em "${file.name}". Envie PDF, JPG, PNG ou WEBP.`,
+      `Formato nao suportado em "${file.name}". Envie um unico arquivo PDF.`,
     )
   }
 
-  return mediaType
+  return 'application/pdf'
 }
 
 async function toExtractionInputFile(file: File): Promise<ExtractionInputFile> {
@@ -40,7 +31,7 @@ async function toExtractionInputFile(file: File): Promise<ExtractionInputFile> {
   if (file.size > MAX_FILE_SIZE_IN_BYTES) {
     throw new ServiceError(
       413,
-      `O arquivo "${file.name}" excede o tamanho maximo de 15 MB.`,
+      `O arquivo "${file.name}" excede o tamanho maximo de 32 MB.`,
     )
   }
 
@@ -50,7 +41,7 @@ async function toExtractionInputFile(file: File): Promise<ExtractionInputFile> {
 
   return {
     base64,
-    kind: mediaType === 'application/pdf' ? 'pdf' : 'image',
+    kind: 'pdf',
     mediaType,
   }
 }
@@ -60,23 +51,20 @@ async function toExtractionInputFile(file: File): Promise<ExtractionInputFile> {
 export async function extractDocumentsFromFiles(
   files: File[],
 ): Promise<ExtractionResult> {
-  const apiKey = env.anthropic.apiKey
+  // Prioridade: chave salva no painel (banco) sobre a variavel de ambiente.
+  const apiKey = (await getAnthropicApiKey()) ?? env.anthropic.apiKey
 
   if (!apiKey) {
     throw new ServiceError(
       503,
-      'Extracao de documentos nao configurada. Defina ANTHROPIC_API_KEY no servidor.',
+      'Extracao de documentos nao configurada. Defina a chave da API em Configuracoes ou via ANTHROPIC_API_KEY.',
     )
   }
 
-  if (files.length === 0) {
-    throw new ServiceError(400, 'Envie ao menos um documento para extracao.')
-  }
-
-  if (files.length > MAX_FILES) {
+  if (files.length !== 1) {
     throw new ServiceError(
-      413,
-      `Envie no maximo ${MAX_FILES} arquivos por extracao.`,
+      400,
+      'Envie um unico arquivo PDF com todos os documentos.',
     )
   }
 

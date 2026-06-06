@@ -1,10 +1,71 @@
 import { formatCpf, isValidCpf } from '../../shared/utils/cpf'
+import { defaultProcessDocumentTypes } from './processes.documents'
 import type {
   ConfidenceLevel,
+  ExtractedDocument,
   ExtractionField,
   ExtractionResult,
   RawExtraction,
 } from './processes.extraction.types'
+
+// Tipos de documento que podem ser desmembrados do PDF empacotado.
+export const SPLITTABLE_DOCUMENT_KEYS = [
+  'procuracao_advogado',
+  'rg_cpf_cnh',
+  'comprovante_endereco',
+  'termo_entrega_recebimento_imovel',
+  'declaracao_hipossuficiencia',
+  'contrato_honorarios_advocaticios',
+] as const
+
+const documentLabelByKey = new Map(
+  defaultProcessDocumentTypes.map((type) => [type.key, type.label]),
+)
+
+// Agrupa a classificacao por pagina em documentos (1 por tipo), na ordem dos
+// tipos do checklist. Descarta 'outro' e tipos desconhecidos.
+function buildDocuments(raw: RawExtraction): ExtractedDocument[] {
+  const pagesByKey = new Map<string, Set<number>>()
+
+  for (const entry of raw.paginas ?? []) {
+    const key = entry.tipo
+    const page = entry.pagina
+
+    if (
+      !SPLITTABLE_DOCUMENT_KEYS.includes(
+        key as (typeof SPLITTABLE_DOCUMENT_KEYS)[number],
+      )
+    ) {
+      continue
+    }
+
+    if (!Number.isInteger(page) || page < 1) {
+      continue
+    }
+
+    const pages = pagesByKey.get(key) ?? new Set<number>()
+    pages.add(page)
+    pagesByKey.set(key, pages)
+  }
+
+  const documents: ExtractedDocument[] = []
+
+  for (const key of SPLITTABLE_DOCUMENT_KEYS) {
+    const pages = pagesByKey.get(key)
+
+    if (!pages || pages.size === 0) {
+      continue
+    }
+
+    documents.push({
+      documentTypeKey: key,
+      label: documentLabelByKey.get(key) ?? key,
+      pages: Array.from(pages).sort((a, b) => a - b),
+    })
+  }
+
+  return documents
+}
 
 const ID_SOURCE = 'RG/CNH'
 const ADDRESS_SOURCE = 'Comprovante'
@@ -125,5 +186,6 @@ export function normalizeExtraction(raw: RawExtraction): ExtractionResult {
     documentsDetected: raw.documentosDetectados ?? [],
     fields,
     warnings,
+    documents: buildDocuments(raw),
   }
 }
