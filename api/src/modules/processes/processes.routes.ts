@@ -12,7 +12,10 @@ import {
   paramsValidator,
   queryValidator,
 } from '../../shared/validation/validators'
-import { resolveUserPermissions } from '../permissions/permissions.service'
+import {
+  assertCan,
+  resolveUserPermissions,
+} from '../permissions/permissions.service'
 import {
   deleteBatchFile,
   downloadAllBatchFiles,
@@ -28,6 +31,7 @@ import {
   submitProcessChecklistItem,
   uploadProcessChecklistFile,
 } from './processes.checklist.service'
+import { extractDocumentsFromFiles } from './processes.extraction.service'
 import {
   generateProcessPdf,
   listProcessPdfModels,
@@ -100,6 +104,31 @@ export const processRoutes = new Hono<AppBindings>()
         },
         201,
       )
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .post('/extract-documents', async (c) => {
+    const formData = await c.req.raw.formData()
+    const files: File[] = []
+
+    for (const value of formData.getAll('files')) {
+      if (value instanceof File) {
+        files.push(value)
+      }
+    }
+
+    if (files.length === 0) {
+      return c.json({ message: 'Informe ao menos um documento.' }, 400)
+    }
+
+    try {
+      const { perms } = await getCurrentUserWithPermissions(c)
+      assertCan(perms, 'create')
+
+      const result = await extractDocumentsFromFiles(files)
+
+      return c.json(result, 200)
     } catch (error) {
       return handleServiceError(c, error)
     }

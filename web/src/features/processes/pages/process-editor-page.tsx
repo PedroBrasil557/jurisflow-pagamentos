@@ -1,8 +1,8 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link, useBlocker, useNavigate } from '@tanstack/react-router'
-import { ArrowLeft, Loader2, User } from 'lucide-react'
+import { ArrowLeft, Loader2, Sparkles, User } from 'lucide-react'
 import type { ChangeEvent } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type SubmitHandler, useWatch } from 'react-hook-form'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
@@ -22,6 +22,10 @@ import {
   ProcessTextField,
 } from '../components/process-form/process-form-field'
 import { ProcessFormSection } from '../components/process-form/process-form-section'
+import {
+  type ImportDocumentFiles,
+  ImportFromDocumentDialog,
+} from '../components/process-import/import-from-document-dialog'
 import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save-success-dialog'
 import { buildProcessRelationship, canEditProcess } from '../lib/process-access'
 import {
@@ -39,6 +43,7 @@ import type {
 } from '../process-form.types'
 import { formatCpf, formatWhatsapp, formatZipCode } from '../process-form.utils'
 import { processFormSchema } from '../schemas/process-form.schema'
+import type { ExtractedField } from '../services/extraction.service'
 import { housingComplexOptionsInfiniteQuery } from '../services/housing-complexes.queries'
 import {
   useCreateProcess,
@@ -46,9 +51,63 @@ import {
 } from '../services/processes.mutations'
 import { processDetailOptions } from '../services/processes.queries'
 import {
+  fetchProcessChecklist,
   generateProcessPdfRequest,
   getProcessPdfModelsRequest,
+  submitProcessChecklistItemRequest,
 } from '../services/processes.service'
+
+const emptyImportedFiles: ImportDocumentFiles = {
+  identity: [],
+  address: [],
+  spouse: [],
+}
+
+// Mapeia cada slot de documento importado para a chave do item de checklist.
+const importedFileChecklistKeys: Array<[keyof ImportDocumentFiles, string]> = [
+  ['identity', 'rg_cpf_cnh'],
+  ['address', 'comprovante_endereco'],
+  ['spouse', 'rg_cpf_cnh_conjuge'],
+]
+
+async function attachImportedDocumentsToChecklist(
+  processId: string,
+  files: ImportDocumentFiles,
+) {
+  const hasFiles = importedFileChecklistKeys.some(
+    ([slot]) => files[slot].length > 0,
+  )
+
+  if (!hasFiles) {
+    return
+  }
+
+  const checklist = await fetchProcessChecklist(processId)
+
+  for (const [slot, documentKey] of importedFileChecklistKeys) {
+    const slotFiles = files[slot]
+
+    if (slotFiles.length === 0) {
+      continue
+    }
+
+    const item = checklist.items.find(
+      (checklistItem) => checklistItem.documentType.key === documentKey,
+    )
+
+    if (!item) {
+      continue
+    }
+
+    for (const file of slotFiles) {
+      await submitProcessChecklistItemRequest({
+        processId,
+        processDocumentId: item.id,
+        file,
+      })
+    }
+  }
+}
 
 type ProcessFormShellProps = {
   mode: ProcessFormMode
@@ -110,6 +169,8 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   const [successState, setSuccessState] =
     useState<ProcessSaveSuccessState | null>(null)
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
+  const importedFilesRef = useRef<ImportDocumentFiles>(emptyImportedFiles)
 
   const createMutation = useCreateProcess()
   const updateMutation = useUpdateProcess(processId ?? '')
@@ -240,12 +301,45 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     }
   }
 
+  function handleImportApply(
+    fields: ExtractedField[],
+    files: ImportDocumentFiles,
+  ) {
+    for (const field of fields) {
+      updateValue(field.key as keyof ProcessFormValues, field.value as never)
+    }
+
+    importedFilesRef.current = files
+
+    const fileCount =
+      files.identity.length + files.address.length + files.spouse.length
+
+    toast.success(
+      fileCount > 0
+        ? 'Dados aplicados. Os documentos serao anexados ao checklist apos criar o processo.'
+        : 'Dados aplicados ao formulario.',
+    )
+  }
+
   const handleProcessSubmit: SubmitHandler<ProcessFormValues> = async (
     values,
   ) => {
     try {
       if (mode === 'create') {
         const result = await createMutation.mutateAsync(values)
+
+        try {
+          await attachImportedDocumentsToChecklist(
+            result.process.id,
+            importedFilesRef.current,
+          )
+        } catch {
+          toast.error(
+            'Processo criado, mas nao foi possivel anexar os documentos importados ao checklist.',
+          )
+        }
+
+        importedFilesRef.current = emptyImportedFiles
 
         setSuccessState({
           processId: result.process.id,
@@ -404,6 +498,32 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
       {isReadOnly ? (
         <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
           Voce esta visualizando este processo em modo somente leitura.
+        </div>
+      ) : null}
+
+      {mode === 'create' && !isReadOnly ? (
+        <div className="mb-6 flex flex-col gap-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <Sparkles className="mt-0.5 size-5 shrink-0 text-blue-500" />
+            <div className="grid gap-0.5">
+              <span className="text-sm font-medium text-foreground">
+                Preencher a partir de documentos
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Envie RG/CNH e comprovante de endereco para preencher o cadastro
+                automaticamente com IA.
+              </span>
+            </div>
+          </div>
+          <Button
+            className="shrink-0"
+            onClick={() => setIsImportDialogOpen(true)}
+            type="button"
+            variant="outline"
+          >
+            <Sparkles className="size-4" />
+            Importar de documentos
+          </Button>
         </div>
       ) : null}
 
@@ -924,6 +1044,15 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
           </div>
         )}
       </form>
+
+      {mode === 'create' && !isReadOnly ? (
+        <ImportFromDocumentDialog
+          onApply={handleImportApply}
+          onClose={() => setIsImportDialogOpen(false)}
+          open={isImportDialogOpen}
+          spouseEnabled={values.spouseContractSigned === 'sim'}
+        />
+      ) : null}
 
       {successState ? (
         <ProcessSaveSuccessDialog
