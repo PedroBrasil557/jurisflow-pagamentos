@@ -55,7 +55,7 @@ const checklistUploadAllowedStatuses = [
   'DOCUMENTACAO_PRONTA',
 ] as const satisfies readonly ProcessStatus[]
 
-function assertChecklistUploadAllowed(currentStatus: ProcessStatus) {
+export function assertChecklistUploadAllowed(currentStatus: ProcessStatus) {
   if (
     checklistUploadAllowedStatuses.includes(
       currentStatus as (typeof checklistUploadAllowedStatuses)[number],

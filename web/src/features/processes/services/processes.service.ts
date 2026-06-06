@@ -24,6 +24,7 @@ const processChecklistFileDownloadClientRoute =
   processChecklistFileClientRoute.download
 const processBatchClientRoute = processClientRoute.batch
 const processBatchFileClientRoute = processBatchClientRoute[':fileId']
+const processBatchFileSplitClientRoute = processBatchFileClientRoute.split
 const processHistoryClientRoute = processClientRoute.history
 const processCancelClientRoute = processClientRoute.cancel
 const processStartClientRoute = processClientRoute.start
@@ -47,6 +48,10 @@ type UploadBatchFilesResponse = InferResponseType<
 >
 type DeleteBatchFileResponse = InferResponseType<
   typeof processBatchFileClientRoute.$delete,
+  200
+>
+type SplitBatchFileResponse = InferResponseType<
+  typeof processBatchFileSplitClientRoute.$post,
   200
 >
 type GetBatchFileDownloadResponse = InferResponseType<
@@ -798,6 +803,26 @@ export async function deleteBatchFileRequest(input: {
   }
 
   return (await response.json()) as DeleteBatchFileResponse
+}
+
+export async function splitBatchFileRequest(input: {
+  processId: string
+  fileId: string
+}) {
+  const response = await processBatchFileSplitClientRoute.$post({
+    param: {
+      processId: input.processId,
+      fileId: input.fileId,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel desmembrar o arquivo.'),
+    )
+  }
+
+  return (await response.json()) as SplitBatchFileResponse
 }
 
 export async function getBatchFileDownloadRequest(input: {

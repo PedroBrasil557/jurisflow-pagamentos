@@ -7,6 +7,7 @@ import {
   Loader2,
   Package,
   Pencil,
+  Sparkles,
   Trash2,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -35,6 +36,7 @@ import {
   useDeleteBatchFile,
   useDeleteChecklistFile,
   useMarkDocumentationReady,
+  useSplitBatchFile,
   useSubmitChecklistItem,
   useUploadBatchFiles,
 } from '../services/processes.mutations'
@@ -90,9 +92,12 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
   const uploadBatchMutation = useUploadBatchFiles(processId)
   const deleteBatchMutation = useDeleteBatchFile(processId)
   const deleteChecklistFileMutation = useDeleteChecklistFile(processId)
+  const splitBatchMutation = useSplitBatchFile(processId)
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] =
+    useState<DeleteConfirmation | null>(null)
+  const [splitConfirmation, setSplitConfirmation] =
     useState<DeleteConfirmation | null>(null)
 
   const process = detailQ.data?.process
@@ -246,6 +251,32 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
     })
   }
 
+  function handleBatchSplit(fileId: string) {
+    const file = batchFiles.find((f) => f.id === fileId)
+
+    setSplitConfirmation({
+      fileName: file?.originalFileName ?? 'Arquivo',
+      // Mantem o dialogo aberto (modal) durante o split: mostra "Desmembrando..."
+      // e bloqueia acionar outro arquivo enquanto a operacao corre.
+      onConfirm: () => {
+        splitBatchMutation.mutate(fileId, {
+          onSuccess: (result) => {
+            toast.success(result.message)
+            setSplitConfirmation(null)
+          },
+          onError: (error) => {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : 'Nao foi possivel desmembrar o arquivo.',
+            )
+            setSplitConfirmation(null)
+          },
+        })
+      },
+    })
+  }
+
   async function handleBatchFileDownload(fileId: string) {
     try {
       const result = await getBatchFileDownloadRequest({
@@ -355,11 +386,17 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
                   canDelete={canDeleteBatchCurrentFiles}
                   canUpload={canUploadBatchCurrentFiles}
                   isUploading={uploadBatchMutation.isPending}
+                  splittingFileId={
+                    splitBatchMutation.isPending
+                      ? (splitBatchMutation.variables ?? null)
+                      : null
+                  }
                   onDelete={handleBatchDelete}
                   onDownloadAll={() => void handleDownloadAllBatch()}
                   onDownloadFile={(fileId) =>
                     void handleBatchFileDownload(fileId)
                   }
+                  onSplit={canSubmitChecklist ? handleBatchSplit : undefined}
                   onUpload={handleBatchUpload}
                 />
               </div>
@@ -439,6 +476,20 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
         open={deleteConfirmation !== null}
         title="Remover arquivo"
         variant="destructive"
+      />
+
+      <ConfirmDialog
+        confirmLabel="Desmembrar"
+        description="O PDF sera processado por inteligencia artificial (Anthropic) para separar os documentos e anexa-los aos itens do checklist. Itens de arquivo unico que ja tiverem anexo serao substituidos."
+        detail={splitConfirmation?.fileName}
+        detailLabel="Arquivo"
+        icon={Sparkles}
+        isLoading={splitBatchMutation.isPending}
+        loadingLabel="Desmembrando..."
+        onClose={() => setSplitConfirmation(null)}
+        onConfirm={splitConfirmation?.onConfirm ?? (() => {})}
+        open={splitConfirmation !== null}
+        title="Desmembrar documento"
       />
     </>
   )

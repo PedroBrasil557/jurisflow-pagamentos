@@ -21,6 +21,7 @@ import {
   downloadAllBatchFiles,
   getBatchFileDownload,
   listBatchFiles,
+  splitBatchFileToChecklist,
   uploadBatchFiles,
 } from './processes.batch.service'
 import {
@@ -389,6 +390,25 @@ export const processRoutes = new Hono<AppBindings>()
       try {
         const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await deleteBatchFile({
+          processId: c.req.valid('param').processId,
+          fileId: c.req.valid('param').fileId,
+          actor: currentUser,
+          perms,
+        })
+
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .post(
+    '/:processId/batch/:fileId/split',
+    paramsValidator(processBatchFileParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const result = await splitBatchFileToChecklist({
           processId: c.req.valid('param').processId,
           fileId: c.req.valid('param').fileId,
           actor: currentUser,

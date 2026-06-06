@@ -4,6 +4,7 @@ import {
   buildProcessBatchObjectKey,
   createStorageObjectDownloadUrl,
   deleteStorageObject,
+  getStorageObjectBytes,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -12,6 +13,7 @@ import { buildBatchDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
 import {
   assertCanAccessBatch,
+  assertCanAccessDocumentation,
   assertProcessAction,
 } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
@@ -19,8 +21,11 @@ import {
   getProcessContextOrThrow,
   getProcessRecordOrThrow,
 } from './processes.access'
+import { assertChecklistUploadAllowed } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
+import { extractDocumentsFromFiles } from './processes.extraction.service'
 import { createProcessHistoryEntry } from './processes.history.service'
+import { importDocumentBundle } from './processes.import.service'
 import { process, processBatchFile } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
@@ -318,6 +323,77 @@ export async function deleteBatchFile(input: {
     process: updatedProcess,
     message: 'Arquivo em lote removido com sucesso.',
   }
+}
+
+// Desmembra um PDF ja enviado em lote e anexa cada parte ao item de checklist.
+export async function splitBatchFileToChecklist(input: {
+  processId: string
+  fileId: string
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}) {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  // Lê do lote e escreve no checklist: exige ambas as permissoes + status valido
+  // ANTES de chamar a IA (que tem custo), em vez de falhar so no anexo.
+  assertCanAccessBatch(input.perms, relationship)
+  assertCanAccessDocumentation(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'uploadChecklist')
+  assertChecklistUploadAllowed(currentProcess.status)
+
+  const [fileRecord] = await db
+    .select()
+    .from(processBatchFile)
+    .where(
+      and(
+        eq(processBatchFile.processId, input.processId),
+        eq(processBatchFile.id, input.fileId),
+      ),
+    )
+    .limit(1)
+
+  if (!fileRecord) {
+    throw new ProcessServiceError(404, 'Arquivo em lote nao encontrado.')
+  }
+
+  if (fileRecord.mimeType.toLowerCase() !== 'application/pdf') {
+    throw new ProcessServiceError(
+      415,
+      'Apenas arquivos PDF podem ser desmembrados.',
+    )
+  }
+
+  let bytes: Uint8Array
+  try {
+    bytes = await getStorageObjectBytes({
+      bucketName: fileRecord.bucketName,
+      objectKey: fileRecord.objectKey,
+    })
+  } catch {
+    throw new ProcessServiceError(
+      503,
+      'Nao foi possivel ler o arquivo do storage. Tente novamente.',
+    )
+  }
+
+  const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
+    type: 'application/pdf',
+  })
+
+  // 1 chamada de IA: classifica as paginas (os campos titular/endereco sao ignorados aqui).
+  const { documents } = await extractDocumentsFromFiles([file])
+
+  return importDocumentBundle({
+    processId: input.processId,
+    file,
+    documents,
+    actor: input.actor,
+    perms: input.perms,
+  })
 }
 
 export async function getBatchFileDownload(input: {

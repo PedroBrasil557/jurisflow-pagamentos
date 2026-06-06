@@ -1,4 +1,4 @@
-import { Download, FileUp, Trash2 } from 'lucide-react'
+import { Download, FileUp, Loader2, Sparkles, Trash2 } from 'lucide-react'
 import { useId, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Checkbox } from '#/components/ui/checkbox'
@@ -10,17 +10,23 @@ function BatchFileRow({
   canDelete,
   file,
   isSelected,
+  isSplitting = false,
   onDelete,
   onDownload,
+  onSplit,
   onToggleSelect,
 }: {
   canDelete: boolean
   file: ProcessBatchFile
   isSelected: boolean
+  isSplitting?: boolean
   onDelete: (fileId: string) => void
   onDownload: (fileId: string) => void
+  onSplit?: (fileId: string) => void
   onToggleSelect: (fileId: string) => void
 }) {
+  const isPdf = file.mimeType === 'application/pdf'
+
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
@@ -39,6 +45,22 @@ function BatchFileRow({
       </div>
 
       <div className="flex gap-2">
+        {isPdf && onSplit ? (
+          <Button
+            onClick={() => onSplit(file.id)}
+            size="sm"
+            type="button"
+            variant="outline"
+            disabled={isSplitting}
+          >
+            {isSplitting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+            Desmembrar
+          </Button>
+        ) : null}
         <Button
           onClick={() => onDownload(file.id)}
           size="sm"
@@ -69,9 +91,11 @@ type BatchSectionProps = {
   canDelete?: boolean
   canUpload?: boolean
   isUploading: boolean
+  splittingFileId?: string | null
   onDelete: (fileId: string) => void
   onDownloadAll: () => void
   onDownloadFile: (fileId: string) => void
+  onSplit?: (fileId: string) => void
   onUpload: (files: File[]) => void
 }
 
@@ -80,9 +104,11 @@ export function BatchSection({
   canDelete = true,
   canUpload = true,
   isUploading,
+  splittingFileId = null,
   onDelete,
   onDownloadAll,
   onDownloadFile,
+  onSplit,
   onUpload,
 }: BatchSectionProps) {
   const fileInputId = useId()
@@ -215,6 +241,7 @@ export function BatchSection({
                 canDelete={canDelete}
                 file={file}
                 isSelected={selectedFileIds.has(file.id)}
+                isSplitting={splittingFileId === file.id}
                 key={file.id}
                 onDelete={(fileId) => {
                   if (!canDelete) {
@@ -224,6 +251,7 @@ export function BatchSection({
                   onDelete(fileId)
                 }}
                 onDownload={onDownloadFile}
+                onSplit={onSplit}
                 onToggleSelect={handleToggleSelect}
               />
             ))}
