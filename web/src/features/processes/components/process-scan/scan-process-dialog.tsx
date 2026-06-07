@@ -5,37 +5,37 @@ import { toast } from 'sonner'
 import { Checkbox } from '#/components/ui/checkbox'
 import { AppDialog } from '@/shared/components/app-dialog'
 import { ScanButton } from '@/shared/components/document-scanner/scan-button'
-import { useCreateProcessViaOcr } from '../../services/processes.mutations'
+import { useCreateProcessViaScan } from '../../services/processes.mutations'
 
-type OcrProcessDialogProps = {
+type ScanProcessDialogProps = {
   open: boolean
   onClose: () => void
 }
 
-export function OcrProcessDialog({ open, onClose }: OcrProcessDialogProps) {
+export function ScanProcessDialog({ open, onClose }: ScanProcessDialogProps) {
   const navigate = useNavigate()
   const consentId = useId()
   const [consent, setConsent] = useState(false)
-  const ocrMutation = useCreateProcessViaOcr()
-  const isProcessing = ocrMutation.isPending
+  const scanMutation = useCreateProcessViaScan()
+  const isProcessing = scanMutation.isPending
 
   function handleClose() {
     if (isProcessing) {
       return
     }
     setConsent(false)
-    ocrMutation.reset()
+    scanMutation.reset()
     onClose()
   }
 
   async function handleScanComplete(file: File) {
     try {
-      const result = await ocrMutation.mutateAsync(file)
+      const result = await scanMutation.mutateAsync(file)
       toast.success(
         'Documento enviado. O cadastro esta sendo processado por IA.',
       )
       setConsent(false)
-      ocrMutation.reset()
+      scanMutation.reset()
       onClose()
       void navigate({
         to: '/processos/$processId/checklist',
@@ -45,7 +45,7 @@ export function OcrProcessDialog({ open, onClose }: OcrProcessDialogProps) {
       toast.error(
         error instanceof Error
           ? error.message
-          : 'Nao foi possivel iniciar o cadastro por OCR.',
+          : 'Nao foi possivel iniciar a digitalizacao.',
       )
     }
   }
@@ -57,7 +57,7 @@ export function OcrProcessDialog({ open, onClose }: OcrProcessDialogProps) {
       maxWidth="lg"
       onClose={handleClose}
       open={open}
-      title="Novo processo OCR"
+      title="Escanear documentos"
       variant="info"
     >
       <div className="grid gap-5">
@@ -76,10 +76,10 @@ export function OcrProcessDialog({ open, onClose }: OcrProcessDialogProps) {
         </div>
 
         {isProcessing ? (
-          <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-card px-4 py-6 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
+          <output className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-card px-4 py-6 text-sm text-muted-foreground">
+            <Loader2 aria-hidden className="size-4 animate-spin" />
             Enviando documento...
-          </div>
+          </output>
         ) : (
           <div className="grid gap-2">
             <ScanButton disabled={!consent} onComplete={handleScanComplete} />

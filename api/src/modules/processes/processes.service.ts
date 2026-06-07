@@ -625,7 +625,7 @@ export async function createProcess(
   return createdProcess
 }
 
-// Cria um processo RASCUNHO (entrada do fluxo OCR): registro-casca com defaults
+// Cria um processo RASCUNHO (entrada do fluxo digitalizacao): registro-casca com defaults
 // vazios, sem passar pelo schema de criacao (os dados chegam depois, da IA).
 export async function createDraftProcess(
   actor: ProcessActor,
@@ -676,7 +676,7 @@ export async function createDraftProcess(
       actorUserId: actor.id,
       eventType: 'CREATED',
       toStatus: createdProcess.status,
-      notes: 'Rascunho criado via OCR.',
+      notes: 'Rascunho criado via digitalizacao.',
     })
 
     await ensureProcessChecklistItems(processId)
@@ -690,7 +690,7 @@ export async function createDraftProcess(
 
 // Remove um processo e limpa os objetos do scan no storage (o cascade do banco
 // remove historico/checklist/lote, mas nao os arquivos no S3). Usado no rollback
-// do fluxo OCR quando a ingestao nao pode ser iniciada.
+// do fluxo digitalizacao quando a ingestao nao pode ser iniciada.
 export async function deleteProcess(processId: string) {
   const batchFiles = await db
     .select({

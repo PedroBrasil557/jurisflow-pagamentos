@@ -443,9 +443,9 @@ export async function startBatchFileSplit(input: {
   return { status: 'processing' as const }
 }
 
-// Colunas do processo que o OCR pode preencher (mesmas keys produzidas pelo
+// Colunas do processo que o digitalizacao pode preencher (mesmas keys produzidas pelo
 // normalizer da extracao).
-const OCR_FIELD_COLUMNS = [
+const SCAN_FIELD_COLUMNS = [
   'fullName',
   'birthDate',
   'cpf',
@@ -459,7 +459,7 @@ const OCR_FIELD_COLUMNS = [
   'zipcode',
 ] as const
 
-type OcrFieldColumn = (typeof OCR_FIELD_COLUMNS)[number]
+type ScanFieldColumn = (typeof SCAN_FIELD_COLUMNS)[number]
 
 // Aplica os campos extraidos APENAS em colunas vazias do rascunho (nao
 // destrutivo e idempotente em retry). Retorna se o processo passou a ter
@@ -469,12 +469,12 @@ async function applyExtractedFieldsToDraft(
   fields: Array<{ key: string; value: string; valid: boolean }>,
 ): Promise<{ hasIdentity: boolean }> {
   const current = await getProcessRecordOrThrow(processId)
-  const allowed = new Set<string>(OCR_FIELD_COLUMNS)
-  const update: Partial<Record<OcrFieldColumn, string>> = {}
+  const allowed = new Set<string>(SCAN_FIELD_COLUMNS)
+  const update: Partial<Record<ScanFieldColumn, string>> = {}
 
   for (const field of fields) {
     if (!allowed.has(field.key)) continue
-    const column = field.key as OcrFieldColumn
+    const column = field.key as ScanFieldColumn
     // birthDate (coluna date) e cpf (identidade) so se forem validos — evita
     // gravar dado invalido e promover o rascunho a CADASTRADO com lixo.
     if ((column === 'birthDate' || column === 'cpf') && !field.valid) continue
@@ -495,10 +495,10 @@ async function applyExtractedFieldsToDraft(
   return { hasIdentity: Boolean(fullName) || Boolean(cpf) }
 }
 
-// Ingestao OCR em background: extrai campos + classifica, preenche o rascunho,
+// Ingestao digitalizacao em background: extrai campos + classifica, preenche o rascunho,
 // desmembra/anexa e define o status final por completude. NUNCA lanca: grava o
 // resultado em splitStatus/splitMessage.
-async function runOcrIngestion(input: {
+async function runScanIngestion(input: {
   processId: string
   fileRecord: typeof processBatchFile.$inferSelect
   actor: ProcessActor
@@ -529,7 +529,7 @@ async function runOcrIngestion(input: {
       const applied = await applyExtractedFieldsToDraft(input.processId, fields)
       hasIdentity = applied.hasIdentity
     } catch (error) {
-      console.error('OCR: falha ao aplicar campos no rascunho', {
+      console.error('digitalizacao: falha ao aplicar campos no rascunho', {
         processId: input.processId,
         error: String(error),
       })
@@ -548,7 +548,7 @@ async function runOcrIngestion(input: {
     if (result.attached.length === 0) {
       // Documentos reconhecidos mas nenhum anexado: registra o motivo p/ diagnostico.
       if (result.skipped.length > 0) {
-        console.error('OCR: documentos reconhecidos mas nenhum anexado', {
+        console.error('digitalizacao: documentos reconhecidos mas nenhum anexado', {
           processId: input.processId,
           skipped: result.skipped,
         })
@@ -567,7 +567,7 @@ async function runOcrIngestion(input: {
           eventType: 'STATUS_CHANGED',
           fromStatus: 'RASCUNHO',
           toStatus: 'CADASTRADO',
-          notes: 'Dados extraidos por OCR; nenhum documento foi separado.',
+          notes: 'Dados extraidos por digitalizacao; nenhum documento foi separado.',
         })
 
         await setSplitStatus(
@@ -592,7 +592,7 @@ async function runOcrIngestion(input: {
       error instanceof ServiceError
         ? error.message
         : 'Nao foi possivel processar o documento.'
-    console.error('Falha na ingestao OCR', {
+    console.error('Falha na ingestao digitalizacao', {
       fileId: fileRecord.id,
       error: String(error),
     })
@@ -600,9 +600,9 @@ async function runOcrIngestion(input: {
   }
 }
 
-// Armazena o scan no lote (como fonte) e dispara a ingestao OCR em background.
+// Armazena o scan no lote (como fonte) e dispara a ingestao digitalizacao em background.
 // Gated por 'create' na rota. Retorna o id do arquivo p/ o front acompanhar.
-export async function startOcrIngestion(input: {
+export async function startScanIngestion(input: {
   processId: string
   file: File
   actor: ProcessActor
@@ -668,7 +668,7 @@ export async function startOcrIngestion(input: {
   }
 
   // Dispara sem await: o trabalho continua apos a resposta HTTP.
-  void runOcrIngestion({
+  void runScanIngestion({
     processId: input.processId,
     fileRecord,
     actor: input.actor,

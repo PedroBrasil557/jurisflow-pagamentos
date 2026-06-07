@@ -19,7 +19,7 @@ import { downloadFile } from '@/shared/lib/download'
 import { ProcessActions } from '../components/process-actions'
 import { CancelProcessDialog } from '../components/process-cancel/cancel-process-dialog'
 import { ProcessFilterChips } from '../components/process-filters/process-filter-chips'
-import { OcrProcessDialog } from '../components/process-ocr/ocr-process-dialog'
+import { ScanProcessDialog } from '../components/process-scan/scan-process-dialog'
 import {
   type ProcessFiltersValue,
   ProcessFiltersSheet,
@@ -30,7 +30,7 @@ import { ProcessLastMovement } from '../components/process-last-movement'
 import { LegalProcessDialog } from '../components/process-legal/legal-process-dialog'
 import { ProcessMobileCard } from '../components/process-mobile-card'
 import { ProcessStatusBadge } from '../components/process-status-badge'
-import { canCreateProcess, canCreateProcessViaOcr } from '../lib/process-access'
+import { canCreateProcess, canCreateProcessViaScan } from '../lib/process-access'
 import { formatCpf } from '../process-form.utils'
 import { processListOptions } from '../services/processes.queries'
 import {
@@ -121,7 +121,7 @@ export function ProcessesPage({
   const navigate = useNavigate()
   const [search, setSearch] = useState(currentSearch)
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const [ocrOpen, setOcrOpen] = useState(false)
+  const [scanOpen, setScanOpen] = useState(false)
   const [historyProcessId, setHistoryProcessId] = useState<string | null>(null)
   const [cancelTarget, setCancelTarget] = useState<ProcessListItem | null>(null)
   const [legalTarget, setLegalTarget] = useState<ProcessListItem | null>(null)
@@ -256,14 +256,14 @@ export function ProcessesPage({
       <PageHeader title="Processos">
         {canCreateProcess(permissions) ? (
           <div className="flex flex-col gap-2 sm:flex-row">
-            {canCreateProcessViaOcr(permissions) ? (
+            {canCreateProcessViaScan(permissions) ? (
               <Button
-                onClick={() => setOcrOpen(true)}
+                onClick={() => setScanOpen(true)}
                 type="button"
                 variant="outline"
               >
                 <ScanLine className="size-4" />
-                Novo processo OCR
+                Escanear documentos
               </Button>
             ) : null}
             <Link className="no-underline" preload={false} to="/processos/novo">
@@ -325,7 +325,7 @@ export function ProcessesPage({
         }}
       />
 
-      <OcrProcessDialog onClose={() => setOcrOpen(false)} open={ocrOpen} />
+      <ScanProcessDialog onClose={() => setScanOpen(false)} open={scanOpen} />
 
       <Card className="overflow-hidden">
         <CardContent className="overflow-x-auto px-0 sm:px-0">

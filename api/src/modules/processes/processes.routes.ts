@@ -22,7 +22,7 @@ import {
   getBatchFileDownload,
   listBatchFiles,
   startBatchFileSplit,
-  startOcrIngestion,
+  startScanIngestion,
   uploadBatchFiles,
 } from './processes.batch.service'
 import {
@@ -141,7 +141,7 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
-  .post('/ocr', async (c) => {
+  .post('/scan', async (c) => {
     const formData = await c.req.raw.formData()
     const file = formData.get('file')
 
@@ -152,8 +152,8 @@ export const processRoutes = new Hono<AppBindings>()
     try {
       const { currentUser, perms } = await getCurrentUserWithPermissions(c)
       assertCan(perms, 'create')
-      // O OCR anexa documentos no checklist: exige a permissao ANTES de criar o
-      // rascunho, para nao deixar um processo que a ingestao nao conseguira completar.
+      // A digitalizacao anexa documentos no checklist: exige a permissao ANTES de
+      // criar o rascunho, para nao deixar um processo que a ingestao nao completa.
       assertCan(perms, 'uploadChecklist')
 
       // Cria o rascunho primeiro; se a ingestao nao puder iniciar, faz rollback
@@ -161,7 +161,7 @@ export const processRoutes = new Hono<AppBindings>()
       const draft = await createDraftProcess(currentUser, perms)
 
       try {
-        const { batchFileId } = await startOcrIngestion({
+        const { batchFileId } = await startScanIngestion({
           processId: draft.id,
           file,
           actor: currentUser,

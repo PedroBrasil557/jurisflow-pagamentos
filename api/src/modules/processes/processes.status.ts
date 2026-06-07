@@ -47,7 +47,7 @@ const processStatusTransitions: Record<
   ProcessStatus,
   readonly ProcessStatus[]
 > = {
-  // RASCUNHO: estado de entrada do fluxo OCR (sai por completude ou cancelamento).
+  // RASCUNHO: estado de entrada do fluxo de digitalizacao (sai por completude ou cancelamento).
   RASCUNHO: ['CADASTRADO', 'EM_DOCUMENTACAO', 'CANCELADO'],
   // EM_LOTE nao e mais produzido; mantido como ORIGEM para registros legados drenarem.
   CADASTRADO: ['EM_DOCUMENTACAO', 'CANCELADO'],

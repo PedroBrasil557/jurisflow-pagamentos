@@ -5,23 +5,23 @@ import { getErrorMessage } from '@/shared/services/api-error'
 const extractDocumentsClientRoute = apiClient.api.processes['extract-documents']
 const importBundleClientRoute =
   apiClient.api.processes[':processId']['import-bundle']
-const ocrClientRoute = apiClient.api.processes.ocr
+const scanClientRoute = apiClient.api.processes.scan
 
-export type CreateProcessViaOcrResponse = InferResponseType<
-  typeof ocrClientRoute.$post,
+export type CreateProcessViaScanResponse = InferResponseType<
+  typeof scanClientRoute.$post,
   202
 >
 
-// Cria um processo RASCUNHO a partir do scan e dispara a ingestao OCR em
-// background. Retorna na hora { processId, batchFileId }; o andamento e
-// acompanhado pelo splitStatus do lote (polling).
-export async function createProcessViaOcrRequest(
+// Cria um processo RASCUNHO a partir do scan e dispara a ingestao em background.
+// Retorna na hora { processId, batchFileId }; o andamento e acompanhado pelo
+// splitStatus do lote (polling).
+export async function createProcessViaScanRequest(
   file: File,
-): Promise<CreateProcessViaOcrResponse> {
+): Promise<CreateProcessViaScanResponse> {
   const formData = new FormData()
   formData.append('file', file)
 
-  const response = await fetch(ocrClientRoute.$url(), {
+  const response = await fetch(scanClientRoute.$url(), {
     method: 'POST',
     body: formData,
     credentials: 'include',
@@ -31,12 +31,12 @@ export async function createProcessViaOcrRequest(
     throw new Error(
       await getErrorMessage(
         response,
-        'Nao foi possivel iniciar o cadastro por OCR.',
+        'Nao foi possivel iniciar a digitalizacao.',
       ),
     )
   }
 
-  return (await response.json()) as CreateProcessViaOcrResponse
+  return (await response.json()) as CreateProcessViaScanResponse
 }
 
 export type ExtractDocumentsResponse = InferResponseType<

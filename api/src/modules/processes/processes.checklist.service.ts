@@ -788,7 +788,7 @@ export async function syncProcessStatusAfterChecklistChange(input: {
 }) {
   const currentProcess = await getProcessRecordOrThrow(input.processId)
 
-  // Only auto-sync for early/mid statuses. RASCUNHO (entrada do OCR) avanca por
+  // Only auto-sync for early/mid statuses. RASCUNHO (entrada do digitalizacao) avanca por
   // completude; EM_LOTE (legado) ainda drena por aqui.
   const syncableStatuses: ProcessStatus[] = [
     'RASCUNHO',
@@ -813,7 +813,7 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   const hasIndividualDocs = visibleFileCount > 0 || hasOkWithoutFile
 
   // EM_LOTE deixou de ser produzido: o status avanca apenas por completude do
-  // checklist (anexo via lote, OCR ou upload avulso leva a EM_DOCUMENTACAO).
+  // checklist (anexo via lote, digitalizacao ou upload avulso leva a EM_DOCUMENTACAO).
   let targetStatus: ProcessStatus = hasIndividualDocs
     ? 'EM_DOCUMENTACAO'
     : 'CADASTRADO'
