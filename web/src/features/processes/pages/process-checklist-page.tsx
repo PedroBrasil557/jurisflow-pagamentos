@@ -433,17 +433,56 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
                   ) : null}
                 </div>
 
-                <section className="grid gap-4 xl:grid-cols-2">
-                  {checklistData.items.map((item) => (
-                    <ChecklistItemCard
-                      item={item}
-                      key={item.id}
-                      onOpen={(nextItem) => {
-                        setSelectedItemId(nextItem.id)
-                      }}
-                    />
-                  ))}
-                </section>
+                {(() => {
+                  const requiredItems = checklistData.items.filter(
+                    (item) => item.documentType.isRequired,
+                  )
+                  const optionalItems = checklistData.items.filter(
+                    (item) => !item.documentType.isRequired,
+                  )
+
+                  return (
+                    <div className="grid gap-6">
+                      <div className="grid gap-3">
+                        <ChecklistGroupHeader
+                          count={requiredItems.length}
+                          title="Documentos obrigatorios"
+                        />
+                        <section className="grid gap-4 xl:grid-cols-2">
+                          {requiredItems.map((item) => (
+                            <ChecklistItemCard
+                              item={item}
+                              key={item.id}
+                              onOpen={(nextItem) => {
+                                setSelectedItemId(nextItem.id)
+                              }}
+                            />
+                          ))}
+                        </section>
+                      </div>
+
+                      {optionalItems.length > 0 ? (
+                        <div className="grid gap-3">
+                          <ChecklistGroupHeader
+                            count={optionalItems.length}
+                            title="Documentos opcionais"
+                          />
+                          <section className="grid gap-4 xl:grid-cols-2">
+                            {optionalItems.map((item) => (
+                              <ChecklistItemCard
+                                item={item}
+                                key={item.id}
+                                onOpen={(nextItem) => {
+                                  setSelectedItemId(nextItem.id)
+                                }}
+                              />
+                            ))}
+                          </section>
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })()}
               </div>
             </TabsContent>
           ) : null}
@@ -492,5 +531,22 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
         title="Desmembrar documento"
       />
     </>
+  )
+}
+
+function ChecklistGroupHeader({
+  count,
+  title,
+}: {
+  count: number
+  title: string
+}) {
+  return (
+    <div className="flex items-center justify-between border-b border-border pb-2">
+      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <span className="text-xs text-muted-foreground">
+        {count} {count === 1 ? 'item' : 'itens'}
+      </span>
+    </div>
   )
 }

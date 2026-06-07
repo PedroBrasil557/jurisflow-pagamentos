@@ -16,6 +16,10 @@ export const SPLITTABLE_DOCUMENT_KEYS = [
   'termo_entrega_recebimento_imovel',
   'declaracao_hipossuficiencia',
   'contrato_honorarios_advocaticios',
+  'contrato_compra_venda',
+  'rg_cpf_cnh_conjuge',
+  'certidao_casamento',
+  'certidao_obito',
 ] as const
 
 const documentLabelByKey = new Map(
@@ -183,7 +187,6 @@ export function normalizeExtraction(raw: RawExtraction): ExtractionResult {
   }
 
   return {
-    documentsDetected: raw.documentosDetectados ?? [],
     fields,
     warnings,
     documents: buildDocuments(raw),

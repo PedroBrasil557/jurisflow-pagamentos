@@ -47,7 +47,6 @@ export interface RawPageClassification {
 }
 
 export interface RawExtraction {
-  documentosDetectados?: string[]
   titular?: RawTitular
   endereco?: RawEndereco
   camposNaoEncontrados?: string[]
@@ -84,7 +83,6 @@ export interface ExtractedDocument {
 }
 
 export interface ExtractionResult {
-  documentsDetected: string[]
   fields: ExtractionField[]
   warnings: string[]
   documents: ExtractedDocument[]

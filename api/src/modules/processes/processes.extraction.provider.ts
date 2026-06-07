@@ -12,11 +12,15 @@ O arquivo enviado e um PDF unico que reune VARIOS documentos do titular, um apos
 Tarefa 1 — Extraia os dados do TITULAR a partir do RG ou CNH e o ENDERECO a partir do comprovante de residencia (conta de luz/agua).
 Tarefa 2 — Classifique CADA pagina do PDF em um dos tipos abaixo e devolva em "paginas" (numero da pagina 1-based + tipo):
 - procuracao_advogado: procuracao para o advogado.
-- rg_cpf_cnh: RG, CPF ou CNH (documento de identidade).
+- rg_cpf_cnh: RG, CPF ou CNH (documento de identidade do TITULAR).
 - comprovante_endereco: comprovante de residencia/endereco (conta de luz, agua, etc.).
 - termo_entrega_recebimento_imovel: termo de entrega/recebimento do imovel pela instituicao bancaria (Caixa).
 - declaracao_hipossuficiencia: declaracao de hipossuficiencia.
 - contrato_honorarios_advocaticios: contrato de honorarios advocaticios.
+- contrato_compra_venda: contrato de compra e venda do imovel.
+- rg_cpf_cnh_conjuge: RG, CPF ou CNH do CONJUGE (companheiro(a)/esposo(a) do titular). Use apenas quando houver indicacao clara de que o documento e do conjuge; na duvida, classifique como rg_cpf_cnh.
+- certidao_casamento: certidao de casamento.
+- certidao_obito: certidao de obito.
 - outro: qualquer pagina que nao se encaixe nos tipos acima.
 
 Regras: NUNCA invente dados; se um campo nao estiver legivel, deixe-o de fora e liste em camposNaoEncontrados. Datas sempre em ISO yyyy-mm-dd. Atencao ao modelo novo de RG, onde o numero do topo pode ser o proprio CPF (o RG verdadeiro vem em outra linha). Classifique TODAS as paginas, sem pular nenhuma. Sempre chame a ferramenta registrar_titular.`
@@ -28,22 +32,6 @@ const extractionTool: Anthropic.Tool = {
   input_schema: {
     type: 'object',
     properties: {
-      documentosDetectados: {
-        type: 'array',
-        description: 'Tipos de documento identificados nos arquivos.',
-        items: {
-          type: 'string',
-          enum: [
-            'RG',
-            'CNH',
-            'COMPROVANTE_RESIDENCIA',
-            'CONTRATO',
-            'PROCURACAO',
-            'DECLARACAO',
-            'OUTRO',
-          ],
-        },
-      },
       titular: {
         type: 'object',
         properties: {
@@ -101,6 +89,10 @@ const extractionTool: Anthropic.Tool = {
                 'termo_entrega_recebimento_imovel',
                 'declaracao_hipossuficiencia',
                 'contrato_honorarios_advocaticios',
+                'contrato_compra_venda',
+                'rg_cpf_cnh_conjuge',
+                'certidao_casamento',
+                'certidao_obito',
                 'outro',
               ],
             },

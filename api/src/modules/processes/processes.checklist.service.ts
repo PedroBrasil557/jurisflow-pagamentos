@@ -116,16 +116,21 @@ async function ensureDefaultProcessDocumentTypes() {
   const existingTypes = await db
     .select({
       key: processDocumentType.key,
+      label: processDocumentType.label,
+      sortOrder: processDocumentType.sortOrder,
+      isRequired: processDocumentType.isRequired,
+      allowsMultipleFiles: processDocumentType.allowsMultipleFiles,
+      isActive: processDocumentType.isActive,
     })
     .from(processDocumentType)
 
-  const existingKeys = new Set(existingTypes.map((item) => item.key))
+  const existingByKey = new Map(existingTypes.map((item) => [item.key, item]))
   const allDocumentTypes = [
     ...defaultProcessDocumentTypes,
     ...conditionalProcessDocumentTypes,
   ]
   const missingTypes = allDocumentTypes.filter(
-    (documentType) => !existingKeys.has(documentType.key),
+    (documentType) => !existingByKey.has(documentType.key),
   )
 
   if (missingTypes.length > 0) {
@@ -145,6 +150,39 @@ async function ensureDefaultProcessDocumentTypes() {
       .onConflictDoNothing({
         target: processDocumentType.key,
       })
+  }
+
+  // Reconcile metadata for types that already exist but drifted from code.
+  // Keeps the DB in sync with processes.documents.ts (source of truth) when a
+  // label/order/required flag changes — e.g. converting a conditional+required
+  // document into an always-visible optional one.
+  for (const documentType of allDocumentTypes) {
+    const existing = existingByKey.get(documentType.key)
+    if (!existing) {
+      continue
+    }
+
+    const hasChanged =
+      existing.label !== documentType.label ||
+      existing.sortOrder !== documentType.sortOrder ||
+      existing.isRequired !== documentType.isRequired ||
+      existing.allowsMultipleFiles !== documentType.allowsMultipleFiles ||
+      existing.isActive !== true
+
+    if (!hasChanged) {
+      continue
+    }
+
+    await db
+      .update(processDocumentType)
+      .set({
+        label: documentType.label,
+        sortOrder: documentType.sortOrder,
+        isRequired: documentType.isRequired,
+        allowsMultipleFiles: documentType.allowsMultipleFiles,
+        isActive: true,
+      })
+      .where(eq(processDocumentType.key, documentType.key))
   }
 
   // Deactivate document types that were removed from code
