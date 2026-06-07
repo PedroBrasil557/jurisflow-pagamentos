@@ -6,6 +6,9 @@
 # Bancos de dados locais (binários grandes, estado da máquina)
 *.db
 ruvector.db
+agentdb.rvf
+agentdb.rvf.lock
+*.rvf
 
 # Configuração de agentes/skills/hooks e MCP — mantidos locais
 # enquanto o time não decide adotar o ruflo no projeto

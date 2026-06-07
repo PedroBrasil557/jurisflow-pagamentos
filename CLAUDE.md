@@ -293,3 +293,15 @@ Always use `AppDialog` instead of raw Dialog primitives:
 - Terminal states (FINALIZADO, CANCELADO) block edits via `assertProcessCanBeEdited()`
 - All state changes create history entries for audit trail
 - Finalization requires legal process fields to be filled
+
+## Ruflo Workflow (persistent memory & guidance)
+
+This project uses the **ruflo** MCP server for cross-session memory and guidance. The runtime is healthy and memory is HNSW-backed; **use it on every non-trivial task** (load schemas via ToolSearch first — ruflo tools are deferred):
+
+1. **Task start** — `mcp__ruflo__memory_search` (namespace `jurisflow`) for prior decisions/patterns before re-deciding anything. For complex/multi-file features, also `mcp__ruflo__guidance_recommend`.
+2. **After a key decision** (architecture, status model, data flow, naming, gotchas) — `mcp__ruflo__memory_store` (namespace `jurisflow`, `upsert: true`, with `tags`). One fact per entry.
+3. **Don't re-litigate** what's already in memory — search first.
+
+Seeded entries (namespace `jurisflow`): `arch/status-model`, `arch/scan-flow`, `ops/docker-windows-hmr`. The process **status model** and the **"Escanear documentos" (scan) flow** live there — recall them instead of re-deriving.
+
+Quick status-model reminder: `process.status` = business phase (RASCUNHO → CADASTRADO → EM_DOCUMENTACAO → DOCUMENTACAO_PRONTA → EM_PROCESSO → FINALIZADO/CANCELADO), driven by checklist completeness; `splitStatus` = async job health. **EM_LOTE is retired as a status** (kept in the enum only for history/legacy). The **"Em lote" tab** still exists as raw-PDF storage (≠ the status).
