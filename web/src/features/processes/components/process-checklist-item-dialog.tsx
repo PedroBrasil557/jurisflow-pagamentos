@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { Controller } from 'react-hook-form'
 import { Button } from '#/components/ui/button'
 import { AppDialog } from '@/shared/components/app-dialog'
+import { ScanButton } from '@/shared/components/document-scanner/scan-button'
 import { FormTextArea, useZodForm } from '@/shared/components/ui/form'
 import { formatBytes } from '@/shared/lib/format'
 import {
@@ -249,6 +250,21 @@ export function ChecklistItemDialog({
                   type="file"
                 />
               )}
+            />
+
+            <ScanButton
+              onComplete={(file) => {
+                setValue('file', file, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                  shouldValidate: true,
+                })
+                setValue('markOkWithoutFile', false, {
+                  shouldDirty: true,
+                  shouldTouch: true,
+                  shouldValidate: true,
+                })
+              }}
             />
 
             <Button
