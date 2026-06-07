@@ -47,6 +47,22 @@ export function dateToIso(value?: Date): string | undefined {
   return `${year}-${month}-${day}`
 }
 
+// Formata uma duracao em dias para exibicao: null -> "—"; < 1 dia -> "Xh";
+// caso contrario "X,X dias".
+export function formatDurationDays(days: number | null): string {
+  if (days === null || Number.isNaN(days)) {
+    return '—'
+  }
+
+  if (days < 1) {
+    const hours = Math.round(days * 24)
+    return `${hours} h`
+  }
+
+  const rounded = Math.round(days * 10) / 10
+  return `${rounded.toLocaleString('pt-BR')} ${rounded === 1 ? 'dia' : 'dias'}`
+}
+
 // Formata uma data (Date ou ISO "YYYY-MM-DD") como "dd/mm/aaaa".
 export function formatShortDate(value: Date | string): string {
   const date = typeof value === 'string' ? isoToDate(value) : value
