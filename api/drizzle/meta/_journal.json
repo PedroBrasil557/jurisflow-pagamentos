@@ -36,6 +36,13 @@
       "when": 1780777603198,
       "tag": "0004_curly_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780794830079,
+      "tag": "0005_sticky_eternals",
+      "breakpoints": true
     }
   ]
 }

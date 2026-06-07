@@ -2,6 +2,7 @@ import type { InferResponseType } from 'hono/client'
 import { apiClient } from '@/shared/services/api-client'
 
 const dashboardStatsRoute = apiClient.api.dashboard.stats
+const dashboardProductivityRoute = apiClient.api.dashboard.productivity
 
 export type DashboardStats = InferResponseType<
   typeof dashboardStatsRoute.$get,
@@ -13,6 +14,34 @@ export async function fetchDashboardStats(): Promise<DashboardStats> {
 
   if (!response.ok) {
     throw new Error('Erro ao carregar dados do dashboard.')
+  }
+
+  return response.json()
+}
+
+export type ProductivityPeriod = '7d' | '30d' | '90d'
+
+export type ProductivityQuery =
+  | { period: ProductivityPeriod }
+  | { from: string; to: string }
+
+export type ProductivityStats = InferResponseType<
+  typeof dashboardProductivityRoute.$get,
+  200
+>
+
+export async function fetchProductivityStats(
+  query: ProductivityQuery,
+): Promise<ProductivityStats> {
+  const response = await dashboardProductivityRoute.$get({
+    query:
+      'period' in query
+        ? { period: query.period }
+        : { from: query.from, to: query.to },
+  })
+
+  if (!response.ok) {
+    throw new Error('Erro ao carregar indicadores de produtividade.')
   }
 
   return response.json()

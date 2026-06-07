@@ -1,43 +1,73 @@
-import { z } from 'zod'
-
-const processesSearchSchema = z.object({
-  page: z
-    .preprocess((value) => {
-      if (typeof value === 'number') {
-        return value
-      }
-
-      if (typeof value === 'string' && value.trim()) {
-        return Number(value)
-      }
-
-      return undefined
-    }, z.number().int().min(1).optional())
-    .optional(),
-  search: z
-    .preprocess(
-      (value) => (typeof value === 'string' ? value.trim() : undefined),
-      z.string().optional(),
-    )
-    .optional(),
-})
+import {
+  processStatusLabels,
+  type ProcessStatusValue,
+} from '../services/processes.service'
 
 export type ProcessesSearch = {
   page?: number
   search?: string
+  statuses?: ProcessStatusValue[]
+  createdFrom?: string
+  createdTo?: string
+}
+
+function parsePage(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 1) {
+    return value
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value)
+    if (Number.isInteger(parsed) && parsed >= 1) {
+      return parsed
+    }
+  }
+
+  return undefined
+}
+
+function parseSearch(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim()
+  }
+
+  return undefined
+}
+
+function parseStatuses(value: unknown): ProcessStatusValue[] | undefined {
+  const raw = Array.isArray(value) ? value : value != null ? [value] : []
+  const valid = raw.filter(
+    (item): item is ProcessStatusValue =>
+      typeof item === 'string' && item in processStatusLabels,
+  )
+
+  return valid.length > 0 ? valid : undefined
+}
+
+// Aceita apenas datas no formato ISO "YYYY-MM-DD".
+function parseIsoDate(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return undefined
+  }
+
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? undefined : value
 }
 
 export function parseProcessesSearch(
   search: Record<string, unknown>,
 ): ProcessesSearch {
-  const result = processesSearchSchema.safeParse(search)
-
-  if (!result.success) {
-    return {}
-  }
+  const page = parsePage(search.page)
+  const term = parseSearch(search.search)
+  const statuses = parseStatuses(search.statuses)
+  const createdFrom = parseIsoDate(search.createdFrom)
+  const createdTo = parseIsoDate(search.createdTo)
 
   return {
-    ...(result.data.page ? { page: result.data.page } : {}),
-    ...(result.data.search ? { search: result.data.search } : {}),
+    ...(page ? { page } : {}),
+    ...(term ? { search: term } : {}),
+    ...(statuses ? { statuses } : {}),
+    ...(createdFrom ? { createdFrom } : {}),
+    ...(createdTo ? { createdTo } : {}),
   }
 }

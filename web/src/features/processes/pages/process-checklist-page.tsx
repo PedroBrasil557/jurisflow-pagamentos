@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   ArrowLeft,
@@ -10,7 +10,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#/components/ui/tabs'
@@ -44,6 +44,7 @@ import {
   processBatchFilesOptions,
   processChecklistOptions,
   processDetailOptions,
+  processKeys,
 } from '../services/processes.queries'
 import {
   downloadAllBatchFilesRequest,
@@ -93,18 +94,74 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
   const deleteBatchMutation = useDeleteBatchFile(processId)
   const deleteChecklistFileMutation = useDeleteChecklistFile(processId)
   const splitBatchMutation = useSplitBatchFile(processId)
+  const queryClient = useQueryClient()
 
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [deleteConfirmation, setDeleteConfirmation] =
     useState<DeleteConfirmation | null>(null)
   const [splitConfirmation, setSplitConfirmation] =
     useState<DeleteConfirmation | null>(null)
+  // Arquivo cujo desmembramento (assincrono) estamos acompanhando via polling.
+  const [activeSplitId, setActiveSplitId] = useState<string | null>(null)
+  // Garante que so reagimos a done/error apos termos visto o 'processing' atual,
+  // ignorando um status antigo de um desmembramento anterior do mesmo arquivo.
+  const splitSawProcessingRef = useRef(false)
 
   const process = detailQ.data?.process
   const checklist = checklistQ.data
   const batchFiles = batchQ.data?.files ?? []
   const relationship = detailRelationship
   const checklistData = checklist ?? null
+
+  // Acompanha a conclusao do desmembramento assincrono (processing -> done/error):
+  // mostra UM unico toast e atualiza o checklist quando termina.
+  useEffect(() => {
+    if (!activeSplitId) {
+      return
+    }
+
+    const file = batchFiles.find((item) => item.id === activeSplitId)
+    if (!file) {
+      // Arquivo removido durante o split: nao ha o que acompanhar, libera o estado
+      // para nao travar o dialogo nem bloquear futuros desmembramentos.
+      splitSawProcessingRef.current = false
+      setActiveSplitId(null)
+      setSplitConfirmation(null)
+      return
+    }
+
+    if (file.splitStatus === 'processing') {
+      splitSawProcessingRef.current = true
+      return
+    }
+
+    if (!splitSawProcessingRef.current) {
+      return
+    }
+
+    if (file.splitStatus === 'done') {
+      const message = file.splitMessage ?? 'Documentos anexados ao checklist.'
+      // 'done' com zero anexos nao e sucesso: a IA nao reconheceu nenhum documento.
+      if (message.startsWith('Nenhum documento')) {
+        toast.warning(message)
+      } else {
+        toast.success(message)
+      }
+      queryClient.invalidateQueries({
+        queryKey: processKeys.checklist(processId),
+      })
+      queryClient.invalidateQueries({ queryKey: processKeys.detail(processId) })
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+    } else if (file.splitStatus === 'error') {
+      toast.error(
+        file.splitMessage ?? 'Nao foi possivel desmembrar o arquivo.',
+      )
+    }
+
+    splitSawProcessingRef.current = false
+    setActiveSplitId(null)
+    setSplitConfirmation(null)
+  }, [activeSplitId, batchFiles, queryClient, processId])
 
   const isLoading =
     detailQ.isLoading ||
@@ -257,19 +314,17 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
     setSplitConfirmation({
       fileName: file?.originalFileName ?? 'Arquivo',
       // Mantem o dialogo aberto (modal) durante o split: mostra "Desmembrando..."
-      // e bloqueia acionar outro arquivo enquanto a operacao corre.
+      // e bloqueia acionar outro arquivo enquanto a operacao corre. O resultado
+      // chega pelo polling do lote (ver effect acima), nao pela resposta (202).
       onConfirm: () => {
+        splitSawProcessingRef.current = false
         splitBatchMutation.mutate(fileId, {
-          onSuccess: (result) => {
-            toast.success(result.message)
-            setSplitConfirmation(null)
+          onSuccess: () => {
+            setActiveSplitId(fileId)
           },
-          onError: (error) => {
-            toast.error(
-              error instanceof Error
-                ? error.message
-                : 'Nao foi possivel desmembrar o arquivo.',
-            )
+          // Erro ao INICIAR (ex.: 404/415): o handler global ja mostra o toast;
+          // aqui so fechamos o dialogo (evita toast duplicado).
+          onError: () => {
             setSplitConfirmation(null)
           },
         })
@@ -387,9 +442,10 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
                   canUpload={canUploadBatchCurrentFiles}
                   isUploading={uploadBatchMutation.isPending}
                   splittingFileId={
-                    splitBatchMutation.isPending
+                    activeSplitId ??
+                    (splitBatchMutation.isPending
                       ? (splitBatchMutation.variables ?? null)
-                      : null
+                      : null)
                   }
                   onDelete={handleBatchDelete}
                   onDownloadAll={() => void handleDownloadAllBatch()}
@@ -523,7 +579,7 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
         detail={splitConfirmation?.fileName}
         detailLabel="Arquivo"
         icon={Sparkles}
-        isLoading={splitBatchMutation.isPending}
+        isLoading={splitBatchMutation.isPending || activeSplitId !== null}
         loadingLabel="Desmembrando..."
         onClose={() => setSplitConfirmation(null)}
         onConfirm={splitConfirmation?.onConfirm ?? (() => {})}

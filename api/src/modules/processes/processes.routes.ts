@@ -21,7 +21,7 @@ import {
   downloadAllBatchFiles,
   getBatchFileDownload,
   listBatchFiles,
-  splitBatchFileToChecklist,
+  startBatchFileSplit,
   uploadBatchFiles,
 } from './processes.batch.service'
 import {
@@ -408,14 +408,15 @@ export const processRoutes = new Hono<AppBindings>()
     async (c) => {
       try {
         const { currentUser, perms } = await getCurrentUserWithPermissions(c)
-        const result = await splitBatchFileToChecklist({
+        const result = await startBatchFileSplit({
           processId: c.req.valid('param').processId,
           fileId: c.req.valid('param').fileId,
           actor: currentUser,
           perms,
         })
 
-        return c.json(result, 200)
+        // 202: desmembramento iniciado em segundo plano; status via listagem de lote.
+        return c.json(result, 202)
       } catch (error) {
         return handleServiceError(c, error)
       }

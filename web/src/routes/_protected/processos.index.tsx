@@ -13,8 +13,11 @@ function ProcessesRoute() {
 
   return (
     <ProcessesPage
+      currentCreatedFrom={search.createdFrom}
+      currentCreatedTo={search.createdTo}
       currentPage={search.page ?? 1}
       currentSearch={search.search ?? ''}
+      currentStatuses={search.statuses ?? []}
     />
   )
 }

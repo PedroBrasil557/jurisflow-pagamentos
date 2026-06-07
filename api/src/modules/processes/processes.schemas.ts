@@ -259,6 +259,15 @@ export const listProcessesQuerySchema = z.object({
     .max(120, { message: 'Busca muito longa.' })
     .optional(),
   status: z.enum(processStatuses).optional(),
+  statuses: z
+    .preprocess(
+      (value) =>
+        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+      z.array(z.enum(processStatuses)),
+    )
+    .optional(),
+  createdFrom: z.coerce.date().optional(),
+  createdTo: z.coerce.date().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 })

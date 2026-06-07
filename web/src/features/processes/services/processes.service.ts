@@ -52,7 +52,7 @@ type DeleteBatchFileResponse = InferResponseType<
 >
 type SplitBatchFileResponse = InferResponseType<
   typeof processBatchFileSplitClientRoute.$post,
-  200
+  202
 >
 type GetBatchFileDownloadResponse = InferResponseType<
   typeof processBatchFileClientRoute.download.$get,
@@ -164,11 +164,14 @@ export type ProcessListQuery = {
   limit?: number
   page?: number
   search?: string
+  statuses?: ProcessStatusValue[]
+  createdFrom?: string
+  createdTo?: string
 }
 
 export const defaultProcessPageLimit = 10
 
-const processStatusLabels = {
+export const processStatusLabels = {
   CADASTRADO: 'Cadastrado',
   EM_LOTE: 'Em lote',
   EM_DOCUMENTACAO: 'Em documentacao',
@@ -177,6 +180,12 @@ const processStatusLabels = {
   FINALIZADO: 'Finalizado',
   CANCELADO: 'Cancelado',
 } as const
+
+export type ProcessStatusValue = keyof typeof processStatusLabels
+
+export const processStatusOptions = (
+  Object.keys(processStatusLabels) as ProcessStatusValue[]
+).map((value) => ({ value, label: processStatusLabels[value] }))
 
 function mapPlatformUserOption(
   input: ProcessUserOptionRecord,
@@ -329,6 +338,9 @@ export async function fetchProcesses(
             search: trimmedSearch,
           }
         : {}),
+      ...(query.statuses?.length ? { statuses: query.statuses } : {}),
+      ...(query.createdFrom ? { createdFrom: query.createdFrom } : {}),
+      ...(query.createdTo ? { createdTo: query.createdTo } : {}),
     },
   })
 

@@ -55,6 +55,13 @@ export function processBatchFilesOptions(processId: string) {
   return queryOptions({
     queryKey: processKeys.batch(processId),
     queryFn: () => fetchBatchFiles(processId),
+    // Enquanto algum arquivo estiver desmembrando, repete a consulta para
+    // acompanhar a conclusao (processing -> done/error) sem depender da resposta
+    // da requisicao longa (que pode estourar timeout de proxy).
+    refetchInterval: (query) =>
+      query.state.data?.files.some((file) => file.splitStatus === 'processing')
+        ? 2000
+        : false,
   })
 }
 
