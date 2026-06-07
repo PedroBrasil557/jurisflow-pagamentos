@@ -302,6 +302,12 @@ This project uses the **ruflo** MCP server for cross-session memory and guidance
 2. **After a key decision** (architecture, status model, data flow, naming, gotchas) — `mcp__ruflo__memory_store` (namespace `jurisflow`, `upsert: true`, with `tags`). One fact per entry.
 3. **Don't re-litigate** what's already in memory — search first.
 
-Seeded entries (namespace `jurisflow`): `arch/status-model`, `arch/scan-flow`, `ops/docker-windows-hmr`. The process **status model** and the **"Escanear documentos" (scan) flow** live there — recall them instead of re-deriving.
+Seeded entries (namespace `jurisflow`): `arch/status-model`, `arch/scan-flow`, `ops/docker-windows-hmr`, `ruflo/usage-policy`. The process **status model** and the **"Escanear documentos" (scan) flow** live there — recall them instead of re-deriving.
+
+**Namespaces** (the learning pipeline understands these): use `jurisflow` for project decisions, `patterns` for reusable code patterns (Hono route+Zod, web three-file pattern, AppDialog usage, status workflow), `tasks` for task outcomes, `feedback` for quality signals. For non-trivial tasks, optionally call `hooks_route` (agent/model routing) at start, and `analyze_diff`/`aidefence_has_pii` on the diff before a PR (CPF/process data → LGPD).
+
+**Scope (what to use vs ignore):** use ruflo for **persistent memory + guidance + diff/PII analysis**. Do **not** use hive-mind/consensus or ruflo swarms for routine work — native Claude Code subagents (Plan/Explore) are simpler and sufficient. Background workers (`audit`/`testgaps`) only on demand, not as standing daemon jobs.
+
+**Versioning:** ruflo is a host dev tool (not a build/runtime dep — not in `package.json`), so a bug only affects dev ergonomics, not production. Policy: **stay current, don't hard-pin** — keep CLI **and** daemon on the same version (`npm install -g ruflo@latest`, then `ruflo doctor` to confirm "Version Freshness: up to date" and no CLI↔daemon skew). Only pin a known-good version if you hit a regression. (Current known-good: 3.10.37.)
 
 Quick status-model reminder: `process.status` = business phase (RASCUNHO → CADASTRADO → EM_DOCUMENTACAO → DOCUMENTACAO_PRONTA → EM_PROCESSO → FINALIZADO/CANCELADO), driven by checklist completeness; `splitStatus` = async job health. **EM_LOTE is retired as a status** (kept in the enum only for history/legacy). The **"Em lote" tab** still exists as raw-PDF storage (≠ the status).
