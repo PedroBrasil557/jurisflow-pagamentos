@@ -88,15 +88,11 @@ export function useSplitBatchFile(processId: string) {
   return useMutation({
     mutationFn: (fileId: string) =>
       splitBatchFileRequest({ processId, fileId }),
+    // O desmembramento roda em segundo plano (resposta 202). Apenas reinicia a
+    // consulta do lote para o polling acompanhar processing -> done/error.
+    // O checklist e demais queries sao invalidados quando o polling ve 'done'.
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: processKeys.checklist(processId),
-      })
       queryClient.invalidateQueries({ queryKey: processKeys.batch(processId) })
-      queryClient.invalidateQueries({
-        queryKey: processKeys.detail(processId),
-      })
-      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     },
   })
 }

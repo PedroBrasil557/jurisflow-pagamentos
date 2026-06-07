@@ -17,4 +17,18 @@ const db = drizzle(pool)
 await migrate(db, { migrationsFolder: './drizzle' })
 console.log('Migrations complete.')
 
+// Reseta desmembramentos orfaos: no boot nenhum job esta rodando, entao qualquer
+// 'processing' restante foi interrompido por um restart/crash. Sem isso, o arquivo
+// ficaria travado (guard de idempotencia) e o front faria polling indefinidamente.
+const orphaned = await pool.query(
+  `UPDATE process_batch_file
+   SET split_status = 'error',
+       split_message = 'O desmembramento foi interrompido. Tente novamente.',
+       split_updated_at = now()
+   WHERE split_status = 'processing'`,
+)
+if (orphaned.rowCount && orphaned.rowCount > 0) {
+  console.log(`Reset ${orphaned.rowCount} desmembramento(s) orfao(s).`)
+}
+
 await pool.end()

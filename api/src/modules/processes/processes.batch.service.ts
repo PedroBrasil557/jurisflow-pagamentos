@@ -1,4 +1,5 @@
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, lt, ne, or, sql } from 'drizzle-orm'
+import { ServiceError } from '../../shared/errors/service-error'
 import { db } from '../../shared/db'
 import {
   buildProcessBatchObjectKey,
@@ -251,6 +252,8 @@ export async function listBatchFiles(
       mimeType: processBatchFile.mimeType,
       sizeInBytes: processBatchFile.sizeInBytes,
       uploadedAt: processBatchFile.uploadedAt,
+      splitStatus: processBatchFile.splitStatus,
+      splitMessage: processBatchFile.splitMessage,
       uploadedBy: {
         id: user.id,
         name: user.name,
@@ -325,8 +328,115 @@ export async function deleteBatchFile(input: {
   }
 }
 
-// Desmembra um PDF ja enviado em lote e anexa cada parte ao item de checklist.
-export async function splitBatchFileToChecklist(input: {
+// Tempo apos o qual um 'processing' e considerado orfao (ex.: processo caiu no
+// meio do desmembramento) e pode ser reivindicado por uma nova tentativa.
+const SPLIT_STALE_MS = 10 * 60 * 1000
+
+// Nunca lanca: o resultado do desmembramento nao pode depender de uma falha ao
+// gravar o status (evita unhandled rejection no job detached).
+async function setSplitStatus(
+  fileId: string,
+  status: 'idle' | 'processing' | 'done' | 'error',
+  message: string | null,
+) {
+  try {
+    await db
+      .update(processBatchFile)
+      .set({
+        splitStatus: status,
+        splitMessage: message,
+        splitUpdatedAt: new Date(),
+      })
+      .where(eq(processBatchFile.id, fileId))
+  } catch (error) {
+    console.error('Falha ao gravar status do desmembramento', {
+      fileId,
+      status,
+      error: String(error),
+    })
+  }
+}
+
+// Marca 'processing' de forma ATOMICA (UPDATE condicional): so reivindica se o
+// arquivo nao estiver em andamento OU se o 'processing' atual estiver orfao
+// (mais antigo que SPLIT_STALE_MS). Retorna true se este chamador reivindicou o
+// job — evita que POSTs concorrentes disparem dois desmembramentos do mesmo PDF.
+async function claimSplitProcessing(fileId: string): Promise<boolean> {
+  const staleBefore = new Date(Date.now() - SPLIT_STALE_MS)
+
+  const claimed = await db
+    .update(processBatchFile)
+    .set({ splitStatus: 'processing', splitMessage: null, splitUpdatedAt: new Date() })
+    .where(
+      and(
+        eq(processBatchFile.id, fileId),
+        or(
+          ne(processBatchFile.splitStatus, 'processing'),
+          lt(processBatchFile.splitUpdatedAt, staleBefore),
+        ),
+      ),
+    )
+    .returning({ id: processBatchFile.id })
+
+  return claimed.length > 0
+}
+
+// Trabalho pesado do desmembramento (IA + split + anexo), executado em segundo
+// plano. NUNCA lanca para fora: grava o resultado em splitStatus/splitMessage.
+// Depende de um servidor de processo longo (Bun/Hono) — a promise detached
+// conclui apos a resposta HTTP. Em serverless precisaria de waitUntil.
+async function runBatchFileSplit(input: {
+  processId: string
+  fileRecord: typeof processBatchFile.$inferSelect
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}) {
+  const { fileRecord } = input
+
+  try {
+    const bytes = await getStorageObjectBytes({
+      bucketName: fileRecord.bucketName,
+      objectKey: fileRecord.objectKey,
+    }).catch(() => {
+      throw new ProcessServiceError(
+        503,
+        'Nao foi possivel ler o arquivo do storage. Tente novamente.',
+      )
+    })
+
+    const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
+      type: 'application/pdf',
+    })
+
+    // 1 chamada de IA: classifica as paginas (os campos titular/endereco sao ignorados aqui).
+    const { documents } = await extractDocumentsFromFiles([file])
+
+    const result = await importDocumentBundle({
+      processId: input.processId,
+      file,
+      documents,
+      actor: input.actor,
+      perms: input.perms,
+    })
+
+    await setSplitStatus(fileRecord.id, 'done', result.message)
+  } catch (error) {
+    const message =
+      error instanceof ServiceError
+        ? error.message
+        : 'Nao foi possivel desmembrar o arquivo.'
+    console.error('Falha no desmembramento em lote', {
+      fileId: fileRecord.id,
+      error: String(error),
+    })
+    await setSplitStatus(fileRecord.id, 'error', message)
+  }
+}
+
+// Inicia o desmembramento de forma assincrona: valida, marca 'processing' e
+// dispara o trabalho pesado sem await. Responde imediatamente para nao depender
+// de timeout de proxy numa requisicao longa. O front consulta o status via lote.
+export async function startBatchFileSplit(input: {
   processId: string
   fileId: string
   actor: ProcessActor
@@ -367,33 +477,22 @@ export async function splitBatchFileToChecklist(input: {
     )
   }
 
-  let bytes: Uint8Array
-  try {
-    bytes = await getStorageObjectBytes({
-      bucketName: fileRecord.bucketName,
-      objectKey: fileRecord.objectKey,
-    })
-  } catch {
-    throw new ProcessServiceError(
-      503,
-      'Nao foi possivel ler o arquivo do storage. Tente novamente.',
-    )
+  // Idempotencia atomica: se outro POST ja reivindicou o job (e nao esta orfao),
+  // nao reprocessa (evita duplo-submit/reentrancia e jobs duplicados).
+  const claimed = await claimSplitProcessing(fileRecord.id)
+  if (!claimed) {
+    return { status: 'processing' as const }
   }
 
-  const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
-    type: 'application/pdf',
-  })
-
-  // 1 chamada de IA: classifica as paginas (os campos titular/endereco sao ignorados aqui).
-  const { documents } = await extractDocumentsFromFiles([file])
-
-  return importDocumentBundle({
+  // Dispara sem await: o trabalho continua apos a resposta HTTP.
+  void runBatchFileSplit({
     processId: input.processId,
-    file,
-    documents,
+    fileRecord,
     actor: input.actor,
     perms: input.perms,
   })
+
+  return { status: 'processing' as const }
 }
 
 export async function getBatchFileDownload(input: {

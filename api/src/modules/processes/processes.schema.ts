@@ -379,6 +379,10 @@ export const processBatchFile = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
     uploadedAt: timestamp('uploaded_at').defaultNow().notNull(),
+    // Estado do desmembramento assincrono: 'idle' | 'processing' | 'done' | 'error'.
+    splitStatus: text('split_status').notNull().default('idle'),
+    splitMessage: text('split_message'),
+    splitUpdatedAt: timestamp('split_updated_at'),
   },
   (table) => [
     uniqueIndex('process_batch_file_storage_object_idx').on(

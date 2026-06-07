@@ -244,15 +244,22 @@ export async function ensureProcessChecklistItems(processId: string) {
     return
   }
 
-  await db.insert(processDocument).values(
-    missingItems.map((documentType) => ({
-      id: crypto.randomUUID(),
-      processId,
-      documentTypeId: documentType.id,
-      status: 'PENDENTE' as const,
-      observation: '',
-    })),
-  )
+  await db
+    .insert(processDocument)
+    .values(
+      missingItems.map((documentType) => ({
+        id: crypto.randomUUID(),
+        processId,
+        documentTypeId: documentType.id,
+        status: 'PENDENTE' as const,
+        observation: '',
+      })),
+    )
+    // Blinda contra corrida: chamadas concorrentes nao colidem no indice unico
+    // (processId, documentTypeId).
+    .onConflictDoNothing({
+      target: [processDocument.processId, processDocument.documentTypeId],
+    })
 }
 
 async function getChecklistItemOrThrow(
