@@ -1,4 +1,5 @@
 export const processStatuses = [
+  'RASCUNHO',
   'CADASTRADO',
   'EM_LOTE',
   'EM_DOCUMENTACAO',
@@ -46,14 +47,12 @@ const processStatusTransitions: Record<
   ProcessStatus,
   readonly ProcessStatus[]
 > = {
-  CADASTRADO: ['EM_LOTE', 'EM_DOCUMENTACAO', 'CANCELADO'],
+  // RASCUNHO: estado de entrada do fluxo OCR (sai por completude ou cancelamento).
+  RASCUNHO: ['CADASTRADO', 'EM_DOCUMENTACAO', 'CANCELADO'],
+  // EM_LOTE nao e mais produzido; mantido como ORIGEM para registros legados drenarem.
+  CADASTRADO: ['EM_DOCUMENTACAO', 'CANCELADO'],
   EM_LOTE: ['EM_DOCUMENTACAO', 'CADASTRADO', 'CANCELADO'],
-  EM_DOCUMENTACAO: [
-    'EM_LOTE',
-    'CADASTRADO',
-    'DOCUMENTACAO_PRONTA',
-    'CANCELADO',
-  ],
+  EM_DOCUMENTACAO: ['CADASTRADO', 'DOCUMENTACAO_PRONTA', 'CANCELADO'],
   DOCUMENTACAO_PRONTA: ['EM_DOCUMENTACAO', 'EM_PROCESSO', 'CANCELADO'],
   EM_PROCESSO: ['FINALIZADO', 'CANCELADO'],
   FINALIZADO: [],

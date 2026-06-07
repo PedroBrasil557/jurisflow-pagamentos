@@ -159,6 +159,8 @@ async function resolveHousingComplexIdOrThrow(housingComplexName: string) {
 
 function getLegalProcessLabel(currentProcess: ProcessRecord) {
   switch (currentProcess.status) {
+    case 'RASCUNHO':
+      return 'Rascunho'
     case 'CADASTRADO':
       return 'Cadastrado'
     case 'EM_LOTE':
@@ -233,7 +235,7 @@ function pickEditableValues(
 ): ProcessEditableValues {
   return {
     fullName: currentProcess.fullName,
-    birthDate: currentProcess.birthDate,
+    birthDate: currentProcess.birthDate ?? '',
     nationality: currentProcess.nationality,
     maritalStatus: currentProcess.maritalStatus,
     profession: currentProcess.profession,

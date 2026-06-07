@@ -28,7 +28,6 @@ import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
 import {
   process,
-  processBatchFile,
   processDocument,
   processDocumentFile,
   processDocumentType,
@@ -49,6 +48,7 @@ type ChecklistSubmitResult = Awaited<ReturnType<typeof getProcessChecklist>> & {
 const maxProcessDocumentFileSizeInBytes = 25 * 1024 * 1024
 const maxChecklistObservationLength = 300
 const checklistUploadAllowedStatuses = [
+  'RASCUNHO',
   'CADASTRADO',
   'EM_LOTE',
   'EM_DOCUMENTACAO',
@@ -781,15 +781,6 @@ async function attachChecklistFile(input: {
   }
 }
 
-async function countBatchFiles(processId: string) {
-  const [result] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(processBatchFile)
-    .where(eq(processBatchFile.processId, processId))
-
-  return result?.total ?? 0
-}
-
 export async function syncProcessStatusAfterChecklistChange(input: {
   actor: ProcessActor
   checklist: Awaited<ReturnType<typeof getProcessChecklist>>
@@ -797,8 +788,10 @@ export async function syncProcessStatusAfterChecklistChange(input: {
 }) {
   const currentProcess = await getProcessRecordOrThrow(input.processId)
 
-  // Only auto-sync for early/mid statuses
+  // Only auto-sync for early/mid statuses. RASCUNHO (entrada do OCR) avanca por
+  // completude; EM_LOTE (legado) ainda dren a por aqui.
   const syncableStatuses: ProcessStatus[] = [
+    'RASCUNHO',
     'CADASTRADO',
     'EM_LOTE',
     'EM_DOCUMENTACAO',
@@ -808,8 +801,6 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   if (!syncableStatuses.includes(currentProcess.status)) {
     return currentProcess
   }
-
-  const batchCount = await countBatchFiles(input.processId)
 
   // Count only from visible (filtered) checklist items
   const visibleFileCount = input.checklist.items.reduce(
@@ -821,15 +812,11 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   )
   const hasIndividualDocs = visibleFileCount > 0 || hasOkWithoutFile
 
-  let targetStatus: ProcessStatus
-
-  if (hasIndividualDocs) {
-    targetStatus = 'EM_DOCUMENTACAO'
-  } else if (batchCount > 0) {
-    targetStatus = 'EM_LOTE'
-  } else {
-    targetStatus = 'CADASTRADO'
-  }
+  // EM_LOTE deixou de ser produzido: o status avanca apenas por completude do
+  // checklist (anexo via lote, OCR ou upload avulso leva a EM_DOCUMENTACAO).
+  let targetStatus: ProcessStatus = hasIndividualDocs
+    ? 'EM_DOCUMENTACAO'
+    : 'CADASTRADO'
 
   // If DOCUMENTACAO_PRONTA but docs became pending, revert to EM_DOCUMENTACAO
   if (
@@ -876,11 +863,9 @@ export async function syncProcessStatusAfterChecklistChange(input: {
     notes:
       targetStatus === 'CADASTRADO'
         ? 'Todos os documentos foram removidos.'
-        : targetStatus === 'EM_LOTE'
-          ? 'Documentos individuais removidos, restam arquivos em lote.'
-          : targetStatus === 'EM_DOCUMENTACAO'
-            ? 'Documentacao voltou a ficar pendente.'
-            : undefined,
+        : targetStatus === 'EM_DOCUMENTACAO'
+          ? 'Documentacao voltou a ficar pendente.'
+          : undefined,
   })
 
   return updatedProcess

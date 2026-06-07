@@ -43,6 +43,13 @@
       "when": 1780794830079,
       "tag": "0005_sticky_eternals",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780862331921,
+      "tag": "0006_sleepy_mimic",
+      "breakpoints": true
     }
   ]
 }

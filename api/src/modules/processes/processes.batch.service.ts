@@ -1,4 +1,4 @@
-import { and, asc, eq, lt, ne, or, sql } from 'drizzle-orm'
+import { and, asc, eq, lt, ne, or } from 'drizzle-orm'
 import { ServiceError } from '../../shared/errors/service-error'
 import { db } from '../../shared/db'
 import {
@@ -27,7 +27,7 @@ import { ProcessServiceError } from './processes.errors'
 import { extractDocumentsFromFiles } from './processes.extraction.service'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { importDocumentBundle } from './processes.import.service'
-import { process, processBatchFile } from './processes.schema'
+import { processBatchFile } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
 type ProcessActor = NonNullable<AppBindings['Variables']['user']>
@@ -45,6 +45,7 @@ function assertBatchFile(file: File) {
 }
 
 const batchUploadAllowedStatuses = [
+  'RASCUNHO',
   'CADASTRADO',
   'EM_LOTE',
   'EM_DOCUMENTACAO',
@@ -66,69 +67,15 @@ function assertBatchUploadAllowed(currentStatus: ProcessStatus) {
   )
 }
 
-async function getBatchFileCount(processId: string) {
-  const [result] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(processBatchFile)
-    .where(eq(processBatchFile.processId, processId))
-
-  return result?.total ?? 0
-}
-
+// O status EM_LOTE foi aposentado: enviar/remover arquivos do lote NAO altera
+// mais o status do processo. O avanco ocorre apenas por completude do checklist
+// (ver syncProcessStatusAfterChecklistChange). Mantido como no-op para preservar
+// o contrato de retorno dos call sites (upload/delete de lote).
 export async function syncProcessStatusAfterBatchChange(input: {
   processId: string
   actor: ProcessActor
 }) {
-  const currentProcess = await getProcessRecordOrThrow(input.processId)
-
-  if (
-    currentProcess.status !== 'CADASTRADO' &&
-    currentProcess.status !== 'EM_LOTE'
-  ) {
-    return currentProcess
-  }
-
-  const batchCount = await getBatchFileCount(input.processId)
-
-  if (currentProcess.status === 'CADASTRADO' && batchCount > 0) {
-    const [updated] = await db
-      .update(process)
-      .set({ status: 'EM_LOTE' })
-      .where(eq(process.id, input.processId))
-      .returning()
-
-    await createProcessHistoryEntry({
-      processId: input.processId,
-      actorUserId: input.actor.id,
-      eventType: 'STATUS_CHANGED',
-      fromStatus: 'CADASTRADO',
-      toStatus: 'EM_LOTE',
-      notes: 'Arquivos enviados em lote.',
-    })
-
-    return updated
-  }
-
-  if (currentProcess.status === 'EM_LOTE' && batchCount === 0) {
-    const [updated] = await db
-      .update(process)
-      .set({ status: 'CADASTRADO' })
-      .where(eq(process.id, input.processId))
-      .returning()
-
-    await createProcessHistoryEntry({
-      processId: input.processId,
-      actorUserId: input.actor.id,
-      eventType: 'STATUS_CHANGED',
-      fromStatus: 'EM_LOTE',
-      toStatus: 'CADASTRADO',
-      notes: 'Todos os arquivos em lote foram removidos.',
-    })
-
-    return updated
-  }
-
-  return currentProcess
+  return getProcessRecordOrThrow(input.processId)
 }
 
 export async function uploadBatchFiles(input: {

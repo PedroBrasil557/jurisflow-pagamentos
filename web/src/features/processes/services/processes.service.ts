@@ -172,6 +172,7 @@ export type ProcessListQuery = {
 export const defaultProcessPageLimit = 10
 
 export const processStatusLabels = {
+  RASCUNHO: 'Rascunho',
   CADASTRADO: 'Cadastrado',
   EM_LOTE: 'Em lote',
   EM_DOCUMENTACAO: 'Em documentacao',
@@ -210,7 +211,7 @@ function mapProcessToFormValues(
 ): ProcessFormValues {
   return {
     fullName: currentProcess.fullName,
-    birthDate: currentProcess.birthDate,
+    birthDate: currentProcess.birthDate ?? '',
     nationality: currentProcess.nationality,
     maritalStatus:
       currentProcess.maritalStatus as ProcessFormValues['maritalStatus'],
