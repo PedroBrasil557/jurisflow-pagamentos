@@ -1,0 +1,176 @@
+import { CalendarDays } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
+import type { DateRange } from 'react-day-picker'
+import { Button } from '#/components/ui/button'
+import { Calendar } from '#/components/ui/calendar'
+import { Checkbox } from '#/components/ui/checkbox'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '#/components/ui/popover'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '#/components/ui/sheet'
+import {
+  processStatusOptions,
+  type ProcessStatusValue,
+} from '../../services/processes.service'
+import {
+  dateToIso,
+  formatShortDate,
+  isoToDate,
+} from './process-filters.utils'
+
+export type ProcessFiltersValue = {
+  statuses: ProcessStatusValue[]
+  createdFrom?: string
+  createdTo?: string
+}
+
+type ProcessFiltersSheetProps = {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  value: ProcessFiltersValue
+  onApply: (value: ProcessFiltersValue) => void
+}
+
+export function ProcessFiltersSheet({
+  open,
+  onOpenChange,
+  value,
+  onApply,
+}: ProcessFiltersSheetProps) {
+  const statusFieldId = useId()
+  const [statuses, setStatuses] = useState<ProcessStatusValue[]>(value.statuses)
+  const [range, setRange] = useState<DateRange | undefined>(undefined)
+
+  // Sincroniza o rascunho com a URL sempre que o painel abre.
+  useEffect(() => {
+    if (open) {
+      setStatuses(value.statuses)
+      setRange({
+        from: isoToDate(value.createdFrom),
+        to: isoToDate(value.createdTo),
+      })
+    }
+  }, [open, value.statuses, value.createdFrom, value.createdTo])
+
+  function toggleStatus(status: ProcessStatusValue) {
+    setStatuses((prev) =>
+      prev.includes(status)
+        ? prev.filter((item) => item !== status)
+        : [...prev, status],
+    )
+  }
+
+  function handleClear() {
+    setStatuses([])
+    setRange(undefined)
+  }
+
+  function handleApply() {
+    onApply({
+      statuses,
+      createdFrom: dateToIso(range?.from),
+      createdTo: dateToIso(range?.to ?? range?.from),
+    })
+    onOpenChange(false)
+  }
+
+  const rangeLabel =
+    range?.from && range?.to
+      ? `${formatShortDate(range.from)} – ${formatShortDate(range.to)}`
+      : range?.from
+        ? `A partir de ${formatShortDate(range.from)}`
+        : 'Selecionar período'
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="w-full gap-0 sm:max-w-md" side="right">
+        <SheetHeader>
+          <SheetTitle>Filtros</SheetTitle>
+          <SheetDescription>
+            Refine a lista de processos por etapa e período de criação.
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="flex-1 overflow-y-auto px-4">
+          <div className="grid gap-6 py-2">
+            <fieldset className="grid gap-3">
+              <legend className="text-sm font-medium text-foreground">
+                Etapa
+              </legend>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {processStatusOptions.map((option) => (
+                  <label
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+                    htmlFor={`${statusFieldId}-${option.value}`}
+                    key={option.value}
+                  >
+                    <Checkbox
+                      checked={statuses.includes(option.value)}
+                      id={`${statusFieldId}-${option.value}`}
+                      onCheckedChange={() => toggleStatus(option.value)}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <div className="grid gap-3">
+              <span className="text-sm font-medium text-foreground">
+                Período (criação)
+              </span>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    className="justify-start font-normal"
+                    type="button"
+                    variant="outline"
+                  >
+                    <CalendarDays className="size-4" />
+                    {rangeLabel}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="start" className="w-auto">
+                  <Calendar
+                    autoFocus
+                    mode="range"
+                    numberOfMonths={1}
+                    onSelect={setRange}
+                    selected={range}
+                  />
+                  <Button
+                    className="w-full"
+                    onClick={() => setRange(undefined)}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    Limpar período
+                  </Button>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </div>
+        </div>
+
+        <SheetFooter className="flex-row justify-end gap-2">
+          <Button onClick={handleClear} type="button" variant="outline">
+            Limpar
+          </Button>
+          <Button onClick={handleApply} type="button">
+            Aplicar
+          </Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  )
+}

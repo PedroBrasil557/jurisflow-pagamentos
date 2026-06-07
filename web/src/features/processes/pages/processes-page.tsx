@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { Loader2, Plus } from 'lucide-react'
+import { Loader2, Plus, SlidersHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Badge } from '#/components/ui/badge'
@@ -9,6 +9,7 @@ import { Card, CardContent } from '#/components/ui/card'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { PageHeader } from '@/shared/components/page-header'
 import { SearchInput } from '@/shared/components/search-input'
+import type { ProcessesSearch } from '../schemas/processes-search.schema'
 import {
   DataTable,
   type DataTableColumn,
@@ -17,6 +18,11 @@ import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
 import { downloadFile } from '@/shared/lib/download'
 import { ProcessActions } from '../components/process-actions'
 import { CancelProcessDialog } from '../components/process-cancel/cancel-process-dialog'
+import { ProcessFilterChips } from '../components/process-filters/process-filter-chips'
+import {
+  type ProcessFiltersValue,
+  ProcessFiltersSheet,
+} from '../components/process-filters/process-filters-sheet'
 import { FinalizeProcessDialog } from '../components/process-finalize/finalize-process-dialog'
 import { ProcessHistoryDialog } from '../components/process-history/process-history-dialog'
 import { ProcessLastMovement } from '../components/process-last-movement'
@@ -31,11 +37,15 @@ import {
   generateProcessPdfRequest,
   getProcessPdfModelsRequest,
   type ProcessListItem,
+  type ProcessStatusValue,
 } from '../services/processes.service'
 
 type ProcessesPageProps = {
   currentPage: number
   currentSearch: string
+  currentStatuses: ProcessStatusValue[]
+  currentCreatedFrom?: string
+  currentCreatedTo?: string
 }
 
 const processTableColumns: readonly DataTableColumn<ProcessListItem>[] = [
@@ -102,10 +112,14 @@ const processTableColumns: readonly DataTableColumn<ProcessListItem>[] = [
 export function ProcessesPage({
   currentPage,
   currentSearch,
+  currentStatuses,
+  currentCreatedFrom,
+  currentCreatedTo,
 }: ProcessesPageProps) {
   const { permissions } = useSession()
   const navigate = useNavigate()
   const [search, setSearch] = useState(currentSearch)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [historyProcessId, setHistoryProcessId] = useState<string | null>(null)
   const [cancelTarget, setCancelTarget] = useState<ProcessListItem | null>(null)
   const [legalTarget, setLegalTarget] = useState<ProcessListItem | null>(null)
@@ -119,11 +133,83 @@ export function ProcessesPage({
       limit: defaultProcessPageLimit,
       page: currentPage,
       search: debouncedSearch,
+      statuses: currentStatuses,
+      createdFrom: currentCreatedFrom,
+      createdTo: currentCreatedTo,
     }),
   )
 
   const data = query.data
   const total = data?.pagination.total ?? 0
+
+  const activeFilterCount =
+    currentStatuses.length + (currentCreatedFrom || currentCreatedTo ? 1 : 0)
+
+  // Monta o objeto de search da URL a partir do estado atual + overrides,
+  // descartando valores vazios para manter a URL limpa.
+  function buildSearch(overrides: Partial<ProcessesSearch>): ProcessesSearch {
+    const merged: ProcessesSearch = {
+      page: currentPage,
+      ...(currentSearch ? { search: currentSearch } : {}),
+      ...(currentStatuses.length ? { statuses: currentStatuses } : {}),
+      ...(currentCreatedFrom ? { createdFrom: currentCreatedFrom } : {}),
+      ...(currentCreatedTo ? { createdTo: currentCreatedTo } : {}),
+      ...overrides,
+    }
+
+    const next: ProcessesSearch = { page: merged.page ?? 1 }
+    if (merged.search) next.search = merged.search
+    if (merged.statuses?.length) next.statuses = merged.statuses
+    if (merged.createdFrom) next.createdFrom = merged.createdFrom
+    if (merged.createdTo) next.createdTo = merged.createdTo
+
+    return next
+  }
+
+  function handleApplyFilters(value: ProcessFiltersValue) {
+    void navigate({
+      to: '/processos',
+      search: buildSearch({
+        statuses: value.statuses,
+        createdFrom: value.createdFrom,
+        createdTo: value.createdTo,
+        page: 1,
+      }),
+    })
+  }
+
+  function handleRemoveStatus(status: ProcessStatusValue) {
+    void navigate({
+      to: '/processos',
+      search: buildSearch({
+        statuses: currentStatuses.filter((item) => item !== status),
+        page: 1,
+      }),
+    })
+  }
+
+  function handleRemovePeriod() {
+    void navigate({
+      to: '/processos',
+      search: buildSearch({
+        createdFrom: undefined,
+        createdTo: undefined,
+        page: 1,
+      }),
+    })
+  }
+
+  function handleClearAllFilters() {
+    void navigate({
+      to: '/processos',
+      search: buildSearch({
+        statuses: [],
+        createdFrom: undefined,
+        createdTo: undefined,
+        page: 1,
+      }),
+    })
+  }
 
   async function handleGeneratePdf(processId: string) {
     try {
@@ -157,10 +243,7 @@ export function ProcessesPage({
     if (value !== currentSearch) {
       void navigate({
         replace: true,
-        search: {
-          ...(value ? { search: value } : {}),
-          page: 1,
-        },
+        search: buildSearch({ search: value || undefined, page: 1 }),
         to: '/processos',
       })
     }
@@ -179,17 +262,54 @@ export function ProcessesPage({
         ) : null}
       </PageHeader>
 
-      <SearchInput
-        containerClassName="w-full sm:max-w-sm"
-        onChange={(event) => handleSearchChange(event.target.value)}
-        placeholder="Buscar por nome, CPF ou localizacao..."
-        value={search}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <SearchInput
+          containerClassName="w-full sm:max-w-sm"
+          onChange={(event) => handleSearchChange(event.target.value)}
+          placeholder="Buscar por nome, CPF ou localizacao..."
+          value={search}
+        />
+
+        <Button
+          className="w-full sm:w-auto"
+          onClick={() => setFiltersOpen(true)}
+          type="button"
+          variant="outline"
+        >
+          <SlidersHorizontal className="size-4" />
+          Filtros
+          {activeFilterCount > 0 ? (
+            <Badge className="ml-1" variant="secondary">
+              {activeFilterCount}
+            </Badge>
+          ) : null}
+        </Button>
+      </div>
+
+      <ProcessFilterChips
+        createdFrom={currentCreatedFrom}
+        createdTo={currentCreatedTo}
+        onClearAll={handleClearAllFilters}
+        onRemovePeriod={handleRemovePeriod}
+        onRemoveStatus={handleRemoveStatus}
+        statuses={currentStatuses}
       />
 
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         {query.isFetching ? <Loader2 className="size-4 animate-spin" /> : null}
         <span>{total} registro(s) encontrado(s)</span>
       </div>
+
+      <ProcessFiltersSheet
+        onApply={handleApplyFilters}
+        onOpenChange={setFiltersOpen}
+        open={filtersOpen}
+        value={{
+          statuses: currentStatuses,
+          createdFrom: currentCreatedFrom,
+          createdTo: currentCreatedTo,
+        }}
+      />
 
       <Card className="overflow-hidden">
         <CardContent className="overflow-x-auto px-0 sm:px-0">
@@ -232,10 +352,7 @@ export function ProcessesPage({
               itemLabel: 'processos',
               onPageChange: (nextPage) => {
                 void navigate({
-                  search: {
-                    ...(currentSearch ? { search: currentSearch } : {}),
-                    page: nextPage,
-                  },
+                  search: buildSearch({ page: nextPage }),
                   to: '/processos',
                 })
               },

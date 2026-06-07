@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, lt, or, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import type { AppBindings } from '../../shared/types/app'
 import { user } from '../auth/auth.schema'
@@ -345,8 +345,20 @@ export async function listProcesses(
     filters.push(visibilityFilter)
   }
 
-  if (query.status) {
+  if (query.statuses?.length) {
+    filters.push(inArray(process.status, query.statuses))
+  } else if (query.status) {
     filters.push(eq(process.status, query.status))
+  }
+
+  if (query.createdFrom) {
+    filters.push(gte(process.createdAt, query.createdFrom))
+  }
+
+  if (query.createdTo) {
+    const endOfDay = new Date(query.createdTo)
+    endOfDay.setHours(23, 59, 59, 999)
+    filters.push(lte(process.createdAt, endOfDay))
   }
 
   if (query.search) {
