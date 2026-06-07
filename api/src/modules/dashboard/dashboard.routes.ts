@@ -28,20 +28,45 @@ const periodToDays: Record<'7d' | '30d' | '90d', number> = {
   '90d': 90,
 }
 
+// O frontend envia datas "YYYY-MM-DD" (dia no fuso de Brasilia), que z.coerce.date()
+// parseia como meia-noite UTC; recuperamos os componentes via getUTC*. America/Sao_Paulo
+// e fixo em UTC-3 (sem horario de verao desde 2019), entao ancorar o intervalo nesse
+// offset deixa o filtro correto independentemente do TZ do container (prod roda em UTC,
+// maquinas locais nao) e alinhado ao dia civil de Brasilia.
+const SAO_PAULO_UTC_OFFSET = '-03:00'
+
+function brazilDayBoundary(date: Date, edge: 'start' | 'end'): Date {
+  const year = date.getUTCFullYear()
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(date.getUTCDate()).padStart(2, '0')
+  const time = edge === 'start' ? '00:00:00.000' : '23:59:59.999'
+  return new Date(`${year}-${month}-${day}T${time}${SAO_PAULO_UTC_OFFSET}`)
+}
+
 // Converte o filtro de periodo (preset ou intervalo) em [from, to].
 function resolvePeriodRange(query: z.infer<typeof periodQuerySchema>): {
   from: Date
   to: Date
 } {
-  if (query.from && query.to) {
-    const to = new Date(query.to)
-    to.setHours(23, 59, 59, 999)
-    return { from: query.from, to }
+  // Sem from nem to: usa o preset (ultimos N dias ate agora).
+  if (!query.from && !query.to) {
+    const to = new Date()
+    const from = new Date(to)
+    from.setDate(from.getDate() - periodToDays[query.period])
+    return { from, to }
   }
 
-  const to = new Date()
-  const from = new Date(to)
-  from.setDate(from.getDate() - periodToDays[query.period])
+  // Intervalo custom — aceita from-only ("a partir de X ate agora") e to-only,
+  // alem de ambos. Cada borda informada e ancorada no dia civil de Brasilia; a
+  // borda ausente cai em "ate agora" (to) ou "N dias antes do to" (from).
+  const to = query.to ? brazilDayBoundary(query.to, 'end') : new Date()
+  let from: Date
+  if (query.from) {
+    from = brazilDayBoundary(query.from, 'start')
+  } else {
+    from = new Date(to)
+    from.setDate(from.getDate() - periodToDays[query.period])
+  }
   return { from, to }
 }
 

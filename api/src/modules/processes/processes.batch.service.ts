@@ -1,6 +1,6 @@
 import { and, asc, eq, lt, ne, or } from 'drizzle-orm'
-import { ServiceError } from '../../shared/errors/service-error'
 import { db } from '../../shared/db'
+import { ServiceError } from '../../shared/errors/service-error'
 import {
   buildProcessBatchObjectKey,
   createStorageObjectDownloadUrl,
@@ -33,7 +33,7 @@ import type { ProcessStatus } from './processes.status'
 
 type ProcessActor = NonNullable<AppBindings['Variables']['user']>
 
-const maxBatchFileSizeInBytes = 25 * 1024 * 1024
+export const maxBatchFileSizeInBytes = 25 * 1024 * 1024
 
 function assertBatchFile(file: File) {
   if (file.size <= 0) {
@@ -314,7 +314,11 @@ async function claimSplitProcessing(fileId: string): Promise<boolean> {
 
   const claimed = await db
     .update(processBatchFile)
-    .set({ splitStatus: 'processing', splitMessage: null, splitUpdatedAt: new Date() })
+    .set({
+      splitStatus: 'processing',
+      splitMessage: null,
+      splitUpdatedAt: new Date(),
+    })
     .where(
       and(
         eq(processBatchFile.id, fileId),
@@ -352,9 +356,13 @@ async function runBatchFileSplit(input: {
       )
     })
 
-    const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
-      type: 'application/pdf',
-    })
+    const file = new File(
+      [new Uint8Array(bytes)],
+      fileRecord.originalFileName,
+      {
+        type: 'application/pdf',
+      },
+    )
 
     // 1 chamada de IA: classifica as paginas (os campos titular/endereco sao ignorados aqui).
     const { documents } = await extractDocumentsFromFiles([file])
@@ -475,12 +483,19 @@ async function applyExtractedFieldsToDraft(
   for (const field of fields) {
     if (!allowed.has(field.key)) continue
     const column = field.key as ScanFieldColumn
-    // birthDate (coluna date) e cpf (identidade) so se forem validos — evita
-    // gravar dado invalido e promover o rascunho a CADASTRADO com lixo.
-    if ((column === 'birthDate' || column === 'cpf') && !field.valid) continue
+    // birthDate (coluna date), cpf (identidade) e zipcode (CEP) so se forem
+    // validos — evita gravar dado invalido e promover o rascunho a CADASTRADO
+    // com lixo. O campo invalido ainda aparece na revisao com warning.
+    if (
+      (column === 'birthDate' || column === 'cpf' || column === 'zipcode') &&
+      !field.valid
+    ) {
+      continue
+    }
 
     const currentValue = current[column]
-    const isEmpty = column === 'birthDate' ? currentValue == null : currentValue === ''
+    const isEmpty =
+      column === 'birthDate' ? currentValue == null : currentValue === ''
     if (!isEmpty) continue
 
     update[column] = column === 'cpf' ? normalizeCpf(field.value) : field.value
@@ -517,9 +532,13 @@ async function runScanIngestion(input: {
       )
     })
 
-    const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
-      type: 'application/pdf',
-    })
+    const file = new File(
+      [new Uint8Array(bytes)],
+      fileRecord.originalFileName,
+      {
+        type: 'application/pdf',
+      },
+    )
 
     const { fields, documents } = await extractDocumentsFromFiles([file])
 
@@ -548,10 +567,13 @@ async function runScanIngestion(input: {
     if (result.attached.length === 0) {
       // Documentos reconhecidos mas nenhum anexado: registra o motivo p/ diagnostico.
       if (result.skipped.length > 0) {
-        console.error('digitalizacao: documentos reconhecidos mas nenhum anexado', {
-          processId: input.processId,
-          skipped: result.skipped,
-        })
+        console.error(
+          'digitalizacao: documentos reconhecidos mas nenhum anexado',
+          {
+            processId: input.processId,
+            skipped: result.skipped,
+          },
+        )
       }
 
       const current = await getProcessRecordOrThrow(input.processId)
@@ -567,7 +589,8 @@ async function runScanIngestion(input: {
           eventType: 'STATUS_CHANGED',
           fromStatus: 'RASCUNHO',
           toStatus: 'CADASTRADO',
-          notes: 'Dados extraidos por digitalizacao; nenhum documento foi separado.',
+          notes:
+            'Dados extraidos por digitalizacao; nenhum documento foi separado.',
         })
 
         await setSplitStatus(

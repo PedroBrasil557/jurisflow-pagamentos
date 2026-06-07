@@ -1,5 +1,6 @@
 import { zValidator } from '@hono/zod-validator'
 import { type Context, Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import {
   getAuthenticatedUser,
   requireAuth,
@@ -21,6 +22,7 @@ import {
   downloadAllBatchFiles,
   getBatchFileDownload,
   listBatchFiles,
+  maxBatchFileSizeInBytes,
   startBatchFileSplit,
   startScanIngestion,
   uploadBatchFiles,
@@ -33,7 +35,10 @@ import {
   submitProcessChecklistItem,
   uploadProcessChecklistFile,
 } from './processes.checklist.service'
-import { extractDocumentsFromFiles } from './processes.extraction.service'
+import {
+  extractDocumentsFromFiles,
+  MAX_FILE_SIZE_IN_BYTES,
+} from './processes.extraction.service'
 import {
   importBundleDocumentsSchema,
   importDocumentBundle,
@@ -81,6 +86,20 @@ async function getCurrentUserWithPermissions(c: Context<AppBindings>) {
   return { currentUser, perms }
 }
 
+// Guard de tamanho ANTES de bufferizar o corpo (c.req.raw.formData()): rejeita
+// pelo Content-Length, ou aborta o stream se ausente — evita DoS por upload
+// gigante. O overhead cobre o framing multipart sobre o limite por arquivo de
+// cada rota (a checagem fina por arquivo, no service, da a mensagem precisa).
+const MULTIPART_OVERHEAD_BYTES = 1024 * 1024
+
+function uploadBodyLimit(maxFileBytes: number) {
+  return bodyLimit({
+    maxSize: maxFileBytes + MULTIPART_OVERHEAD_BYTES,
+    onError: (c) =>
+      c.json({ message: 'O arquivo enviado excede o tamanho permitido.' }, 413),
+  })
+}
+
 export const processRoutes = new Hono<AppBindings>()
   .use('*', requireAuth())
   .get('/', queryValidator(listProcessesQuerySchema), async (c) => {
@@ -116,32 +135,36 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
-  .post('/extract-documents', async (c) => {
-    const formData = await c.req.raw.formData()
-    const files: File[] = []
+  .post(
+    '/extract-documents',
+    uploadBodyLimit(MAX_FILE_SIZE_IN_BYTES),
+    async (c) => {
+      const formData = await c.req.raw.formData()
+      const files: File[] = []
 
-    for (const value of formData.getAll('files')) {
-      if (value instanceof File) {
-        files.push(value)
+      for (const value of formData.getAll('files')) {
+        if (value instanceof File) {
+          files.push(value)
+        }
       }
-    }
 
-    if (files.length === 0) {
-      return c.json({ message: 'Informe ao menos um documento.' }, 400)
-    }
+      if (files.length === 0) {
+        return c.json({ message: 'Informe ao menos um documento.' }, 400)
+      }
 
-    try {
-      const { perms } = await getCurrentUserWithPermissions(c)
-      assertCan(perms, 'create')
+      try {
+        const { perms } = await getCurrentUserWithPermissions(c)
+        assertCan(perms, 'create')
 
-      const result = await extractDocumentsFromFiles(files)
+        const result = await extractDocumentsFromFiles(files)
 
-      return c.json(result, 200)
-    } catch (error) {
-      return handleServiceError(c, error)
-    }
-  })
-  .post('/scan', async (c) => {
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .post('/scan', uploadBodyLimit(maxBatchFileSizeInBytes), async (c) => {
     const formData = await c.req.raw.formData()
     const file = formData.get('file')
 
@@ -179,6 +202,7 @@ export const processRoutes = new Hono<AppBindings>()
   })
   .post(
     '/:processId/import-bundle',
+    uploadBodyLimit(MAX_FILE_SIZE_IN_BYTES),
     paramsValidator(processIdParamsSchema),
     async (c) => {
       const formData = await c.req.raw.formData()

@@ -1,10 +1,75 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { z } from 'zod'
 import { ServiceError } from '../../shared/errors/service-error'
 import type {
   DocumentExtractionProvider,
   ExtractionInputFile,
   RawExtraction,
 } from './processes.extraction.types'
+
+// Validacao da saida do modelo (camada cliente). O input_schema da ferramenta ja
+// guia o formato (e com strict, a API o garante), mas castar `as RawExtraction`
+// nao checa nada em runtime. Aqui toleramos falhas por campo: um valor com tipo
+// errado vira undefined/NaN e e descartado pelos guards do normalizer, preservando
+// extracao parcial — em vez de propagar lixo ou abortar tudo.
+const optionalString = z.string().optional().catch(undefined)
+const optionalNumber = z.number().optional().catch(undefined)
+
+const rawExtractionSchema = z.object({
+  titular: z
+    .object({
+      fullName: optionalString,
+      birthDate: optionalString,
+      cpf: optionalString,
+      rg: optionalString,
+      filiacaoPai: optionalString,
+      filiacaoMae: optionalString,
+      naturalidade: optionalString,
+      orgaoExpedidor: optionalString,
+      dataExpedicao: optionalString,
+      confianca: optionalNumber,
+    })
+    .optional()
+    .catch(undefined),
+  endereco: z
+    .object({
+      street: optionalString,
+      number: optionalString,
+      complement: optionalString,
+      district: optionalString,
+      city: optionalString,
+      state: optionalString,
+      zipcode: optionalString,
+      origem: optionalString,
+      confianca: optionalNumber,
+    })
+    .optional()
+    .catch(undefined),
+  camposNaoEncontrados: z.array(z.string()).optional().catch(undefined),
+  paginas: z
+    .array(
+      z.object({
+        pagina: z.number().catch(Number.NaN),
+        tipo: z.string().catch(''),
+      }),
+    )
+    .optional()
+    .catch(undefined),
+}) satisfies z.ZodType<RawExtraction>
+
+function parseRawExtraction(input: unknown): RawExtraction {
+  const parsed = rawExtractionSchema.safeParse(input)
+  if (!parsed.success) {
+    console.error('Extracao: saida do modelo fora do schema esperado', {
+      issues: parsed.error.issues,
+    })
+    throw new ServiceError(
+      503,
+      'A extracao retornou dados em formato inesperado. Tente novamente.',
+    )
+  }
+  return parsed.data
+}
 
 const SYSTEM = `Voce e um extrator de dados de documentos brasileiros para um sistema juridico.
 O arquivo enviado e um PDF unico que reune VARIOS documentos do titular, um apos o outro.
@@ -29,6 +94,11 @@ const extractionTool: Anthropic.Tool = {
   name: 'registrar_titular',
   description:
     'Registra os dados extraidos do dossie (RG/CNH do titular e comprovante de residencia) para preencher o cadastro do processo.',
+  // strict: a API passa a garantir que o input obedece o input_schema (suportado
+  // em Opus 4.8 / Sonnet 4.6 / Haiku 4.5 — o modelo padrao e claude-opus-4-8).
+  // Exige additionalProperties: false em todos os objetos. A camada Zod acima
+  // continua sendo a rede de seguranca para modelos sem suporte a strict.
+  strict: true,
   input_schema: {
     type: 'object',
     properties: {
@@ -50,6 +120,7 @@ const extractionTool: Anthropic.Tool = {
               '0 a 1 — confianca na leitura do documento de identidade',
           },
         },
+        additionalProperties: false,
       },
       endereco: {
         type: 'object',
@@ -64,6 +135,7 @@ const extractionTool: Anthropic.Tool = {
           origem: { type: 'string' },
           confianca: { type: 'number' },
         },
+        additionalProperties: false,
       },
       camposNaoEncontrados: {
         type: 'array',
@@ -98,10 +170,12 @@ const extractionTool: Anthropic.Tool = {
             },
           },
           required: ['pagina', 'tipo'],
+          additionalProperties: false,
         },
       },
     },
     required: ['titular'],
+    additionalProperties: false,
   },
 }
 
@@ -182,7 +256,7 @@ export function createAnthropicVisionProvider(
         throw new ServiceError(500, 'Resposta de extracao invalida.')
       }
 
-      return toolUse.input as RawExtraction
+      return parseRawExtraction(toolUse.input)
     },
   }
 }
