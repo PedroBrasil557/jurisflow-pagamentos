@@ -9,6 +9,9 @@ const config = defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const port = Number(env.PORT ?? 3555)
   const apiProxyTarget = env.API_PROXY_TARGET ?? 'http://localhost:3556'
+  // No Docker em Windows/WSL o inotify nao detecta alteracoes no bind mount;
+  // ligamos o polling via env para o HMR funcionar sem reiniciar o container.
+  const usePolling = env.VITE_USE_POLLING === 'true'
 
   return {
     server: {
@@ -18,6 +21,12 @@ const config = defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port,
       strictPort: true,
+      watch: usePolling
+        ? {
+            usePolling: true,
+            interval: 300,
+          }
+        : undefined,
       proxy: {
         '/api': {
           target: apiProxyTarget,

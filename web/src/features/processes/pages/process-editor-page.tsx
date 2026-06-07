@@ -22,7 +22,10 @@ import {
   ProcessTextField,
 } from '../components/process-form/process-form-field'
 import { ProcessFormSection } from '../components/process-form/process-form-section'
-import { ImportFromDocumentDialog } from '../components/process-import/import-from-document-dialog'
+import {
+  type ImportDocumentBundle,
+  ImportFromDocumentDialog,
+} from '../components/process-import/import-from-document-dialog'
 import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save-success-dialog'
 import { buildProcessRelationship, canEditProcess } from '../lib/process-access'
 import {
@@ -40,10 +43,7 @@ import type {
 } from '../process-form.types'
 import { formatCpf, formatWhatsapp, formatZipCode } from '../process-form.utils'
 import { processFormSchema } from '../schemas/process-form.schema'
-import type {
-  ExtractedDocument,
-  ExtractedField,
-} from '../services/extraction.service'
+import type { ExtractedField } from '../services/extraction.service'
 import { importBundleRequest } from '../services/extraction.service'
 import { housingComplexOptionsInfiniteQuery } from '../services/housing-complexes.queries'
 import {
@@ -56,15 +56,7 @@ import {
   getProcessPdfModelsRequest,
 } from '../services/processes.service'
 
-type ImportedBundle = {
-  file: File | null
-  documents: ExtractedDocument[]
-}
-
-const emptyImportedBundle: ImportedBundle = {
-  file: null,
-  documents: [],
-}
+const emptyImportedBundles: ImportDocumentBundle[] = []
 
 type ProcessFormShellProps = {
   mode: ProcessFormMode
@@ -127,7 +119,8 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     useState<ProcessSaveSuccessState | null>(null)
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
-  const importedBundleRef = useRef<ImportedBundle>(emptyImportedBundle)
+  const importedBundlesRef =
+    useRef<ImportDocumentBundle[]>(emptyImportedBundles)
 
   const createMutation = useCreateProcess()
   const updateMutation = useUpdateProcess(processId ?? '')
@@ -260,17 +253,16 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
 
   function handleImportApply(
     fields: ExtractedField[],
-    file: File,
-    documents: ExtractedDocument[],
+    bundles: ImportDocumentBundle[],
   ) {
     for (const field of fields) {
       updateValue(field.key as keyof ProcessFormValues, field.value as never)
     }
 
-    importedBundleRef.current = { file, documents }
+    importedBundlesRef.current = bundles
 
     toast.success(
-      documents.length > 0
+      bundles.length > 0
         ? 'Dados aplicados. Os documentos serao separados e anexados ao checklist apos criar o processo.'
         : 'Dados aplicados ao formulario.',
     )
@@ -283,26 +275,31 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
       if (mode === 'create') {
         const result = await createMutation.mutateAsync(values)
 
-        const bundle = importedBundleRef.current
-        if (bundle.file && bundle.documents.length > 0) {
-          try {
-            await importBundleRequest({
-              processId: result.process.id,
-              file: bundle.file,
-              documents: bundle.documents,
-            })
-            // So limpa o bundle apos anexar com sucesso.
-            importedBundleRef.current = emptyImportedBundle
-          } catch (error) {
-            // Mantem o bundle (nao limpa) e mostra o motivo real do backend.
+        const bundles = importedBundlesRef.current
+        importedBundlesRef.current = emptyImportedBundles
+
+        if (bundles.length > 0) {
+          // Anexa cada arquivo de forma independente: falha de um nao impede os outros.
+          const failed: string[] = []
+          for (const bundle of bundles) {
+            try {
+              await importBundleRequest({
+                processId: result.process.id,
+                file: bundle.file,
+                documents: bundle.documents,
+              })
+            } catch (error) {
+              failed.push(
+                error instanceof Error ? error.message : bundle.file.name,
+              )
+            }
+          }
+
+          if (failed.length > 0) {
             toast.error(
-              error instanceof Error
-                ? `${error.message} Voce pode anexa-los manualmente no checklist do processo.`
-                : 'Processo criado, mas nao foi possivel anexar os documentos. Anexe-os manualmente no checklist.',
+              `Processo criado, mas alguns documentos nao foram anexados: ${failed.join('; ')}. Anexe-os manualmente no checklist.`,
             )
           }
-        } else {
-          importedBundleRef.current = emptyImportedBundle
         }
 
         setSuccessState({

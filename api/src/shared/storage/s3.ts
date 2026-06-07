@@ -144,6 +144,24 @@ export async function uploadStorageObject(input: {
   )
 }
 
+export async function getStorageObjectBytes(input: {
+  bucketName: StorageBucketName
+  objectKey: string
+}): Promise<Uint8Array> {
+  const response = await internalStorageClient.send(
+    new GetObjectCommand({
+      Bucket: input.bucketName,
+      Key: input.objectKey,
+    }),
+  )
+
+  if (!response.Body) {
+    throw new Error('Objeto de storage vazio ou inexistente.')
+  }
+
+  return response.Body.transformToByteArray()
+}
+
 export async function deleteStorageObject(input: {
   bucketName: StorageBucketName
   objectKey: string

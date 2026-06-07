@@ -64,8 +64,10 @@ export function AppDialog({
         if (!nextOpen) onClose()
       }}
     >
-      <DialogContent className={maxWidthClasses[maxWidth]}>
-        <DialogHeader>
+      <DialogContent
+        className={cn('flex max-h-[90vh] flex-col', maxWidthClasses[maxWidth])}
+      >
+        <DialogHeader className="shrink-0">
           <div className="flex items-start gap-4">
             {Icon ? (
               <div
@@ -87,8 +89,12 @@ export function AppDialog({
             </div>
           </div>
         </DialogHeader>
-        {children}
-        {footer ? <DialogFooter>{footer}</DialogFooter> : null}
+        <div className="-mx-1 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-1">
+          {children}
+        </div>
+        {footer ? (
+          <DialogFooter className="shrink-0">{footer}</DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   )

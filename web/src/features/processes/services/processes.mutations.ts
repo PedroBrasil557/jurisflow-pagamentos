@@ -13,6 +13,7 @@ import {
   markProcessDocumentationReadyRequest,
   removeDocumentationAssigneeRequest,
   setDocumentationAssigneeRequest,
+  splitBatchFileRequest,
   startProcessRequest,
   submitProcessChecklistItemRequest,
   updateLegalProcessRequest,
@@ -72,6 +73,25 @@ export function useDeleteBatchFile(processId: string) {
     mutationFn: (fileId: string) =>
       deleteBatchFileRequest({ processId, fileId }),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.batch(processId) })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.detail(processId),
+      })
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+    },
+  })
+}
+
+export function useSplitBatchFile(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (fileId: string) =>
+      splitBatchFileRequest({ processId, fileId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: processKeys.checklist(processId),
+      })
       queryClient.invalidateQueries({ queryKey: processKeys.batch(processId) })
       queryClient.invalidateQueries({
         queryKey: processKeys.detail(processId),
