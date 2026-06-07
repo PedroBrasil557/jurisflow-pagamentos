@@ -11,18 +11,40 @@ O componente `<ScanButton>` escolhe o motor em tempo de execução:
 - **App nativo** (`Capacitor.isNativePlatform()` verdadeiro): usa o scanner nativo
   do sistema via `@capgo/capacitor-document-scanner` — **VisionKit no iOS** e ML Kit
   no Android. Ver [native-scan.ts](./native-scan.ts).
-- **Navegador** (desktop/mobile): usa **jscanify + OpenCV.js** com ajuste manual dos
-  4 cantos. Ver [web-scanner-dialog.tsx](./web-scanner-dialog.tsx).
+- **Navegador com Scanbot** (`VITE_SCANBOT_LICENSE_KEY` definida): usa o **Scanbot Web
+  SDK** — qualidade CamScanner (captura automática, ajuste de cantos, perspectiva,
+  remoção de sombra) rodando no próprio navegador, **inclusive no iPhone**, sem app
+  nativo. Ver [scanbot-scan.ts](./scanbot-scan.ts).
+- **Navegador sem Scanbot** (fallback): usa **jscanify + OpenCV.js** com ajuste manual
+  dos 4 cantos. Ver [web-scanner-dialog.tsx](./web-scanner-dialog.tsx). Também é o
+  fallback automático se a licença do Scanbot falhar.
 
-Ambos produzem um `File` PDF via [scan-to-pdf.ts](./scan-to-pdf.ts) e entregam por
-`onComplete(file)`. O backend não muda (aceita PDF/qualquer mime até 25 MB).
+Todos produzem um `File` PDF e entregam por `onComplete(file)`. O backend não muda
+(aceita PDF/qualquer mime até 25 MB).
 
 ### Arquivos
 - `scan-button.tsx` — botão público; seleciona o motor (lazy import de cada engine).
 - `native-scan.ts` — dispara o scanner nativo (VisionKit/ML Kit).
-- `web-scanner-dialog.tsx` — scanner no navegador (jscanify, getUserMedia, cantos, filtros).
+- `scanbot-scan.ts` — scanner via Scanbot Web SDK no navegador (init + RTU UI + PDF).
+- `web-scanner-dialog.tsx` — scanner fallback no navegador (jscanify, cantos, filtros).
 - `scanner-engine.ts` — carrega OpenCV.js + jscanify sob demanda; detecção de cantos.
 - `scan-to-pdf.ts` — monta o PDF multipágina (jspdf). Coberto por testes.
+
+## Setup do Scanbot Web SDK (recomendado para navegador, inclui iPhone)
+
+1. Crie `web/.env.local` (não versionado) com a sua chave do scanbot.io:
+   ```
+   VITE_SCANBOT_LICENSE_KEY=SUA_CHAVE_AQUI
+   ```
+   A chave é **travada por domínio** — gere uma para o domínio onde o app roda
+   (para dev local com HTTPS/ngrok, use um domínio estático no painel do Scanbot).
+2. Os assets WASM são servidos automaticamente em `/vendor/document-scanner/` por
+   `vite-plugin-static-copy` (ver [vite.config.ts](../../../../vite.config.ts)) —
+   nada para commitar.
+3. No Docker, após instalar deps rode `docker compose exec web bun install` e
+   reinicie o serviço web. A `.env.local` é lida pelo Vite via bind mount.
+4. Requisitos: **HTTPS** (obrigatório para câmera em mobile; `localhost` ok no dev).
+   Sem a chave, o scanner cai automaticamente no jscanify.
 
 ### Vendoring do OpenCV.js
 `OpenCV.js` (~8 MB) e `jscanify.js` ficam em `web/public/vendor/` e são carregados

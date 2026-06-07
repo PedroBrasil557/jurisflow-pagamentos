@@ -40,7 +40,30 @@ export function ScanButton({ onComplete, disabled }: ScanButtonProps) {
       return
     }
 
-    // No navegador usamos o scanner web (jscanify).
+    // No navegador, se houver license key, usamos o Scanbot (qualidade CamScanner,
+    // funciona ate no iPhone). Em caso de falha de licenca/engine, cai no jscanify.
+    if (import.meta.env.VITE_SCANBOT_LICENSE_KEY) {
+      setBusy(true)
+
+      try {
+        const { scanWithScanbot } = await import('./scanbot-scan')
+        const file = await scanWithScanbot()
+
+        if (file) {
+          onComplete(file)
+        }
+
+        return
+      } catch {
+        setOpen(true)
+      } finally {
+        setBusy(false)
+      }
+
+      return
+    }
+
+    // Sem Scanbot configurado: scanner web com jscanify.
     setOpen(true)
   }
 
