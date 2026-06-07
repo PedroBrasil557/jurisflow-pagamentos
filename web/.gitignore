@@ -5,6 +5,9 @@ node_modules/
 dist/
 dist-ssr/
 
+# assets WASM do Scanbot copiados de node_modules (ver scripts/copy-scanbot-assets.mjs)
+public/vendor/document-scanner/
+
 # env
 .env
 .env.local

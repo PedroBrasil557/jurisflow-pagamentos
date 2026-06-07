@@ -8,6 +8,7 @@ import { CreationTimelineChart } from '../components/creation-timeline-chart'
 import { KpiCards } from '../components/kpi-cards'
 import { OwnerTypeChart } from '../components/owner-type-chart'
 import { ProductivityTab } from '../components/productivity/productivity-tab'
+import { StageTimingsTab } from '../components/stage-timings/stage-timings-tab'
 import { StatusDistributionChart } from '../components/status-distribution-chart'
 import { TopCreatorsChart } from '../components/top-creators-chart'
 import { TopHousingComplexesChart } from '../components/top-housing-complexes-chart'
@@ -33,6 +34,7 @@ export function DashboardPage() {
         <TabsList>
           <TabsTrigger value="overview">Visao geral</TabsTrigger>
           <TabsTrigger value="productivity">Produtividade</TabsTrigger>
+          <TabsTrigger value="stage-timings">Tempo entre etapas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -41,6 +43,10 @@ export function DashboardPage() {
 
         <TabsContent value="productivity">
           <ProductivityTab />
+        </TabsContent>
+
+        <TabsContent value="stage-timings">
+          <StageTimingsTab />
         </TabsContent>
       </Tabs>
     </div>

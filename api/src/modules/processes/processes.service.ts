@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
+import { deleteStorageObject } from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
 import { user } from '../auth/auth.schema'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
@@ -26,6 +27,7 @@ import { createProcessHistoryEntry } from './processes.history.service'
 import {
   type ProcessHistoryChangedFields,
   process,
+  processBatchFile,
   processHistory,
 } from './processes.schema'
 import {
@@ -159,6 +161,8 @@ async function resolveHousingComplexIdOrThrow(housingComplexName: string) {
 
 function getLegalProcessLabel(currentProcess: ProcessRecord) {
   switch (currentProcess.status) {
+    case 'RASCUNHO':
+      return 'Rascunho'
     case 'CADASTRADO':
       return 'Cadastrado'
     case 'EM_LOTE':
@@ -233,7 +237,7 @@ function pickEditableValues(
 ): ProcessEditableValues {
   return {
     fullName: currentProcess.fullName,
-    birthDate: currentProcess.birthDate,
+    birthDate: currentProcess.birthDate ?? '',
     nationality: currentProcess.nationality,
     maritalStatus: currentProcess.maritalStatus,
     profession: currentProcess.profession,
@@ -619,6 +623,98 @@ export async function createProcess(
   await ensureProcessChecklistItems(processId)
 
   return createdProcess
+}
+
+// Cria um processo RASCUNHO (entrada do fluxo digitalizacao): registro-casca com defaults
+// vazios, sem passar pelo schema de criacao (os dados chegam depois, da IA).
+export async function createDraftProcess(
+  actor: ProcessActor,
+  perms: ResolvedPermissions,
+) {
+  assertCan(perms, 'create')
+
+  const processId = crypto.randomUUID()
+  const processCode = buildProcessCode()
+
+  const [createdProcess] = await db
+    .insert(process)
+    .values({
+      id: processId,
+      code: processCode,
+      status: 'RASCUNHO',
+      createdByUserId: actor.id,
+      fullName: '',
+      birthDate: null,
+      nationality: '',
+      maritalStatus: '',
+      profession: '',
+      ownerType: '',
+      cpf: '',
+      rg: '',
+      cadunico: '',
+      propertyPaidOff: '',
+      state: '',
+      city: '',
+      district: '',
+      housingComplex: '',
+      street: '',
+      number: '',
+      complement: '',
+      zipcode: '',
+      email: '',
+      whatsapp: '',
+      observation: '',
+      housingComplexId: null,
+    })
+    .returning()
+
+  // Sem transacao nativa aqui: se as escritas seguintes falharem, removemos o
+  // processo recem-criado para nao deixar um rascunho orfao sem checklist.
+  try {
+    await createProcessHistoryEntry({
+      processId,
+      actorUserId: actor.id,
+      eventType: 'CREATED',
+      toStatus: createdProcess.status,
+      notes: 'Rascunho criado via digitalizacao.',
+    })
+
+    await ensureProcessChecklistItems(processId)
+  } catch (error) {
+    await db.delete(process).where(eq(process.id, processId)).catch(() => {})
+    throw error
+  }
+
+  return createdProcess
+}
+
+// Remove um processo e limpa os objetos do scan no storage (o cascade do banco
+// remove historico/checklist/lote, mas nao os arquivos no S3). Usado no rollback
+// do fluxo digitalizacao quando a ingestao nao pode ser iniciada.
+export async function deleteProcess(processId: string) {
+  const batchFiles = await db
+    .select({
+      bucketName: processBatchFile.bucketName,
+      objectKey: processBatchFile.objectKey,
+    })
+    .from(processBatchFile)
+    .where(eq(processBatchFile.processId, processId))
+
+  for (const batchFile of batchFiles) {
+    try {
+      await deleteStorageObject({
+        bucketName: batchFile.bucketName,
+        objectKey: batchFile.objectKey,
+      })
+    } catch (error) {
+      console.error('Falha ao remover objeto do storage no rollback', {
+        processId,
+        error: String(error),
+      })
+    }
+  }
+
+  await db.delete(process).where(eq(process.id, processId))
 }
 
 export async function updateProcess(

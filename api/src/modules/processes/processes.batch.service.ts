@@ -1,6 +1,6 @@
-import { and, asc, eq, lt, ne, or, sql } from 'drizzle-orm'
-import { ServiceError } from '../../shared/errors/service-error'
+import { and, asc, eq, lt, ne, or } from 'drizzle-orm'
 import { db } from '../../shared/db'
+import { ServiceError } from '../../shared/errors/service-error'
 import {
   buildProcessBatchObjectKey,
   createStorageObjectDownloadUrl,
@@ -10,6 +10,7 @@ import {
   uploadStorageObject,
 } from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
+import { normalizeCpf } from '../../shared/utils/cpf'
 import { buildBatchDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
 import {
@@ -32,7 +33,7 @@ import type { ProcessStatus } from './processes.status'
 
 type ProcessActor = NonNullable<AppBindings['Variables']['user']>
 
-const maxBatchFileSizeInBytes = 25 * 1024 * 1024
+export const maxBatchFileSizeInBytes = 25 * 1024 * 1024
 
 function assertBatchFile(file: File) {
   if (file.size <= 0) {
@@ -45,6 +46,7 @@ function assertBatchFile(file: File) {
 }
 
 const batchUploadAllowedStatuses = [
+  'RASCUNHO',
   'CADASTRADO',
   'EM_LOTE',
   'EM_DOCUMENTACAO',
@@ -66,69 +68,15 @@ function assertBatchUploadAllowed(currentStatus: ProcessStatus) {
   )
 }
 
-async function getBatchFileCount(processId: string) {
-  const [result] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(processBatchFile)
-    .where(eq(processBatchFile.processId, processId))
-
-  return result?.total ?? 0
-}
-
+// O status EM_LOTE foi aposentado: enviar/remover arquivos do lote NAO altera
+// mais o status do processo. O avanco ocorre apenas por completude do checklist
+// (ver syncProcessStatusAfterChecklistChange). Mantido como no-op para preservar
+// o contrato de retorno dos call sites (upload/delete de lote).
 export async function syncProcessStatusAfterBatchChange(input: {
   processId: string
   actor: ProcessActor
 }) {
-  const currentProcess = await getProcessRecordOrThrow(input.processId)
-
-  if (
-    currentProcess.status !== 'CADASTRADO' &&
-    currentProcess.status !== 'EM_LOTE'
-  ) {
-    return currentProcess
-  }
-
-  const batchCount = await getBatchFileCount(input.processId)
-
-  if (currentProcess.status === 'CADASTRADO' && batchCount > 0) {
-    const [updated] = await db
-      .update(process)
-      .set({ status: 'EM_LOTE' })
-      .where(eq(process.id, input.processId))
-      .returning()
-
-    await createProcessHistoryEntry({
-      processId: input.processId,
-      actorUserId: input.actor.id,
-      eventType: 'STATUS_CHANGED',
-      fromStatus: 'CADASTRADO',
-      toStatus: 'EM_LOTE',
-      notes: 'Arquivos enviados em lote.',
-    })
-
-    return updated
-  }
-
-  if (currentProcess.status === 'EM_LOTE' && batchCount === 0) {
-    const [updated] = await db
-      .update(process)
-      .set({ status: 'CADASTRADO' })
-      .where(eq(process.id, input.processId))
-      .returning()
-
-    await createProcessHistoryEntry({
-      processId: input.processId,
-      actorUserId: input.actor.id,
-      eventType: 'STATUS_CHANGED',
-      fromStatus: 'EM_LOTE',
-      toStatus: 'CADASTRADO',
-      notes: 'Todos os arquivos em lote foram removidos.',
-    })
-
-    return updated
-  }
-
-  return currentProcess
+  return getProcessRecordOrThrow(input.processId)
 }
 
 export async function uploadBatchFiles(input: {
@@ -366,7 +314,11 @@ async function claimSplitProcessing(fileId: string): Promise<boolean> {
 
   const claimed = await db
     .update(processBatchFile)
-    .set({ splitStatus: 'processing', splitMessage: null, splitUpdatedAt: new Date() })
+    .set({
+      splitStatus: 'processing',
+      splitMessage: null,
+      splitUpdatedAt: new Date(),
+    })
     .where(
       and(
         eq(processBatchFile.id, fileId),
@@ -404,9 +356,13 @@ async function runBatchFileSplit(input: {
       )
     })
 
-    const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
-      type: 'application/pdf',
-    })
+    const file = new File(
+      [new Uint8Array(bytes)],
+      fileRecord.originalFileName,
+      {
+        type: 'application/pdf',
+      },
+    )
 
     // 1 chamada de IA: classifica as paginas (os campos titular/endereco sao ignorados aqui).
     const { documents } = await extractDocumentsFromFiles([file])
@@ -493,6 +449,256 @@ export async function startBatchFileSplit(input: {
   })
 
   return { status: 'processing' as const }
+}
+
+// Colunas do processo que o digitalizacao pode preencher (mesmas keys produzidas pelo
+// normalizer da extracao).
+const SCAN_FIELD_COLUMNS = [
+  'fullName',
+  'birthDate',
+  'cpf',
+  'rg',
+  'street',
+  'number',
+  'complement',
+  'district',
+  'city',
+  'state',
+  'zipcode',
+] as const
+
+type ScanFieldColumn = (typeof SCAN_FIELD_COLUMNS)[number]
+
+// Aplica os campos extraidos APENAS em colunas vazias do rascunho (nao
+// destrutivo e idempotente em retry). Retorna se o processo passou a ter
+// identidade (nome ou CPF), usado para decidir o status quando ha 0 documentos.
+async function applyExtractedFieldsToDraft(
+  processId: string,
+  fields: Array<{ key: string; value: string; valid: boolean }>,
+): Promise<{ hasIdentity: boolean }> {
+  const current = await getProcessRecordOrThrow(processId)
+  const allowed = new Set<string>(SCAN_FIELD_COLUMNS)
+  const update: Partial<Record<ScanFieldColumn, string>> = {}
+
+  for (const field of fields) {
+    if (!allowed.has(field.key)) continue
+    const column = field.key as ScanFieldColumn
+    // birthDate (coluna date), cpf (identidade) e zipcode (CEP) so se forem
+    // validos — evita gravar dado invalido e promover o rascunho a CADASTRADO
+    // com lixo. O campo invalido ainda aparece na revisao com warning.
+    if (
+      (column === 'birthDate' || column === 'cpf' || column === 'zipcode') &&
+      !field.valid
+    ) {
+      continue
+    }
+
+    const currentValue = current[column]
+    const isEmpty =
+      column === 'birthDate' ? currentValue == null : currentValue === ''
+    if (!isEmpty) continue
+
+    update[column] = column === 'cpf' ? normalizeCpf(field.value) : field.value
+  }
+
+  if (Object.keys(update).length > 0) {
+    await db.update(process).set(update).where(eq(process.id, processId))
+  }
+
+  const fullName = update.fullName ?? current.fullName
+  const cpf = update.cpf ?? current.cpf
+  return { hasIdentity: Boolean(fullName) || Boolean(cpf) }
+}
+
+// Ingestao digitalizacao em background: extrai campos + classifica, preenche o rascunho,
+// desmembra/anexa e define o status final por completude. NUNCA lanca: grava o
+// resultado em splitStatus/splitMessage.
+async function runScanIngestion(input: {
+  processId: string
+  fileRecord: typeof processBatchFile.$inferSelect
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}) {
+  const { fileRecord } = input
+
+  try {
+    const bytes = await getStorageObjectBytes({
+      bucketName: fileRecord.bucketName,
+      objectKey: fileRecord.objectKey,
+    }).catch(() => {
+      throw new ProcessServiceError(
+        503,
+        'Nao foi possivel ler o arquivo do storage. Tente novamente.',
+      )
+    })
+
+    const file = new File(
+      [new Uint8Array(bytes)],
+      fileRecord.originalFileName,
+      {
+        type: 'application/pdf',
+      },
+    )
+
+    const { fields, documents } = await extractDocumentsFromFiles([file])
+
+    // Best-effort: aplicar campos extraidos nao pode derrubar o anexo dos docs.
+    let hasIdentity = false
+    try {
+      const applied = await applyExtractedFieldsToDraft(input.processId, fields)
+      hasIdentity = applied.hasIdentity
+    } catch (error) {
+      console.error('digitalizacao: falha ao aplicar campos no rascunho', {
+        processId: input.processId,
+        error: String(error),
+      })
+    }
+
+    const result = await importDocumentBundle({
+      processId: input.processId,
+      file,
+      documents,
+      actor: input.actor,
+      perms: input.perms,
+    })
+
+    // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o
+    // sync nao roda: decidimos explicitamente.
+    if (result.attached.length === 0) {
+      // Documentos reconhecidos mas nenhum anexado: registra o motivo p/ diagnostico.
+      if (result.skipped.length > 0) {
+        console.error(
+          'digitalizacao: documentos reconhecidos mas nenhum anexado',
+          {
+            processId: input.processId,
+            skipped: result.skipped,
+          },
+        )
+      }
+
+      const current = await getProcessRecordOrThrow(input.processId)
+      if (current.status === 'RASCUNHO' && hasIdentity) {
+        await db
+          .update(process)
+          .set({ status: 'CADASTRADO' })
+          .where(eq(process.id, input.processId))
+
+        await createProcessHistoryEntry({
+          processId: input.processId,
+          actorUserId: input.actor.id,
+          eventType: 'STATUS_CHANGED',
+          fromStatus: 'RASCUNHO',
+          toStatus: 'CADASTRADO',
+          notes:
+            'Dados extraidos por digitalizacao; nenhum documento foi separado.',
+        })
+
+        await setSplitStatus(
+          fileRecord.id,
+          'done',
+          'Dados extraidos. Nenhum documento foi separado — anexe manualmente.',
+        )
+        return
+      }
+
+      await setSplitStatus(
+        fileRecord.id,
+        'done',
+        'Nada foi reconhecido no documento. Refaca a captura.',
+      )
+      return
+    }
+
+    await setSplitStatus(fileRecord.id, 'done', result.message)
+  } catch (error) {
+    const message =
+      error instanceof ServiceError
+        ? error.message
+        : 'Nao foi possivel processar o documento.'
+    console.error('Falha na ingestao digitalizacao', {
+      fileId: fileRecord.id,
+      error: String(error),
+    })
+    await setSplitStatus(fileRecord.id, 'error', message)
+  }
+}
+
+// Armazena o scan no lote (como fonte) e dispara a ingestao digitalizacao em background.
+// Gated por 'create' na rota. Retorna o id do arquivo p/ o front acompanhar.
+export async function startScanIngestion(input: {
+  processId: string
+  file: File
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}) {
+  assertBatchFile(input.file)
+
+  if (input.file.type.toLowerCase() !== 'application/pdf') {
+    throw new ProcessServiceError(
+      415,
+      'Apenas arquivos PDF podem ser processados.',
+    )
+  }
+
+  const fileId = crypto.randomUUID()
+  const bucketName = storageBuckets.processDocuments
+  const objectKey = buildProcessBatchObjectKey({
+    processId: input.processId,
+    fileId,
+    fileName: input.file.name,
+  })
+  const fileBytes = new Uint8Array(await input.file.arrayBuffer())
+
+  try {
+    await uploadStorageObject({
+      bucketName,
+      objectKey,
+      contentType: 'application/pdf',
+      body: fileBytes,
+    })
+  } catch {
+    throw new ProcessServiceError(
+      503,
+      'Nao foi possivel enviar o documento para o storage. Tente novamente.',
+    )
+  }
+
+  let fileRecord: typeof processBatchFile.$inferSelect
+  try {
+    const [inserted] = await db
+      .insert(processBatchFile)
+      .values({
+        id: fileId,
+        processId: input.processId,
+        bucketName,
+        objectKey,
+        originalFileName: input.file.name,
+        mimeType: 'application/pdf',
+        sizeInBytes: input.file.size,
+        uploadedByUserId: input.actor.id,
+        splitStatus: 'processing',
+        splitUpdatedAt: new Date(),
+      })
+      .returning()
+    fileRecord = inserted
+  } catch (error) {
+    try {
+      await deleteStorageObject({ bucketName, objectKey })
+    } catch {
+      // cleanup best-effort
+    }
+    throw error
+  }
+
+  // Dispara sem await: o trabalho continua apos a resposta HTTP.
+  void runScanIngestion({
+    processId: input.processId,
+    fileRecord,
+    actor: input.actor,
+    perms: input.perms,
+  })
+
+  return { batchFileId: fileRecord.id }
 }
 
 export async function getBatchFileDownload(input: {

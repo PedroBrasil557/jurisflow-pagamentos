@@ -2,6 +2,7 @@ import { queryOptions } from '@tanstack/react-query'
 import {
   fetchDashboardStats,
   fetchProductivityStats,
+  fetchStageTimings,
   type ProductivityQuery,
 } from './dashboard.service'
 
@@ -10,6 +11,8 @@ export const dashboardKeys = {
   stats: () => [...dashboardKeys.all, 'stats'] as const,
   productivity: (query: ProductivityQuery) =>
     [...dashboardKeys.all, 'productivity', query] as const,
+  stageTimings: (query: ProductivityQuery) =>
+    [...dashboardKeys.all, 'stage-timings', query] as const,
 }
 
 export function dashboardStatsOptions() {
@@ -23,5 +26,12 @@ export function productivityOptions(query: ProductivityQuery) {
   return queryOptions({
     queryKey: dashboardKeys.productivity(query),
     queryFn: () => fetchProductivityStats(query),
+  })
+}
+
+export function stageTimingsOptions(query: ProductivityQuery) {
+  return queryOptions({
+    queryKey: dashboardKeys.stageTimings(query),
+    queryFn: () => fetchStageTimings(query),
   })
 }

@@ -49,20 +49,6 @@ export const defaultProcessDocumentTypes = [
     allowsMultipleFiles: false,
   },
   {
-    key: 'contrato_compra_venda',
-    label: 'Contrato de compra e venda',
-    sortOrder: 8,
-    isRequired: false,
-    allowsMultipleFiles: false,
-  },
-  {
-    key: 'rg_cpf_cnh_conjuge',
-    label: 'RG/CPF/CNH do conjuge',
-    sortOrder: 9,
-    isRequired: false,
-    allowsMultipleFiles: false,
-  },
-  {
     key: 'certidao_casamento',
     label: 'Certidao de casamento',
     sortOrder: 10,
@@ -86,6 +72,22 @@ export const defaultProcessDocumentTypes = [
 ] as const
 
 export const conditionalProcessDocumentTypes = [
+  {
+    key: 'contrato_compra_venda',
+    label: 'Contrato de compra e venda',
+    sortOrder: 8,
+    isRequired: true,
+    allowsMultipleFiles: false,
+    condition: { field: 'ownerType', value: 'nao_titular_contrato_caixa' },
+  },
+  {
+    key: 'rg_cpf_cnh_conjuge',
+    label: 'RG/CPF/CNH do conjuge',
+    sortOrder: 9,
+    isRequired: true,
+    allowsMultipleFiles: false,
+    condition: { field: 'spouseContractSigned', value: 'sim' },
+  },
   {
     key: 'declaracao_quitacao',
     label: 'Declaracao de quitacao',

@@ -43,7 +43,7 @@ export const process = pgTable(
     code: text('code').notNull().unique(),
     status: processStatusEnum('status').default('CADASTRADO').notNull(),
     fullName: text('full_name').notNull(),
-    birthDate: date('birth_date').notNull(),
+    birthDate: date('birth_date'),
     nationality: text('nationality').notNull(),
     maritalStatus: text('marital_status').notNull(),
     profession: text('profession').notNull(),

@@ -6,6 +6,7 @@ import { buildProcessVisibilityFilter } from '../processes/processes.access'
 import { process } from '../processes/processes.schema'
 
 const statusLabels: Record<string, string> = {
+  RASCUNHO: 'Rascunho',
   CADASTRADO: 'Cadastrado',
   EM_LOTE: 'Em lote',
   EM_DOCUMENTACAO: 'Em documentacao',
@@ -51,6 +52,9 @@ export async function getDashboardStats(
     db
       .select({
         total: count(),
+        rascunho: count(
+          sql`CASE WHEN ${process.status} = 'RASCUNHO' THEN 1 END`,
+        ),
         emDocumentacao: count(
           sql`CASE WHEN ${process.status} = 'EM_DOCUMENTACAO' THEN 1 END`,
         ),
@@ -134,7 +138,7 @@ export async function getDashboardStats(
   const s = summaryRows[0]
   const summary = {
     total: s.total,
-    active: s.total - s.finalizado - s.cancelado,
+    active: s.total - s.finalizado - s.cancelado - s.rascunho,
     emDocumentacao: s.emDocumentacao,
     documentacaoPronta: s.documentacaoPronta,
     emProcesso: s.emProcesso,

@@ -3,6 +3,8 @@ import { getProcessStatusLabel } from '../services/processes.service'
 
 function getStatusTone(status: string) {
   switch (status) {
+    case 'RASCUNHO':
+      return 'ghost' as const
     case 'CADASTRADO':
       return 'ghost' as const
     case 'EM_LOTE':

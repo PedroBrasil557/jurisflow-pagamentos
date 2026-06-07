@@ -1,5 +1,6 @@
 import { zValidator } from '@hono/zod-validator'
 import { type Context, Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import {
   getAuthenticatedUser,
   requireAuth,
@@ -21,7 +22,9 @@ import {
   downloadAllBatchFiles,
   getBatchFileDownload,
   listBatchFiles,
+  maxBatchFileSizeInBytes,
   startBatchFileSplit,
+  startScanIngestion,
   uploadBatchFiles,
 } from './processes.batch.service'
 import {
@@ -32,7 +35,10 @@ import {
   submitProcessChecklistItem,
   uploadProcessChecklistFile,
 } from './processes.checklist.service'
-import { extractDocumentsFromFiles } from './processes.extraction.service'
+import {
+  extractDocumentsFromFiles,
+  MAX_FILE_SIZE_IN_BYTES,
+} from './processes.extraction.service'
 import {
   importBundleDocumentsSchema,
   importDocumentBundle,
@@ -58,7 +64,9 @@ import {
 } from './processes.schemas'
 import {
   cancelProcess,
+  createDraftProcess,
   createProcess,
+  deleteProcess,
   finalizeProcess,
   getProcessById,
   getProcessHistory,
@@ -76,6 +84,20 @@ async function getCurrentUserWithPermissions(c: Context<AppBindings>) {
   const perms = await resolveUserPermissions(currentUser.id, currentUser.role)
 
   return { currentUser, perms }
+}
+
+// Guard de tamanho ANTES de bufferizar o corpo (c.req.raw.formData()): rejeita
+// pelo Content-Length, ou aborta o stream se ausente — evita DoS por upload
+// gigante. O overhead cobre o framing multipart sobre o limite por arquivo de
+// cada rota (a checagem fina por arquivo, no service, da a mensagem precisa).
+const MULTIPART_OVERHEAD_BYTES = 1024 * 1024
+
+function uploadBodyLimit(maxFileBytes: number) {
+  return bodyLimit({
+    maxSize: maxFileBytes + MULTIPART_OVERHEAD_BYTES,
+    onError: (c) =>
+      c.json({ message: 'O arquivo enviado excede o tamanho permitido.' }, 413),
+  })
 }
 
 export const processRoutes = new Hono<AppBindings>()
@@ -113,33 +135,74 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
-  .post('/extract-documents', async (c) => {
-    const formData = await c.req.raw.formData()
-    const files: File[] = []
+  .post(
+    '/extract-documents',
+    uploadBodyLimit(MAX_FILE_SIZE_IN_BYTES),
+    async (c) => {
+      const formData = await c.req.raw.formData()
+      const files: File[] = []
 
-    for (const value of formData.getAll('files')) {
-      if (value instanceof File) {
-        files.push(value)
+      for (const value of formData.getAll('files')) {
+        if (value instanceof File) {
+          files.push(value)
+        }
       }
-    }
 
-    if (files.length === 0) {
-      return c.json({ message: 'Informe ao menos um documento.' }, 400)
+      if (files.length === 0) {
+        return c.json({ message: 'Informe ao menos um documento.' }, 400)
+      }
+
+      try {
+        const { perms } = await getCurrentUserWithPermissions(c)
+        assertCan(perms, 'create')
+
+        const result = await extractDocumentsFromFiles(files)
+
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .post('/scan', uploadBodyLimit(maxBatchFileSizeInBytes), async (c) => {
+    const formData = await c.req.raw.formData()
+    const file = formData.get('file')
+
+    if (!(file instanceof File)) {
+      return c.json({ message: 'Informe o arquivo do documento.' }, 400)
     }
 
     try {
-      const { perms } = await getCurrentUserWithPermissions(c)
+      const { currentUser, perms } = await getCurrentUserWithPermissions(c)
       assertCan(perms, 'create')
+      // A digitalizacao anexa documentos no checklist: exige a permissao ANTES de
+      // criar o rascunho, para nao deixar um processo que a ingestao nao completa.
+      assertCan(perms, 'uploadChecklist')
 
-      const result = await extractDocumentsFromFiles(files)
+      // Cria o rascunho primeiro; se a ingestao nao puder iniciar, faz rollback
+      // (apaga o rascunho + scan) para nao deixar processo orfao.
+      const draft = await createDraftProcess(currentUser, perms)
 
-      return c.json(result, 200)
+      try {
+        const { batchFileId } = await startScanIngestion({
+          processId: draft.id,
+          file,
+          actor: currentUser,
+          perms,
+        })
+
+        return c.json({ processId: draft.id, batchFileId }, 202)
+      } catch (error) {
+        await deleteProcess(draft.id)
+        throw error
+      }
     } catch (error) {
       return handleServiceError(c, error)
     }
   })
   .post(
     '/:processId/import-bundle',
+    uploadBodyLimit(MAX_FILE_SIZE_IN_BYTES),
     paramsValidator(processIdParamsSchema),
     async (c) => {
       const formData = await c.req.raw.formData()

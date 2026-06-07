@@ -43,6 +43,16 @@ export function canCreateProcess(permissions: ResolvedPermissions) {
   return permissions.isAdmin || permissions.permissions.process.create
 }
 
+// O fluxo "Escanear documentos" cria o processo E anexa documentos no checklist;
+// so faz sentido para quem pode criar e anexar (senao a ingestao IA falharia).
+export function canCreateProcessViaScan(permissions: ResolvedPermissions) {
+  return (
+    permissions.isAdmin ||
+    (permissions.permissions.process.create &&
+      permissions.permissions.process.uploadChecklist)
+  )
+}
+
 export function canAccessDashboard(permissions: ResolvedPermissions) {
   return permissions.isAdmin || permissions.permissions.sections.dashboard
 }

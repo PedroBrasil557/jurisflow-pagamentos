@@ -3,6 +3,7 @@ import { apiClient } from '@/shared/services/api-client'
 
 const dashboardStatsRoute = apiClient.api.dashboard.stats
 const dashboardProductivityRoute = apiClient.api.dashboard.productivity
+const dashboardStageTimingsRoute = apiClient.api.dashboard['stage-timings']
 
 export type DashboardStats = InferResponseType<
   typeof dashboardStatsRoute.$get,
@@ -42,6 +43,28 @@ export async function fetchProductivityStats(
 
   if (!response.ok) {
     throw new Error('Erro ao carregar indicadores de produtividade.')
+  }
+
+  return response.json()
+}
+
+export type StageTimingStats = InferResponseType<
+  typeof dashboardStageTimingsRoute.$get,
+  200
+>
+
+export async function fetchStageTimings(
+  query: ProductivityQuery,
+): Promise<StageTimingStats> {
+  const response = await dashboardStageTimingsRoute.$get({
+    query:
+      'period' in query
+        ? { period: query.period }
+        : { from: query.from, to: query.to },
+  })
+
+  if (!response.ok) {
+    throw new Error('Erro ao carregar indicadores de tempo entre etapas.')
   }
 
   return response.json()

@@ -1,5 +1,8 @@
 import { formatCpf, isValidCpf } from '../../shared/utils/cpf'
-import { defaultProcessDocumentTypes } from './processes.documents'
+import {
+  conditionalProcessDocumentTypes,
+  defaultProcessDocumentTypes,
+} from './processes.documents'
 import type {
   ConfidenceLevel,
   ExtractedDocument,
@@ -23,7 +26,9 @@ export const SPLITTABLE_DOCUMENT_KEYS = [
 ] as const
 
 const documentLabelByKey = new Map(
-  defaultProcessDocumentTypes.map((type) => [type.key, type.label]),
+  [...defaultProcessDocumentTypes, ...conditionalProcessDocumentTypes].map(
+    (type) => [type.key, type.label],
+  ),
 )
 
 // Agrupa a classificacao por pagina em documentos (1 por tipo), na ordem dos
@@ -89,10 +94,10 @@ function isIsoDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value)
 }
 
-function formatZip(value: string): string {
-  const digits = value.replace(/\D/g, '').slice(0, 8)
-  if (digits.length !== 8) return value
-  return `${digits.slice(0, 5)}-${digits.slice(5)}`
+function formatZip(value: string): { value: string; valid: boolean } {
+  const digits = value.replace(/\D/g, '')
+  if (digits.length !== 8) return { value: value.trim(), valid: false }
+  return { value: `${digits.slice(0, 5)}-${digits.slice(5)}`, valid: true }
 }
 
 // Converte a saida crua do provider em campos validados para a tela de revisao.
@@ -164,7 +169,6 @@ export function normalizeExtraction(raw: RawExtraction): ExtractionResult {
       ['district', 'Bairro', upper(endereco.district)],
       ['city', 'Cidade', upper(endereco.city)],
       ['state', 'UF', upper(endereco.state)],
-      ['zipcode', 'CEP', endereco.zipcode ? formatZip(endereco.zipcode) : ''],
     ]
 
     for (const [key, label, value] of addressFields) {
@@ -177,6 +181,24 @@ export function normalizeExtraction(raw: RawExtraction): ExtractionResult {
         valid: true,
         source: ADDRESS_SOURCE,
       })
+    }
+
+    if (endereco.zipcode) {
+      const zip = formatZip(endereco.zipcode)
+      fields.push({
+        key: 'zipcode',
+        label: 'CEP',
+        value: zip.value,
+        confidence: zip.valid ? addressConfidence : 'baixa',
+        valid: zip.valid,
+        warning: zip.valid
+          ? undefined
+          : 'CEP invalido (precisa ter 8 digitos).',
+        source: ADDRESS_SOURCE,
+      })
+      if (!zip.valid) {
+        warnings.push('O CEP lido nao tem 8 digitos — confira manualmente.')
+      }
     }
   }
 
