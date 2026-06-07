@@ -10,6 +10,7 @@ services:
       PORT: "3555"
       API_PROXY_TARGET: "http://api:3556"
       VITE_API_URL: "http://localhost:3555"
+      VITE_USE_POLLING: "true"
     volumes:
       - ./:/workspace
       - web_node_modules:/workspace/web/node_modules
