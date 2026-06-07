@@ -43,6 +43,16 @@ export function canCreateProcess(permissions: ResolvedPermissions) {
   return permissions.isAdmin || permissions.permissions.process.create
 }
 
+// O fluxo "Novo processo OCR" cria o processo E anexa documentos no checklist;
+// so faz sentido para quem pode criar e anexar (senao a ingestao IA falharia).
+export function canCreateProcessViaOcr(permissions: ResolvedPermissions) {
+  return (
+    permissions.isAdmin ||
+    (permissions.permissions.process.create &&
+      permissions.permissions.process.uploadChecklist)
+  )
+}
+
 export function canAccessDashboard(permissions: ResolvedPermissions) {
   return permissions.isAdmin || permissions.permissions.sections.dashboard
 }

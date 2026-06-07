@@ -141,8 +141,9 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
 
     if (file.splitStatus === 'done') {
       const message = file.splitMessage ?? 'Documentos anexados ao checklist.'
-      // 'done' com zero anexos nao e sucesso: a IA nao reconheceu nenhum documento.
-      if (message.startsWith('Nenhum documento')) {
+      // 'done' sem anexos nao e sucesso pleno: a IA nao separou nenhum documento
+      // (cobre tanto o split manual quanto as mensagens do fluxo OCR).
+      if (message.includes('Nenhum documento') || message.startsWith('Nada')) {
         toast.warning(message)
       } else {
         toast.success(message)
@@ -162,6 +163,21 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
     setActiveSplitId(null)
     setSplitConfirmation(null)
   }, [activeSplitId, batchFiles, queryClient, processId])
+
+  // Detecta um desmembramento ja em andamento (ex.: iniciado pelo fluxo OCR antes
+  // de chegar nesta tela) para acompanhar processing -> done/erro tambem nesses casos.
+  useEffect(() => {
+    if (activeSplitId) {
+      return
+    }
+
+    const processingFile = batchFiles.find(
+      (item) => item.splitStatus === 'processing',
+    )
+    if (processingFile) {
+      setActiveSplitId(processingFile.id)
+    }
+  }, [activeSplitId, batchFiles])
 
   const isLoading =
     detailQ.isLoading ||

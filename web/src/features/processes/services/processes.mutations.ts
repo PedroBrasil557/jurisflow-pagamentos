@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { createProcessViaOcrRequest } from './extraction.service'
 import type { ProcessFormValues } from '../process-form.types'
 import { processKeys } from './processes.queries'
 import {
@@ -26,6 +27,17 @@ export function useCreateProcess() {
 
   return useMutation({
     mutationFn: (values: ProcessFormValues) => createProcessRequest(values),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+    },
+  })
+}
+
+export function useCreateProcessViaOcr() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (file: File) => createProcessViaOcrRequest(file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     },

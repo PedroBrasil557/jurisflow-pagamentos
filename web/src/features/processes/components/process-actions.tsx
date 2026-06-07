@@ -67,7 +67,9 @@ export function ProcessActions({
   const canFinalizeAction =
     process.status === 'EM_PROCESSO' &&
     canFinalizeProcess(permissions, relationship)
-  const canGeneratePdfAction = canGeneratePdf(permissions, relationship)
+  // Rascunho (OCR) ainda nao tem dados validos: gerar PDF nao faz sentido.
+  const canGeneratePdfAction =
+    process.status !== 'RASCUNHO' && canGeneratePdf(permissions, relationship)
   const canViewHistoryAction = canAccessHistory(permissions, relationship)
   const canCancel = !isTerminal && canCancelProcess(permissions, relationship)
 

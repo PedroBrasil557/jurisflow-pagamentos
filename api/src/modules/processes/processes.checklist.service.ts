@@ -789,7 +789,7 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   const currentProcess = await getProcessRecordOrThrow(input.processId)
 
   // Only auto-sync for early/mid statuses. RASCUNHO (entrada do OCR) avanca por
-  // completude; EM_LOTE (legado) ainda dren a por aqui.
+  // completude; EM_LOTE (legado) ainda drena por aqui.
   const syncableStatuses: ProcessStatus[] = [
     'RASCUNHO',
     'CADASTRADO',

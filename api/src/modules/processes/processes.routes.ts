@@ -22,6 +22,7 @@ import {
   getBatchFileDownload,
   listBatchFiles,
   startBatchFileSplit,
+  startOcrIngestion,
   uploadBatchFiles,
 } from './processes.batch.service'
 import {
@@ -58,7 +59,9 @@ import {
 } from './processes.schemas'
 import {
   cancelProcess,
+  createDraftProcess,
   createProcess,
+  deleteProcess,
   finalizeProcess,
   getProcessById,
   getProcessHistory,
@@ -134,6 +137,42 @@ export const processRoutes = new Hono<AppBindings>()
       const result = await extractDocumentsFromFiles(files)
 
       return c.json(result, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .post('/ocr', async (c) => {
+    const formData = await c.req.raw.formData()
+    const file = formData.get('file')
+
+    if (!(file instanceof File)) {
+      return c.json({ message: 'Informe o arquivo do documento.' }, 400)
+    }
+
+    try {
+      const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+      assertCan(perms, 'create')
+      // O OCR anexa documentos no checklist: exige a permissao ANTES de criar o
+      // rascunho, para nao deixar um processo que a ingestao nao conseguira completar.
+      assertCan(perms, 'uploadChecklist')
+
+      // Cria o rascunho primeiro; se a ingestao nao puder iniciar, faz rollback
+      // (apaga o rascunho + scan) para nao deixar processo orfao.
+      const draft = await createDraftProcess(currentUser, perms)
+
+      try {
+        const { batchFileId } = await startOcrIngestion({
+          processId: draft.id,
+          file,
+          actor: currentUser,
+          perms,
+        })
+
+        return c.json({ processId: draft.id, batchFileId }, 202)
+      } catch (error) {
+        await deleteProcess(draft.id)
+        throw error
+      }
     } catch (error) {
       return handleServiceError(c, error)
     }
