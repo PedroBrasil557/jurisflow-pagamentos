@@ -2,6 +2,7 @@ import { Download, FileUp, Loader2, Sparkles, Trash2 } from 'lucide-react'
 import { useId, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Checkbox } from '#/components/ui/checkbox'
+import { ScanButton } from '@/shared/components/document-scanner/scan-button'
 import { StatusBadge } from '@/shared/components/status-badge'
 import { formatBytes } from '@/shared/lib/format'
 import type { ProcessBatchFile } from '../services/processes.service'
@@ -196,6 +197,13 @@ export function BatchSection({
               ref={fileInputRef}
               type="file"
             />
+
+            <div className="mt-3 flex justify-center">
+              <ScanButton
+                disabled={isUploading}
+                onComplete={(file) => onUpload([file])}
+              />
+            </div>
           </>
         ) : (
           <div className="rounded-[1.5rem] border border-dashed border-border bg-card px-5 py-8 text-center">
