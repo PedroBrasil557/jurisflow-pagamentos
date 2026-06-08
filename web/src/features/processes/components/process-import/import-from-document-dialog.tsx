@@ -116,18 +116,15 @@ export function ImportFromDocumentDialog({
   onApply,
 }: ImportFromDocumentDialogProps) {
   const [files, setFiles] = useState<File[]>([])
-  const [consent, setConsent] = useState(false)
   const [result, setResult] = useState<MergedExtraction | null>(null)
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
   const [isExtracting, setIsExtracting] = useState(false)
 
-  const consentId = useId()
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   function handleClose() {
     setFiles([])
-    setConsent(false)
     setResult(null)
     setSelectedKeys(new Set())
     setIsExtracting(false)
@@ -186,11 +183,6 @@ export function ImportFromDocumentDialog({
   async function handleExtract() {
     if (files.length === 0) {
       toast.error('Selecione ao menos um arquivo PDF.')
-      return
-    }
-
-    if (!consent) {
-      toast.error('Confirme o consentimento para enviar os documentos.')
       return
     }
 
@@ -317,7 +309,7 @@ export function ImportFromDocumentDialog({
         Cancelar
       </Button>
       <Button
-        disabled={isExtracting || files.length === 0 || !consent}
+        disabled={isExtracting || files.length === 0}
         onClick={() => void handleExtract()}
         type="button"
       >
@@ -500,23 +492,6 @@ export function ImportFromDocumentDialog({
                   ))}
                 </ul>
               ) : null}
-            </div>
-
-            <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
-              <Checkbox
-                checked={consent}
-                className="mt-0.5"
-                id={consentId}
-                onCheckedChange={(checked) => setConsent(checked === true)}
-              />
-              <label
-                className="text-sm text-muted-foreground"
-                htmlFor={consentId}
-              >
-                Estou ciente de que os documentos enviados serao processados por
-                um servico de inteligencia artificial (Anthropic) para extracao
-                dos dados.
-              </label>
             </div>
           </div>
         )}

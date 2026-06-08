@@ -266,6 +266,20 @@ export const listProcessesQuerySchema = z.object({
       z.array(z.enum(processStatuses)),
     )
     .optional(),
+  ownerTypes: z
+    .preprocess(
+      (value) =>
+        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+      z.array(z.enum(['titular_contrato_caixa', 'nao_titular_contrato_caixa'])),
+    )
+    .optional(),
+  housingComplexIds: z
+    .preprocess(
+      (value) =>
+        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+      z.array(z.string().trim().min(1)),
+    )
+    .optional(),
   createdFrom: z.coerce.date().optional(),
   createdTo: z.coerce.date().optional(),
   page: z.coerce.number().int().min(1).default(1),

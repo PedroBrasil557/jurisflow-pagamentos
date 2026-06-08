@@ -1,4 +1,4 @@
-import { asc, count, eq, ilike } from 'drizzle-orm'
+import { asc, count, eq, ilike, inArray } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { HousingComplexServiceError } from './housing-complexes.errors'
 import { housingComplex } from './housing-complexes.schema'
@@ -75,6 +75,7 @@ export async function listHousingComplexes(query: ListHousingComplexesQuery) {
 
 type ListHousingComplexOptionsQuery = {
   search?: string
+  ids?: string[]
   limit: number
   page: number
 }
@@ -83,9 +84,13 @@ export async function listHousingComplexOptions(
   query: ListHousingComplexOptionsQuery,
 ) {
   const offset = (query.page - 1) * query.limit
-  const searchFilter = query.search
-    ? ilike(housingComplex.name, `%${query.search}%`)
-    : undefined
+  // Quando `ids` e informado, resolvemos os conjuntos selecionados pelo filtro
+  // (para exibir nomes nos chips), ignorando a busca textual.
+  const searchFilter = query.ids?.length
+    ? inArray(housingComplex.id, query.ids)
+    : query.search
+      ? ilike(housingComplex.name, `%${query.search}%`)
+      : undefined
 
   const [items, totalResult] = await Promise.all([
     db
