@@ -355,6 +355,14 @@ export async function listProcesses(
     filters.push(eq(process.status, query.status))
   }
 
+  if (query.ownerTypes?.length) {
+    filters.push(inArray(process.ownerType, query.ownerTypes))
+  }
+
+  if (query.housingComplexIds?.length) {
+    filters.push(inArray(process.housingComplexId, query.housingComplexIds))
+  }
+
   if (query.createdFrom) {
     filters.push(gte(process.createdAt, query.createdFrom))
   }

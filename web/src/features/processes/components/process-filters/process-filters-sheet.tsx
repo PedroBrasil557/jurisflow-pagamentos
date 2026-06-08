@@ -1,5 +1,6 @@
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { CalendarDays } from 'lucide-react'
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import type { DateRange } from 'react-day-picker'
 import { Button } from '#/components/ui/button'
 import { Calendar } from '#/components/ui/calendar'
@@ -17,7 +18,15 @@ import {
   SheetHeader,
   SheetTitle,
 } from '#/components/ui/sheet'
+import { SearchableMultiSelect } from '@/shared/components/searchable-multi-select'
+import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
 import {
+  housingComplexOptionsByIdsQuery,
+  housingComplexOptionsInfiniteQuery,
+} from '../../services/housing-complexes.queries'
+import {
+  ownerTypeFilterOptions,
+  type OwnerTypeValue,
   processStatusOptions,
   type ProcessStatusValue,
 } from '../../services/processes.service'
@@ -29,6 +38,8 @@ import {
 
 export type ProcessFiltersValue = {
   statuses: ProcessStatusValue[]
+  ownerTypes: OwnerTypeValue[]
+  housingComplexIds: string[]
   createdFrom?: string
   createdTo?: string
 }
@@ -47,19 +58,61 @@ export function ProcessFiltersSheet({
   onApply,
 }: ProcessFiltersSheetProps) {
   const statusFieldId = useId()
+  const ownerTypeFieldId = useId()
   const [statuses, setStatuses] = useState<ProcessStatusValue[]>(value.statuses)
+  const [ownerTypes, setOwnerTypes] = useState<OwnerTypeValue[]>(
+    value.ownerTypes,
+  )
+  const [housingComplexIds, setHousingComplexIds] = useState<string[]>(
+    value.housingComplexIds,
+  )
   const [range, setRange] = useState<DateRange | undefined>(undefined)
+  const [hcSearch, setHcSearch] = useState('')
+  const debouncedHcSearch = useDebouncedValue(hcSearch, { delay: 300 })
+
+  const hcQuery = useInfiniteQuery(
+    housingComplexOptionsInfiniteQuery(debouncedHcSearch),
+  )
+  const selectedHcQuery = useQuery(
+    housingComplexOptionsByIdsQuery(value.housingComplexIds),
+  )
+
+  const housingComplexOptions = useMemo(
+    () =>
+      (hcQuery.data?.pages.flatMap((page) => page.items) ?? []).map((item) => ({
+        value: item.id,
+        label: item.name,
+      })),
+    [hcQuery.data],
+  )
+  const selectedHousingComplexOptions = useMemo(
+    () =>
+      (selectedHcQuery.data?.items ?? []).map((item) => ({
+        value: item.id,
+        label: item.name,
+      })),
+    [selectedHcQuery.data],
+  )
 
   // Sincroniza o rascunho com a URL sempre que o painel abre.
   useEffect(() => {
     if (open) {
       setStatuses(value.statuses)
+      setOwnerTypes(value.ownerTypes)
+      setHousingComplexIds(value.housingComplexIds)
       setRange({
         from: isoToDate(value.createdFrom),
         to: isoToDate(value.createdTo),
       })
     }
-  }, [open, value.statuses, value.createdFrom, value.createdTo])
+  }, [
+    open,
+    value.statuses,
+    value.ownerTypes,
+    value.housingComplexIds,
+    value.createdFrom,
+    value.createdTo,
+  ])
 
   function toggleStatus(status: ProcessStatusValue) {
     setStatuses((prev) =>
@@ -69,14 +122,26 @@ export function ProcessFiltersSheet({
     )
   }
 
+  function toggleOwnerType(ownerType: OwnerTypeValue) {
+    setOwnerTypes((prev) =>
+      prev.includes(ownerType)
+        ? prev.filter((item) => item !== ownerType)
+        : [...prev, ownerType],
+    )
+  }
+
   function handleClear() {
     setStatuses([])
+    setOwnerTypes([])
+    setHousingComplexIds([])
     setRange(undefined)
   }
 
   function handleApply() {
     onApply({
       statuses,
+      ownerTypes,
+      housingComplexIds,
       createdFrom: dateToIso(range?.from),
       createdTo: dateToIso(range?.to ?? range?.from),
     })
@@ -96,7 +161,8 @@ export function ProcessFiltersSheet({
         <SheetHeader>
           <SheetTitle>Filtros</SheetTitle>
           <SheetDescription>
-            Refine a lista de processos por etapa e período de criação.
+            Refine a lista de processos por etapa, titularidade, conjunto e
+            período de criação.
           </SheetDescription>
         </SheetHeader>
 
@@ -123,6 +189,42 @@ export function ProcessFiltersSheet({
                 ))}
               </div>
             </fieldset>
+
+            <fieldset className="grid gap-3">
+              <legend className="text-sm font-medium text-foreground">
+                Tipo de titular
+              </legend>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {ownerTypeFilterOptions.map((option) => (
+                  <label
+                    className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+                    htmlFor={`${ownerTypeFieldId}-${option.value}`}
+                    key={option.value}
+                  >
+                    <Checkbox
+                      checked={ownerTypes.includes(option.value)}
+                      id={`${ownerTypeFieldId}-${option.value}`}
+                      onCheckedChange={() => toggleOwnerType(option.value)}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            <SearchableMultiSelect
+              hasNextPage={hcQuery.hasNextPage}
+              isLoading={hcQuery.isFetchingNextPage || hcQuery.isLoading}
+              label="Condomínio / conjunto"
+              onChange={setHousingComplexIds}
+              onLoadMore={() => hcQuery.fetchNextPage()}
+              onSearchChange={setHcSearch}
+              options={housingComplexOptions}
+              placeholder="Selecionar conjuntos..."
+              searchPlaceholder="Buscar conjunto..."
+              selectedOptions={selectedHousingComplexOptions}
+              value={housingComplexIds}
+            />
 
             <div className="grid gap-3">
               <span className="text-sm font-medium text-foreground">

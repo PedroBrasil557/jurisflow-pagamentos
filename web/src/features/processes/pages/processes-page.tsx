@@ -32,11 +32,13 @@ import { ProcessMobileCard } from '../components/process-mobile-card'
 import { ProcessStatusBadge } from '../components/process-status-badge'
 import { canCreateProcess, canCreateProcessViaScan } from '../lib/process-access'
 import { formatCpf } from '../process-form.utils'
+import { housingComplexOptionsByIdsQuery } from '../services/housing-complexes.queries'
 import { processListOptions } from '../services/processes.queries'
 import {
   defaultProcessPageLimit,
   generateProcessPdfRequest,
   getProcessPdfModelsRequest,
+  type OwnerTypeValue,
   type ProcessListItem,
   type ProcessStatusValue,
 } from '../services/processes.service'
@@ -45,6 +47,8 @@ type ProcessesPageProps = {
   currentPage: number
   currentSearch: string
   currentStatuses: ProcessStatusValue[]
+  currentOwnerTypes: OwnerTypeValue[]
+  currentHousingComplexIds: string[]
   currentCreatedFrom?: string
   currentCreatedTo?: string
 }
@@ -114,6 +118,8 @@ export function ProcessesPage({
   currentPage,
   currentSearch,
   currentStatuses,
+  currentOwnerTypes,
+  currentHousingComplexIds,
   currentCreatedFrom,
   currentCreatedTo,
 }: ProcessesPageProps) {
@@ -136,16 +142,29 @@ export function ProcessesPage({
       page: currentPage,
       search: debouncedSearch,
       statuses: currentStatuses,
+      ownerTypes: currentOwnerTypes,
+      housingComplexIds: currentHousingComplexIds,
       createdFrom: currentCreatedFrom,
       createdTo: currentCreatedTo,
     }),
+  )
+
+  // Resolve nomes dos conjuntos selecionados para exibir nos chips de filtro.
+  const housingComplexChipsQuery = useQuery(
+    housingComplexOptionsByIdsQuery(currentHousingComplexIds),
+  )
+  const housingComplexChips = (housingComplexChipsQuery.data?.items ?? []).map(
+    (item) => ({ id: item.id, name: item.name }),
   )
 
   const data = query.data
   const total = data?.pagination.total ?? 0
 
   const activeFilterCount =
-    currentStatuses.length + (currentCreatedFrom || currentCreatedTo ? 1 : 0)
+    currentStatuses.length +
+    currentOwnerTypes.length +
+    currentHousingComplexIds.length +
+    (currentCreatedFrom || currentCreatedTo ? 1 : 0)
 
   // Monta o objeto de search da URL a partir do estado atual + overrides,
   // descartando valores vazios para manter a URL limpa.
@@ -154,6 +173,10 @@ export function ProcessesPage({
       page: currentPage,
       ...(currentSearch ? { search: currentSearch } : {}),
       ...(currentStatuses.length ? { statuses: currentStatuses } : {}),
+      ...(currentOwnerTypes.length ? { ownerTypes: currentOwnerTypes } : {}),
+      ...(currentHousingComplexIds.length
+        ? { housingComplexIds: currentHousingComplexIds }
+        : {}),
       ...(currentCreatedFrom ? { createdFrom: currentCreatedFrom } : {}),
       ...(currentCreatedTo ? { createdTo: currentCreatedTo } : {}),
       ...overrides,
@@ -162,6 +185,9 @@ export function ProcessesPage({
     const next: ProcessesSearch = { page: merged.page ?? 1 }
     if (merged.search) next.search = merged.search
     if (merged.statuses?.length) next.statuses = merged.statuses
+    if (merged.ownerTypes?.length) next.ownerTypes = merged.ownerTypes
+    if (merged.housingComplexIds?.length)
+      next.housingComplexIds = merged.housingComplexIds
     if (merged.createdFrom) next.createdFrom = merged.createdFrom
     if (merged.createdTo) next.createdTo = merged.createdTo
 
@@ -173,6 +199,8 @@ export function ProcessesPage({
       to: '/processos',
       search: buildSearch({
         statuses: value.statuses,
+        ownerTypes: value.ownerTypes,
+        housingComplexIds: value.housingComplexIds,
         createdFrom: value.createdFrom,
         createdTo: value.createdTo,
         page: 1,
@@ -185,6 +213,28 @@ export function ProcessesPage({
       to: '/processos',
       search: buildSearch({
         statuses: currentStatuses.filter((item) => item !== status),
+        page: 1,
+      }),
+    })
+  }
+
+  function handleRemoveOwnerType(ownerType: OwnerTypeValue) {
+    void navigate({
+      to: '/processos',
+      search: buildSearch({
+        ownerTypes: currentOwnerTypes.filter((item) => item !== ownerType),
+        page: 1,
+      }),
+    })
+  }
+
+  function handleRemoveHousingComplex(id: string) {
+    void navigate({
+      to: '/processos',
+      search: buildSearch({
+        housingComplexIds: currentHousingComplexIds.filter(
+          (item) => item !== id,
+        ),
         page: 1,
       }),
     })
@@ -206,6 +256,8 @@ export function ProcessesPage({
       to: '/processos',
       search: buildSearch({
         statuses: [],
+        ownerTypes: [],
+        housingComplexIds: [],
         createdFrom: undefined,
         createdTo: undefined,
         page: 1,
@@ -303,9 +355,13 @@ export function ProcessesPage({
       <ProcessFilterChips
         createdFrom={currentCreatedFrom}
         createdTo={currentCreatedTo}
+        housingComplexes={housingComplexChips}
         onClearAll={handleClearAllFilters}
+        onRemoveHousingComplex={handleRemoveHousingComplex}
+        onRemoveOwnerType={handleRemoveOwnerType}
         onRemovePeriod={handleRemovePeriod}
         onRemoveStatus={handleRemoveStatus}
+        ownerTypes={currentOwnerTypes}
         statuses={currentStatuses}
       />
 
@@ -320,6 +376,8 @@ export function ProcessesPage({
         open={filtersOpen}
         value={{
           statuses: currentStatuses,
+          ownerTypes: currentOwnerTypes,
+          housingComplexIds: currentHousingComplexIds,
           createdFrom: currentCreatedFrom,
           createdTo: currentCreatedTo,
         }}

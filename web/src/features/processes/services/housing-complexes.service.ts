@@ -12,6 +12,7 @@ export type HousingComplexOption = {
 
 export type HousingComplexOptionsQuery = {
   search?: string
+  ids?: string[]
   limit?: number
   page?: number
 }
@@ -29,6 +30,7 @@ export async function fetchHousingComplexOptions(
   const response = await apiClient.api['housing-complexes'].$get({
     query: {
       ...(query.search ? { search: query.search } : {}),
+      ...(query.ids?.length ? { ids: query.ids } : {}),
       limit: String(query.limit ?? 20),
       page: String(query.page ?? 1),
     },

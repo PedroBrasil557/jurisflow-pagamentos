@@ -15,6 +15,8 @@ function ProcessesRoute() {
     <ProcessesPage
       currentCreatedFrom={search.createdFrom}
       currentCreatedTo={search.createdTo}
+      currentHousingComplexIds={search.housingComplexIds ?? []}
+      currentOwnerTypes={search.ownerTypes ?? []}
       currentPage={search.page ?? 1}
       currentSearch={search.search ?? ''}
       currentStatuses={search.statuses ?? []}

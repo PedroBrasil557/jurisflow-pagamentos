@@ -165,6 +165,8 @@ export type ProcessListQuery = {
   page?: number
   search?: string
   statuses?: ProcessStatusValue[]
+  ownerTypes?: OwnerTypeValue[]
+  housingComplexIds?: string[]
   createdFrom?: string
   createdTo?: string
 }
@@ -187,6 +189,17 @@ export type ProcessStatusValue = keyof typeof processStatusLabels
 export const processStatusOptions = (
   Object.keys(processStatusLabels) as ProcessStatusValue[]
 ).map((value) => ({ value, label: processStatusLabels[value] }))
+
+export const ownerTypeLabels = {
+  titular_contrato_caixa: 'Titular contrato caixa',
+  nao_titular_contrato_caixa: 'Nao titular contrato caixa',
+} as const
+
+export type OwnerTypeValue = keyof typeof ownerTypeLabels
+
+export const ownerTypeFilterOptions = (
+  Object.keys(ownerTypeLabels) as OwnerTypeValue[]
+).map((value) => ({ value, label: ownerTypeLabels[value] }))
 
 function mapPlatformUserOption(
   input: ProcessUserOptionRecord,
@@ -340,6 +353,10 @@ export async function fetchProcesses(
           }
         : {}),
       ...(query.statuses?.length ? { statuses: query.statuses } : {}),
+      ...(query.ownerTypes?.length ? { ownerTypes: query.ownerTypes } : {}),
+      ...(query.housingComplexIds?.length
+        ? { housingComplexIds: query.housingComplexIds }
+        : {}),
       ...(query.createdFrom ? { createdFrom: query.createdFrom } : {}),
       ...(query.createdTo ? { createdTo: query.createdTo } : {}),
     },
