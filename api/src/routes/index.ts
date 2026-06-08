@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { adminRoutes } from '../modules/admin/admin.routes'
+import { authAuditRoutes } from '../modules/auth-audit/auth-audit.routes'
 import { authRoutes } from '../modules/auth/auth.routes'
 import { auth } from '../modules/auth/auth.service'
 import { dashboardRoutes } from '../modules/dashboard/dashboard.routes'
@@ -36,6 +37,7 @@ export function createAppRouter(options: CreateAppRouterOptions) {
     })
     .route('/api', authRoutes)
     .route('/api/admin', adminRoutes)
+    .route('/api/admin/security', authAuditRoutes)
     .route('/api/admin/housing-complexes', housingComplexAdminRoutes)
     .route('/api/admin/profiles', permissionProfileAdminRoutes)
     .route('/api/admin/users', permissionUserAdminRoutes)

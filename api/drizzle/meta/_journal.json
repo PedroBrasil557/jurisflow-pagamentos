@@ -50,6 +50,13 @@
       "when": 1780862331921,
       "tag": "0006_sleepy_mimic",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1780952541201,
+      "tag": "0007_yielding_centennial",
+      "breakpoints": true
     }
   ]
 }
