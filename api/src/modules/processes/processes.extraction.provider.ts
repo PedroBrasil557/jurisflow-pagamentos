@@ -94,11 +94,11 @@ const extractionTool: Anthropic.Tool = {
   name: 'registrar_titular',
   description:
     'Registra os dados extraidos do dossie (RG/CNH do titular e comprovante de residencia) para preencher o cadastro do processo.',
-  // strict: a API passa a garantir que o input obedece o input_schema (suportado
-  // em Opus 4.8 / Sonnet 4.6 / Haiku 4.5 — o modelo padrao e claude-opus-4-8).
-  // Exige additionalProperties: false em todos os objetos. A camada Zod acima
-  // continua sendo a rede de seguranca para modelos sem suporte a strict.
-  strict: true,
+  // NOTA: nao usar `strict: true` aqui. Com este schema (array `paginas` + enum de
+  // 11 tipos + objetos aninhados), a compilacao da gramatica de decodificacao
+  // restrita da Anthropic estoura o tempo limite ("Grammar compilation timed out",
+  // HTTP 400) e a extracao falha por completo. A validacao de saida fica a cargo da
+  // camada Zod (parseRawExtraction), que ja tolera campos fora do formato.
   input_schema: {
     type: 'object',
     properties: {
