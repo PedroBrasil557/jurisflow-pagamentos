@@ -1,4 +1,4 @@
-import { Camera, Check, RotateCcw, ScanLine, Trash2 } from 'lucide-react'
+import { Camera, Check, Crop, RotateCcw, ScanLine, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { AppDialog } from '@/shared/components/app-dialog'
@@ -26,6 +26,33 @@ const CORNER_KEYS = [
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+// Reduz o canvas para um lado maximo (preview do filtro rapido; o confirm usa
+// a resolucao cheia). Devolve a propria origem quando ja esta dentro do limite.
+function downscaleCanvas(
+  source: HTMLCanvasElement,
+  maxDimension: number,
+): HTMLCanvasElement {
+  const scale = Math.min(
+    1,
+    maxDimension / Math.max(source.width, source.height),
+  )
+
+  if (scale >= 1) {
+    return source
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(source.width * scale)
+  canvas.height = Math.round(source.height * scale)
+  const ctx = canvas.getContext('2d')
+
+  if (ctx) {
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
+  }
+
+  return canvas
 }
 
 // Cantos padrao (recuo de 8%) quando a deteccao automatica falha.
@@ -57,6 +84,10 @@ export function WebScannerDialog({
   const [mode, setMode] = useState<'capture' | 'edit'>('capture')
   const [captured, setCaptured] = useState<HTMLCanvasElement | null>(null)
   const [capturedUrl, setCapturedUrl] = useState('')
+  const [previewUrl, setPreviewUrl] = useState('')
+  // Passo da edicao: ajustar bordas (cantos) ou revisar o recorte ja aplicado.
+  const [editStep, setEditStep] = useState<'adjust' | 'preview'>('adjust')
+  const [croppedUrl, setCroppedUrl] = useState('')
   const [corners, setCorners] = useState<CornerPoints | null>(null)
   const [displayWidth, setDisplayWidth] = useState(0)
   const [dragging, setDragging] = useState<(typeof CORNER_KEYS)[number] | null>(
@@ -66,6 +97,14 @@ export function WebScannerDialog({
   const [pages, setPages] = useState<Array<ScanPage & { id: string }>>([])
   const [error, setError] = useState('')
   const pageIdRef = useRef(0)
+  // Cantos detectados ao entrar na edicao — usados por "Restaurar bordas".
+  const initialCornersRef = useRef<CornerPoints | null>(null)
+  // Pagina ja recortada/filtrada na pre-visualizacao, reutilizada no confirmar.
+  const previewedPageRef = useRef<{
+    dataUrl: string
+    width: number
+    height: number
+  } | null>(null)
 
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => {
@@ -148,6 +187,42 @@ export function WebScannerDialog({
     return () => observer.disconnect()
   }, [mode])
 
+  // Preview ao vivo do filtro: aplica o realce numa versao reduzida da captura
+  // e exibe na tela de edicao, para o usuario ver o efeito antes de confirmar.
+  // O recorte (perspectiva) nao entra aqui — os cantos seguem ajustaveis sobre
+  // a imagem inteira; o confirm aplica recorte + filtro em resolucao cheia.
+  useEffect(() => {
+    if (mode !== 'edit' || editStep !== 'adjust' || !captured) {
+      return
+    }
+
+    let cancelled = false
+
+    // Adiado para nao travar o clique que trocou o filtro.
+    const timer = window.setTimeout(() => {
+      if (cancelled) {
+        return
+      }
+
+      try {
+        const base = downscaleCanvas(captured, 1400)
+        const filtered = enhanceWithFilter(base, filter)
+        if (!cancelled) {
+          setPreviewUrl(filtered.toDataURL('image/jpeg', 0.85))
+        }
+      } catch {
+        if (!cancelled) {
+          setPreviewUrl('')
+        }
+      }
+    }, 0)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [mode, editStep, captured, filter])
+
   // Limpa tudo ao fechar.
   useEffect(() => {
     if (open) {
@@ -160,6 +235,10 @@ export function WebScannerDialog({
     setMode('capture')
     setCaptured(null)
     setCapturedUrl('')
+    setPreviewUrl('')
+    setCroppedUrl('')
+    setEditStep('adjust')
+    previewedPageRef.current = null
     setCorners(null)
     setFilter('color')
     setPages([])
@@ -177,9 +256,16 @@ export function WebScannerDialog({
       }
     }
 
+    const startCorners = detected ?? defaultCorners(canvas.width, canvas.height)
+    initialCornersRef.current = startCorners
+    previewedPageRef.current = null
+
     setCaptured(canvas)
     setCapturedUrl(canvas.toDataURL('image/jpeg', 0.9))
-    setCorners(detected ?? defaultCorners(canvas.width, canvas.height))
+    setPreviewUrl('')
+    setCroppedUrl('')
+    setEditStep('adjust')
+    setCorners(startCorners)
     setMode('edit')
   }
 
@@ -274,9 +360,14 @@ export function WebScannerDialog({
     setCorners((prev) => (prev ? { ...prev, [key]: { x, y } } : prev))
   }
 
-  function handleConfirmPage() {
+  // Recorta pela perspectiva dos cantos e aplica o filtro, em resolucao cheia.
+  function buildCroppedPage(): {
+    dataUrl: string
+    width: number
+    height: number
+  } | null {
     if (!captured || !corners) {
-      return
+      return null
     }
 
     const outWidth = Math.round(
@@ -308,27 +399,75 @@ export function WebScannerDialog({
     }
 
     const filtered = enhanceWithFilter(extracted ?? captured, filter)
-    const dataUrl = filtered.toDataURL('image/jpeg', 0.92)
+
+    return {
+      dataUrl: filtered.toDataURL('image/jpeg', 0.92),
+      width: filtered.width,
+      height: filtered.height,
+    }
+  }
+
+  // Aplica o recorte e mostra o resultado para revisao antes de confirmar.
+  function handlePreviewCrop() {
+    const page = buildCroppedPage()
+
+    if (!page) {
+      return
+    }
+
+    previewedPageRef.current = page
+    setCroppedUrl(page.dataUrl)
+    setEditStep('preview')
+  }
+
+  // Volta para o ajuste de bordas, descartando a pre-visualizacao.
+  function handleBackToAdjust() {
+    previewedPageRef.current = null
+    setCroppedUrl('')
+    setEditStep('adjust')
+  }
+
+  // Descarta o ajuste manual e volta aos cantos detectados automaticamente.
+  function handleResetCorners() {
+    if (initialCornersRef.current) {
+      setCorners(initialCornersRef.current)
+    }
+  }
+
+  function handleConfirmPage() {
+    const page = previewedPageRef.current ?? buildCroppedPage()
+
+    if (!page) {
+      return
+    }
 
     pageIdRef.current += 1
     setPages((prev) => [
       ...prev,
       {
         id: `page-${pageIdRef.current}`,
-        dataUrl,
-        width: filtered.width,
-        height: filtered.height,
+        dataUrl: page.dataUrl,
+        width: page.width,
+        height: page.height,
       },
     ])
+    previewedPageRef.current = null
     setCaptured(null)
     setCapturedUrl('')
+    setPreviewUrl('')
+    setCroppedUrl('')
+    setEditStep('adjust')
     setCorners(null)
     setMode('capture')
   }
 
   function handleDiscardCapture() {
+    previewedPageRef.current = null
     setCaptured(null)
     setCapturedUrl('')
+    setPreviewUrl('')
+    setCroppedUrl('')
+    setEditStep('adjust')
     setCorners(null)
     setMode('capture')
   }
@@ -431,8 +570,11 @@ export function WebScannerDialog({
           </div>
         ) : null}
 
-        {mode === 'edit' && captured ? (
+        {mode === 'edit' && captured && editStep === 'adjust' ? (
           <div className="grid gap-3">
+            <p className="text-xs text-muted-foreground">
+              Arraste os cantos para alinhar com as bordas do documento.
+            </p>
             <div className="relative mx-auto w-full" ref={wrapperRef}>
               <img
                 alt="Documento capturado"
@@ -440,8 +582,25 @@ export function WebScannerDialog({
                 onLoad={(event) =>
                   setDisplayWidth(event.currentTarget.clientWidth)
                 }
-                src={capturedUrl}
+                src={previewUrl || capturedUrl}
               />
+              {corners ? (
+                <svg
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                  preserveAspectRatio="none"
+                  viewBox={`0 0 ${captured.width} ${captured.height}`}
+                >
+                  <polygon
+                    className="fill-primary/10 stroke-primary"
+                    points={CORNER_KEYS.map(
+                      (key) => `${corners[key].x},${corners[key].y}`,
+                    ).join(' ')}
+                    strokeWidth={2}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </svg>
+              ) : null}
               {corners
                 ? CORNER_KEYS.map((key) => {
                     const point = corners[key]
@@ -492,14 +651,51 @@ export function WebScannerDialog({
               ))}
             </div>
 
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
               <Button
                 onClick={handleDiscardCapture}
                 type="button"
                 variant="ghost"
               >
                 <RotateCcw className="size-4" />
-                Refazer
+                Refazer foto
+              </Button>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                <Button
+                  onClick={handleResetCorners}
+                  type="button"
+                  variant="outline"
+                >
+                  Restaurar bordas
+                </Button>
+                <Button onClick={handlePreviewCrop} type="button">
+                  <Crop className="size-4" />
+                  Pre-visualizar
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {mode === 'edit' && captured && editStep === 'preview' ? (
+          <div className="grid gap-3">
+            <p className="text-xs text-muted-foreground">
+              Confira o recorte. Se precisar, volte para ajustar as bordas.
+            </p>
+            <img
+              alt="Pre-visualizacao do recorte"
+              className="mx-auto block h-auto w-full rounded-2xl border border-border"
+              src={croppedUrl}
+            />
+
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                onClick={handleBackToAdjust}
+                type="button"
+                variant="ghost"
+              >
+                <RotateCcw className="size-4" />
+                Ajustar bordas
               </Button>
               <Button onClick={handleConfirmPage} type="button">
                 <Check className="size-4" />
