@@ -2,6 +2,7 @@ import { Camera, Check, RotateCcw, ScanLine, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { AppDialog } from '@/shared/components/app-dialog'
+import { enhanceWithFilter, type FilterMode } from './scan-enhance'
 import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
 import {
   type CornerPoints,
@@ -9,8 +10,6 @@ import {
   detectCorners,
   useScannerEngine,
 } from './scanner-engine'
-
-type FilterMode = 'color' | 'gray' | 'bw'
 
 type WebScannerDialogProps = {
   open: boolean
@@ -40,88 +39,6 @@ function defaultCorners(width: number, height: number): CornerPoints {
     bottomRightCorner: { x: width - insetX, y: height - insetY },
     bottomLeftCorner: { x: insetX, y: height - insetY },
   }
-}
-
-function otsuThreshold(gray: Uint8ClampedArray): number {
-  const histogram = new Array(256).fill(0)
-  for (let i = 0; i < gray.length; i++) {
-    histogram[gray[i]]++
-  }
-
-  const total = gray.length
-  let sum = 0
-  for (let t = 0; t < 256; t++) {
-    sum += t * histogram[t]
-  }
-
-  let sumB = 0
-  let weightB = 0
-  let maxVariance = 0
-  let threshold = 128
-
-  for (let t = 0; t < 256; t++) {
-    weightB += histogram[t]
-    if (weightB === 0) {
-      continue
-    }
-
-    const weightF = total - weightB
-    if (weightF === 0) {
-      break
-    }
-
-    sumB += t * histogram[t]
-    const meanB = sumB / weightB
-    const meanF = (sum - sumB) / weightF
-    const variance = weightB * weightF * (meanB - meanF) ** 2
-
-    if (variance > maxVariance) {
-      maxVariance = variance
-      threshold = t
-    }
-  }
-
-  return threshold
-}
-
-// Aplica realce ("cara de escaneado"): cor, tons de cinza ou preto e branco.
-function applyFilter(
-  source: HTMLCanvasElement,
-  mode: FilterMode,
-): HTMLCanvasElement {
-  if (mode === 'color') {
-    return source
-  }
-
-  const canvas = document.createElement('canvas')
-  canvas.width = source.width
-  canvas.height = source.height
-  const ctx = canvas.getContext('2d')
-
-  if (!ctx) {
-    return source
-  }
-
-  ctx.drawImage(source, 0, 0)
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-  const data = imageData.data
-  const gray = new Uint8ClampedArray(data.length / 4)
-
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    gray[j] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-  }
-
-  const threshold = mode === 'bw' ? otsuThreshold(gray) : 0
-
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    const value = mode === 'bw' ? (gray[j] >= threshold ? 255 : 0) : gray[j]
-    data[i] = value
-    data[i + 1] = value
-    data[i + 2] = value
-  }
-
-  ctx.putImageData(imageData, 0, 0)
-  return canvas
 }
 
 export function WebScannerDialog({
@@ -390,8 +307,8 @@ export function WebScannerDialog({
       }
     }
 
-    const filtered = applyFilter(extracted ?? captured, filter)
-    const dataUrl = filtered.toDataURL('image/jpeg', 0.8)
+    const filtered = enhanceWithFilter(extracted ?? captured, filter)
+    const dataUrl = filtered.toDataURL('image/jpeg', 0.92)
 
     pageIdRef.current += 1
     setPages((prev) => [

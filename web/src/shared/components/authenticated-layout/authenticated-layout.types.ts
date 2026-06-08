@@ -16,7 +16,7 @@ export type AuthenticatedNavigationVisibilityInput = {
 export type AuthenticatedNavigationItem = {
   label: string
   description: string
-  to: '/' | '/processos' | '/cadastros' | '/configuracoes'
+  to: '/' | '/processos' | '/cadastros' | '/seguranca' | '/configuracoes'
   icon: LucideIcon
   isVisible?: (input: AuthenticatedNavigationVisibilityInput) => boolean
 }

@@ -4,7 +4,7 @@ import { username } from 'better-auth/plugins'
 import { env } from '../../shared/config/env'
 import { db } from '../../shared/db'
 import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
-import { signUpValidationHook } from './auth.hooks'
+import { loginAuditHook, signUpValidationHook } from './auth.hooks'
 import { defaultUserRole } from './auth.roles'
 import * as schema from './auth.schema'
 
@@ -18,14 +18,19 @@ export const auth = betterAuth({
     provider: 'pg',
     schema,
   }),
-  advanced: isProduction
-    ? {
-        defaultCookieAttributes: {
-          sameSite: 'lax',
-          secure: true,
-        },
-      }
-    : undefined,
+  advanced: {
+    ipAddress: {
+      ipAddressHeaders: ['x-forwarded-for', 'x-real-ip'],
+    },
+    ...(isProduction
+      ? {
+          defaultCookieAttributes: {
+            sameSite: 'lax' as const,
+            secure: true,
+          },
+        }
+      : {}),
+  },
   emailAndPassword: {
     enabled: true,
     autoSignIn: true,
@@ -65,5 +70,6 @@ export const auth = betterAuth({
   },
   hooks: {
     before: signUpValidationHook,
+    after: loginAuditHook,
   },
 })

@@ -2,6 +2,7 @@ import {
   ClipboardCheck,
   LayoutDashboard,
   Settings,
+  ShieldCheck,
   UserPlus,
 } from 'lucide-react'
 import { canAccessDashboard } from '@/features/processes/lib/process-access'
@@ -26,6 +27,13 @@ export const authenticatedNavigationItems = [
     description: 'Area administrativa',
     to: '/cadastros',
     icon: UserPlus,
+    isVisible: ({ permissions }) => permissions.isAdmin,
+  },
+  {
+    label: 'Seguranca',
+    description: 'Logins e sessoes',
+    to: '/seguranca',
+    icon: ShieldCheck,
     isVisible: ({ permissions }) => permissions.isAdmin,
   },
   {

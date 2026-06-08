@@ -70,6 +70,11 @@ const envSchema = z.object({
     .default('process-documents'),
   ANTHROPIC_API_KEY: z.string().trim().optional(),
   ANTHROPIC_MODEL: z.string().trim().min(1).default('claude-opus-4-8'),
+  GEOIP_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((value) => value === 'true'),
+  GEOIP_API_URL: z.url().default('http://ip-api.com/json'),
 })
 
 const parsedEnv = envSchema.parse({
@@ -89,6 +94,8 @@ const parsedEnv = envSchema.parse({
   S3_PROCESS_DOCUMENTS_BUCKET: process.env.S3_PROCESS_DOCUMENTS_BUCKET,
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
+  GEOIP_ENABLED: process.env.GEOIP_ENABLED,
+  GEOIP_API_URL: process.env.GEOIP_API_URL,
 })
 
 export const env = {
@@ -116,5 +123,9 @@ export const env = {
   anthropic: {
     apiKey: parsedEnv.ANTHROPIC_API_KEY,
     model: parsedEnv.ANTHROPIC_MODEL,
+  },
+  geoip: {
+    enabled: parsedEnv.GEOIP_ENABLED,
+    apiUrl: parsedEnv.GEOIP_API_URL,
   },
 }
