@@ -124,8 +124,15 @@ export function WebScannerDialog({
 
     async function start() {
       try {
+        // Pede a maior resolucao que a camera suportar (clamp automatico do
+        // browser). Frame de video em baixa resolucao deixa texto pequeno
+        // ilegivel; documentos precisam de muitos pixels.
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' } },
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 4096 },
+            height: { ideal: 2160 },
+          },
           audio: false,
         })
 
@@ -553,6 +560,19 @@ export function WebScannerDialog({
                   <Camera className="size-4" />
                   {cameraReady ? 'Capturar' : 'Iniciando camera...'}
                 </Button>
+                <Button
+                  onClick={() => fileInputRef.current?.click()}
+                  type="button"
+                  variant="outline"
+                >
+                  <Camera className="size-4" />
+                  Tirar foto em alta resolucao
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Para documentos com texto pequeno, prefira "Tirar foto em alta
+                  resolucao" — usa a camera do sistema (qualidade bem superior ao
+                  quadro do video).
+                </p>
               </div>
             )}
 
