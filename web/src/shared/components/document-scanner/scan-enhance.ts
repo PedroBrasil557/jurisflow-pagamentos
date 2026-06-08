@@ -1,187 +1,17 @@
-// Realce de paginas escaneadas ("cara de scan"): cor com remocao de sombra,
-// tons de cinza normalizados e preto e branco com limiar adaptativo.
-//
-// Quando o OpenCV.js ja esta carregado (o jscanify depende dele), usamos seus
-// operadores (qualidade CamScanner). Caso contrario, caimos em implementacoes
-// equivalentes em JS puro, para o realce funcionar mesmo sem o motor.
+// Realce de paginas escaneadas ("cara de scan"): cor e tons de cinza com
+// remocao de iluminacao/sombra (fundo branco) e preto e branco com limiar
+// adaptativo. Implementacao 100% em canvas/JS — o OpenCV.js vendorizado e um
+// build minimo (so o que o jscanify usa) e nao expoe os operadores necessarios.
 
 export type FilterMode = 'color' | 'gray' | 'bw'
 
-// Tipos minimos do OpenCV.js usados aqui (o modulo e carregado via script).
-type CvMat = { delete(): void; cols: number; rows: number }
-type CvMatVector = {
-  delete(): void
-  get(index: number): CvMat
-  push_back(mat: CvMat): void
+// Lado maior do mapa de fundo (iluminacao). Pequeno = fundo bem suavizado, que
+// e o que queremos para estimar a luz da pagina e dividir por ela.
+const BACKGROUND_MAX_SIDE = 110
+
+function clamp8(value: number): number {
+  return value < 0 ? 0 : value > 255 ? 255 : value
 }
-type CvSize = { width: number; height: number }
-
-interface OpenCv {
-  Mat: new () => CvMat
-  MatVector: new () => CvMatVector
-  Size: new (width: number, height: number) => CvSize
-  imread(source: HTMLCanvasElement): CvMat
-  imshow(canvas: HTMLCanvasElement, mat: CvMat): void
-  cvtColor(src: CvMat, dst: CvMat, code: number): void
-  split(src: CvMat, dst: CvMatVector): void
-  merge(src: CvMatVector, dst: CvMat): void
-  dilate(src: CvMat, dst: CvMat, kernel: CvMat): void
-  medianBlur(src: CvMat, dst: CvMat, ksize: number): void
-  absdiff(a: CvMat, b: CvMat, dst: CvMat): void
-  bitwise_not(src: CvMat, dst: CvMat): void
-  normalize(
-    src: CvMat,
-    dst: CvMat,
-    alpha: number,
-    beta: number,
-    normType: number,
-    dtype: number,
-  ): void
-  adaptiveThreshold(
-    src: CvMat,
-    dst: CvMat,
-    maxValue: number,
-    adaptiveMethod: number,
-    thresholdType: number,
-    blockSize: number,
-    c: number,
-  ): void
-  getStructuringElement(shape: number, ksize: CvSize): CvMat
-  COLOR_RGBA2RGB: number
-  COLOR_RGB2GRAY: number
-  ADAPTIVE_THRESH_GAUSSIAN_C: number
-  THRESH_BINARY: number
-  MORPH_RECT: number
-  NORM_MINMAX: number
-  CV_8U: number
-}
-
-function getOpenCv(): OpenCv | null {
-  const cv = (globalThis as { cv?: Partial<OpenCv> }).cv
-  // So consideramos pronto se as funcoes que usamos existirem (WASM inicializado).
-  if (cv?.Mat && cv.adaptiveThreshold && cv.medianBlur && cv.getStructuringElement) {
-    return cv as OpenCv
-  }
-  return null
-}
-
-// Aplica o filtro escolhido e devolve um novo canvas (nunca muta a origem).
-export function enhanceWithFilter(
-  source: HTMLCanvasElement,
-  mode: FilterMode,
-): HTMLCanvasElement {
-  const cv = getOpenCv()
-
-  if (cv) {
-    try {
-      return enhanceWithOpenCv(cv, source, mode)
-    } catch {
-      // Em qualquer falha do OpenCV (memoria/WASM), cai no realce em JS.
-    }
-  }
-
-  return enhanceWithJs(source, mode)
-}
-
-// ---------------------------------------------------------------------------
-// Caminho OpenCV.js
-// ---------------------------------------------------------------------------
-
-function matToCanvas(cv: OpenCv, mat: CvMat): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  cv.imshow(canvas, mat)
-  return canvas
-}
-
-// Estima a iluminacao de fundo (dilate + mediana) e a remove, deixando o fundo
-// branco e o conteudo realcado — o classico "remover sombra" de scanners.
-function removeShadowPlane(
-  cv: OpenCv,
-  plane: CvMat,
-  track: <T extends { delete(): void }>(m: T) => T,
-): CvMat {
-  const kernel = track(
-    cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(7, 7)),
-  )
-  const dilated = track(new cv.Mat())
-  cv.dilate(plane, dilated, kernel)
-
-  const background = track(new cv.Mat())
-  // Mediana grande -> estimativa suave da iluminacao (ignora o texto).
-  cv.medianBlur(dilated, background, 21)
-
-  const diff = track(new cv.Mat())
-  cv.absdiff(plane, background, diff)
-
-  const inverted = track(new cv.Mat())
-  cv.bitwise_not(diff, inverted)
-
-  const normalized = track(new cv.Mat())
-  cv.normalize(inverted, normalized, 0, 255, cv.NORM_MINMAX, cv.CV_8U)
-
-  return normalized
-}
-
-function enhanceWithOpenCv(
-  cv: OpenCv,
-  source: HTMLCanvasElement,
-  mode: FilterMode,
-): HTMLCanvasElement {
-  const mats: { delete(): void }[] = []
-  const track = <T extends { delete(): void }>(mat: T): T => {
-    mats.push(mat)
-    return mat
-  }
-
-  try {
-    const src = track(cv.imread(source))
-    const rgb = track(new cv.Mat())
-    cv.cvtColor(src, rgb, cv.COLOR_RGBA2RGB)
-
-    if (mode === 'color') {
-      // Remocao de sombra por canal -> fundo branco preservando as cores.
-      const channels = track(new cv.MatVector())
-      cv.split(rgb, channels)
-      const out = track(new cv.MatVector())
-      for (let i = 0; i < 3; i++) {
-        const channel = track(channels.get(i))
-        out.push_back(removeShadowPlane(cv, channel, track))
-      }
-      const merged = track(new cv.Mat())
-      cv.merge(out, merged)
-      return matToCanvas(cv, merged)
-    }
-
-    const gray = track(new cv.Mat())
-    cv.cvtColor(rgb, gray, cv.COLOR_RGB2GRAY)
-    const normalized = removeShadowPlane(cv, gray, track)
-
-    if (mode === 'gray') {
-      return matToCanvas(cv, normalized)
-    }
-
-    // bw: limiar adaptivo gaussiano sobre o cinza ja sem sombra -> texto nitido.
-    const bw = track(new cv.Mat())
-    cv.adaptiveThreshold(
-      normalized,
-      bw,
-      255,
-      cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-      cv.THRESH_BINARY,
-      31,
-      12,
-    )
-    return matToCanvas(cv, bw)
-  } finally {
-    for (const mat of mats) {
-      mat.delete()
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Fallback em JS puro (sem OpenCV)
-// ---------------------------------------------------------------------------
 
 function cloneToCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
@@ -194,49 +24,38 @@ function cloneToCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
   return canvas
 }
 
-// Estica um canal entre os percentis 1% e 99% (auto-contraste / "auto-niveis").
-function stretchChannel(data: Uint8ClampedArray, offset: number) {
-  const histogram = new Array(256).fill(0)
-  let count = 0
-  for (let i = offset; i < data.length; i += 4) {
-    histogram[data[i]]++
-    count++
+type Background = {
+  width: number
+  height: number
+  data: Uint8ClampedArray
+}
+
+// Estima a iluminacao de fundo reduzindo a imagem (o downscale ja faz a media/
+// suavizacao). Cada pixel pleno depois consulta esse mapa para normalizar.
+function estimateBackground(source: HTMLCanvasElement): Background | null {
+  const scale = Math.min(
+    1,
+    BACKGROUND_MAX_SIDE / Math.max(source.width, source.height),
+  )
+  const width = Math.max(1, Math.round(source.width * scale))
+  const height = Math.max(1, Math.round(source.height * scale))
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return null
   }
 
-  const lowCut = count * 0.01
-  const highCut = count * 0.99
-  let low = 0
-  let high = 255
-  let acc = 0
-  for (let v = 0; v < 256; v++) {
-    acc += histogram[v]
-    if (acc >= lowCut) {
-      low = v
-      break
-    }
-  }
-  acc = 0
-  for (let v = 0; v < 256; v++) {
-    acc += histogram[v]
-    if (acc >= highCut) {
-      high = v
-      break
-    }
-  }
+  ctx.imageSmoothingEnabled = true
+  ctx.drawImage(source, 0, 0, width, height)
 
-  if (high <= low) {
-    return
-  }
-
-  const scale = 255 / (high - low)
-  for (let i = offset; i < data.length; i += 4) {
-    const value = (data[i] - low) * scale
-    data[i] = value < 0 ? 0 : value > 255 ? 255 : value
-  }
+  return { width, height, data: ctx.getImageData(0, 0, width, height).data }
 }
 
 // Limiar adaptivo (Bradley/Wellner) via imagem integral: media local por janela.
-function adaptiveThresholdJs(
+function adaptiveThreshold(
   gray: Uint8ClampedArray,
   width: number,
   height: number,
@@ -277,7 +96,8 @@ function adaptiveThresholdJs(
   return out
 }
 
-function enhanceWithJs(
+// Aplica o filtro escolhido e devolve um novo canvas (nunca muta a origem).
+export function enhanceWithFilter(
   source: HTMLCanvasElement,
   mode: FilterMode,
 ): HTMLCanvasElement {
@@ -287,31 +107,71 @@ function enhanceWithJs(
     return source
   }
 
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const width = canvas.width
+  const height = canvas.height
+  const imageData = ctx.getImageData(0, 0, width, height)
   const data = imageData.data
 
-  if (mode === 'color') {
-    stretchChannel(data, 0)
-    stretchChannel(data, 1)
-    stretchChannel(data, 2)
+  if (mode === 'bw') {
+    const gray = new Uint8ClampedArray(width * height)
+    for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+      gray[j] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+    }
+    const bw = adaptiveThreshold(gray, width, height)
+    for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+      data[i] = bw[j]
+      data[i + 1] = bw[j]
+      data[i + 2] = bw[j]
+    }
     ctx.putImageData(imageData, 0, 0)
     return canvas
   }
 
-  const gray = new Uint8ClampedArray(data.length / 4)
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    gray[j] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-  }
+  // Cor / cinza: normaliza a iluminacao dividindo cada pixel pelo fundo local
+  // (deixa o fundo branco, realca o conteudo). Sem fundo, faz so o realce base.
+  const background = estimateBackground(source)
+  // Ganho do realce: result = 255 - ganho * (fundo - pixel). Fundo ~ pixel vira
+  // branco; quanto mais escuro que o fundo (texto), mais escurece — evita o
+  // aspecto "lavado" de so dividir pelo fundo.
+  const gain = 1.5
+  const isGray = mode === 'gray'
 
-  const result =
-    mode === 'bw'
-      ? adaptiveThresholdJs(gray, canvas.width, canvas.height)
-      : gray
+  for (let y = 0; y < height; y++) {
+    const by = background
+      ? Math.min(background.height - 1, Math.floor((y * background.height) / height))
+      : 0
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4
 
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    data[i] = result[j]
-    data[i + 1] = result[j]
-    data[i + 2] = result[j]
+      let bgR = 255
+      let bgG = 255
+      let bgB = 255
+      if (background) {
+        const bx = Math.min(
+          background.width - 1,
+          Math.floor((x * background.width) / width),
+        )
+        const bIdx = (by * background.width + bx) * 4
+        bgR = background.data[bIdx]
+        bgG = background.data[bIdx + 1]
+        bgB = background.data[bIdx + 2]
+      }
+
+      let r = clamp8(255 - (bgR - data[idx]) * gain)
+      let g = clamp8(255 - (bgG - data[idx + 1]) * gain)
+      let b = clamp8(255 - (bgB - data[idx + 2]) * gain)
+
+      if (isGray) {
+        const lum = r * 0.299 + g * 0.587 + b * 0.114
+        r = lum
+        g = lum
+        b = lum
+      }
+
+      data[idx] = r
+      data[idx + 1] = g
+      data[idx + 2] = b
+    }
   }
 
   ctx.putImageData(imageData, 0, 0)
