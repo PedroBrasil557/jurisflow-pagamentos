@@ -10,7 +10,7 @@ export type CornerPoints = {
   bottomRightCorner: Corner
 }
 
-type CvMat = { delete(): void; data32S: Int32Array }
+type CvMat = { delete(): void; data32S: Int32Array; cols: number; rows: number }
 
 type OpenCvModule = {
   Mat: new () => CvMat
@@ -116,7 +116,77 @@ export function createScanner(): JscanifyInstance {
   return new window.jscanify()
 }
 
+function distance(a: Corner, b: Corner): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+// Area do quadrilatero (formula de Gauss/shoelace) na ordem TL -> TR -> BR -> BL.
+function quadArea(corners: CornerPoints): number {
+  const points = [
+    corners.topLeftCorner,
+    corners.topRightCorner,
+    corners.bottomRightCorner,
+    corners.bottomLeftCorner,
+  ]
+
+  let area = 0
+  for (let i = 0; i < points.length; i++) {
+    const current = points[i]
+    const next = points[(i + 1) % points.length]
+    area += current.x * next.y - next.x * current.y
+  }
+
+  return Math.abs(area) / 2
+}
+
+// Reordena 4 pontos quaisquer em TL, TR, BR, BL de forma robusta: o canto
+// superior-esquerdo tem a menor soma (x+y) e o inferior-direito a maior; o
+// superior-direito tem o menor (y-x) e o inferior-esquerdo o maior.
+function orderCorners(corners: CornerPoints): CornerPoints {
+  const points = [
+    corners.topLeftCorner,
+    corners.topRightCorner,
+    corners.bottomRightCorner,
+    corners.bottomLeftCorner,
+  ]
+  const bySum = [...points].sort((a, b) => a.x + a.y - (b.x + b.y))
+  const byDiff = [...points].sort((a, b) => a.y - a.x - (b.y - b.x))
+
+  return {
+    topLeftCorner: bySum[0],
+    bottomRightCorner: bySum[3],
+    topRightCorner: byDiff[0],
+    bottomLeftCorner: byDiff[3],
+  }
+}
+
+// Descarta deteccoes improvaveis: contorno minusculo (ruido), o frame inteiro
+// (sem documento real) ou lados degenerados — nesses casos e melhor usar os
+// cantos padrao do que aplicar um recorte/perspectiva torto.
+function isPlausibleQuad(
+  corners: CornerPoints,
+  width: number,
+  height: number,
+): boolean {
+  const imageArea = width * height
+  const area = quadArea(corners)
+
+  if (area < imageArea * 0.12 || area > imageArea * 0.998) {
+    return false
+  }
+
+  const sides = [
+    distance(corners.topLeftCorner, corners.topRightCorner),
+    distance(corners.topRightCorner, corners.bottomRightCorner),
+    distance(corners.bottomRightCorner, corners.bottomLeftCorner),
+    distance(corners.bottomLeftCorner, corners.topLeftCorner),
+  ]
+
+  return Math.min(...sides) >= Math.min(width, height) * 0.2
+}
+
 // Detecta automaticamente os 4 cantos do documento numa imagem/canvas.
+// Reordena e valida o resultado; devolve null quando a deteccao nao e confiavel.
 export function detectCorners(
   scanner: JscanifyInstance,
   source: ImageSource,
@@ -139,15 +209,17 @@ export function detectCorners(
     const corners = scanner.getCornerPoints(contour)
 
     if (
-      corners.topLeftCorner &&
-      corners.topRightCorner &&
-      corners.bottomLeftCorner &&
-      corners.bottomRightCorner
+      !corners.topLeftCorner ||
+      !corners.topRightCorner ||
+      !corners.bottomLeftCorner ||
+      !corners.bottomRightCorner
     ) {
-      return corners as CornerPoints
+      return null
     }
 
-    return null
+    const ordered = orderCorners(corners as CornerPoints)
+
+    return isPlausibleQuad(ordered, mat.cols, mat.rows) ? ordered : null
   } finally {
     contour?.delete()
     mat.delete()
