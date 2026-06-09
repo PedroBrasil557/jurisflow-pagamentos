@@ -137,6 +137,49 @@ export async function saveScanbotLicenseKey(key: string): Promise<KeyStatus> {
   return getScanbotKeyStatus()
 }
 
+// --- Servico de digitalizacao (escolha explicita no painel) ---
+
+export type ScannerProvider = 'scanbot' | 'web'
+
+// Provedor efetivo: o salvo no painel; se nao houver escolha, usa 'scanbot'
+// quando ha license configurada, senao 'web' (preserva o comportamento atual).
+export async function getScannerProvider(): Promise<ScannerProvider> {
+  const [row] = await db
+    .select({ scannerProvider: appSettings.scannerProvider })
+    .from(appSettings)
+    .where(eq(appSettings.id, SETTINGS_ID))
+    .limit(1)
+
+  const stored = row?.scannerProvider
+  if (stored === 'scanbot' || stored === 'web') {
+    return stored
+  }
+
+  const hasLicense = (await getScanbotLicenseKey()) !== null
+  return hasLicense ? 'scanbot' : 'web'
+}
+
+export async function saveScannerProvider(
+  provider: ScannerProvider,
+): Promise<{ provider: ScannerProvider }> {
+  const now = new Date()
+
+  await db
+    .insert(appSettings)
+    .values({
+      id: SETTINGS_ID,
+      scannerProvider: provider,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { scannerProvider: provider, updatedAt: now },
+    })
+
+  return { provider }
+}
+
 export async function clearScanbotLicenseKey(): Promise<KeyStatus> {
   const now = new Date()
 

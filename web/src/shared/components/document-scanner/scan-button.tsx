@@ -1,10 +1,13 @@
-import { Capacitor } from '@capacitor/core'
 import { useQuery } from '@tanstack/react-query'
 import { ScanLine } from 'lucide-react'
 import { lazy, Suspense, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
-import { resolveScanbotKey, scanbotLicenseQuery } from './scanbot-license'
+import {
+  resolveScanbotKey,
+  scanbotLicenseQuery,
+  scannerProviderQuery,
+} from './scanbot-license'
 
 const WebScannerDialog = lazy(() =>
   import('./web-scanner-dialog').then((module) => ({
@@ -20,56 +23,51 @@ type ScanButtonProps = {
 export function ScanButton({ onComplete, disabled }: ScanButtonProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const providerQuery = useQuery(scannerProviderQuery)
   const licenseQuery = useQuery(scanbotLicenseQuery)
 
   async function handleClick() {
-    // No app nativo (iOS/Android) usamos o scanner do sistema (VisionKit/ML Kit).
-    if (Capacitor.isNativePlatform()) {
-      setBusy(true)
+    // Servico escolhido no painel de Configuracoes (Scanbot ou Scanner web).
+    const provider = providerQuery.data ?? 'web'
 
-      try {
-        const { scanWithNative } = await import('./native-scan')
-        const file = await scanWithNative()
-
-        if (file) {
-          onComplete(file)
-        }
-      } catch {
-        toast.error('Nao foi possivel escanear o documento. Tente novamente.')
-      } finally {
-        setBusy(false)
-      }
-
+    // Scanner web (jscanify): motor base, sem licenca, sem fallback adicional.
+    if (provider === 'web') {
+      setOpen(true)
       return
     }
 
-    // No navegador, se houver license key (Configuracoes ou env), usamos o
-    // Scanbot (qualidade CamScanner, funciona ate no iPhone). Em caso de falha
-    // de licenca/engine, cai no jscanify.
+    // Scanbot: requer license. Falha dura (sem licenca / SDK nao inicia) cai no
+    // Scanner web COM aviso — digitalizar nao pode ficar 100% quebrado.
     const scanbotKey = resolveScanbotKey(licenseQuery.data)
-    if (scanbotKey) {
-      setBusy(true)
 
-      try {
-        const { scanWithScanbot } = await import('./scanbot-scan')
-        const file = await scanWithScanbot(scanbotKey)
-
-        if (file) {
-          onComplete(file)
-        }
-
-        return
-      } catch {
-        setOpen(true)
-      } finally {
-        setBusy(false)
-      }
-
+    if (!scanbotKey) {
+      toast.warning(
+        'Scanbot selecionado, mas sem license configurada — usando o scanner web.',
+      )
+      setOpen(true)
       return
     }
 
-    // Sem Scanbot configurado: scanner web com jscanify.
-    setOpen(true)
+    setBusy(true)
+    try {
+      const { scanWithScanbot } = await import('./scanbot-scan')
+      const file = await scanWithScanbot(scanbotKey)
+      if (file) {
+        onComplete(file)
+      }
+    } catch (error) {
+      // Loga o motivo completo (devtools) e mostra um resumo no toast, para dar
+      // pra saber por que o Scanbot nao abriu (licenca/dominio/WASM/rede).
+      console.error('Falha ao iniciar o Scanbot', error)
+      const reason =
+        error instanceof Error && error.message
+          ? `: ${error.message.slice(0, 140)}`
+          : ''
+      toast.warning(`Scanbot indisponivel${reason} — usando o scanner web.`)
+      setOpen(true)
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (

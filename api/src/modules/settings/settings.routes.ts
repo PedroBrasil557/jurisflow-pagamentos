@@ -6,6 +6,7 @@ import { jsonValidator } from '../../shared/validation/validators'
 import {
   saveAnthropicKeyPayloadSchema,
   saveScanbotKeyPayloadSchema,
+  saveScannerProviderPayloadSchema,
 } from './settings.schemas'
 import {
   clearAnthropicApiKey,
@@ -13,24 +14,46 @@ import {
   getAnthropicKeyStatus,
   getScanbotKeyStatus,
   getScanbotLicenseKey,
+  getScannerProvider,
   saveAnthropicApiKey,
   saveScanbotLicenseKey,
+  saveScannerProvider,
 } from './settings.service'
 
 export const settingsAdminRoutes = new Hono<AppBindings>()
   .use('*', requireRole('admin'))
   .get('/', async (c) => {
     try {
-      const [anthropic, scanbot] = await Promise.all([
+      const [anthropic, scanbot, scannerProvider] = await Promise.all([
         getAnthropicKeyStatus(),
         getScanbotKeyStatus(),
+        getScannerProvider(),
       ])
 
-      return c.json({ anthropic, scanbot }, 200)
+      return c.json(
+        { anthropic, scanbot, scanner: { provider: scannerProvider } },
+        200,
+      )
     } catch (error) {
       return handleServiceError(c, error)
     }
   })
+  .put(
+    '/scanner-provider',
+    jsonValidator(saveScannerProviderPayloadSchema),
+    async (c) => {
+      try {
+        const result = await saveScannerProvider(c.req.valid('json').provider)
+
+        return c.json(
+          { message: 'Servico de digitalizacao atualizado.', scanner: result },
+          200,
+        )
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .put(
     '/anthropic-key',
     jsonValidator(saveAnthropicKeyPayloadSchema),
@@ -99,6 +122,15 @@ export const settingsClientRoutes = new Hono<AppBindings>()
       const licenseKey = await getScanbotLicenseKey()
 
       return c.json({ licenseKey }, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get('/scanner-provider', async (c) => {
+    try {
+      const provider = await getScannerProvider()
+
+      return c.json({ provider }, 200)
     } catch (error) {
       return handleServiceError(c, error)
     }

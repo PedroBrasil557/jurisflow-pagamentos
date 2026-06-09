@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent } from '#/components/ui/card'
 import { Label } from '#/components/ui/label'
+import { cn } from '#/lib/utils'
 import { Textarea } from '#/components/ui/textarea'
 import { PageHeader } from '@/shared/components/page-header'
 import { PasswordInput } from '@/shared/components/password-input'
@@ -15,6 +16,7 @@ import {
   useClearScanbotKey,
   useSaveAnthropicKey,
   useSaveScanbotKey,
+  useSaveScannerProvider,
 } from '../services/settings.mutations'
 import { settingsStatusOptions } from '../services/settings.queries'
 import type { KeyStatus } from '../services/settings.service'
@@ -139,12 +141,96 @@ function KeyCard({
   )
 }
 
+type ScannerProvider = 'scanbot' | 'web'
+
+function ScannerProviderSelect({
+  provider,
+  scanbotConfigured,
+  isBusy,
+  onChange,
+}: {
+  provider: ScannerProvider
+  scanbotConfigured: boolean
+  isBusy: boolean
+  onChange: (provider: ScannerProvider) => void
+}) {
+  const options = [
+    {
+      value: 'scanbot' as const,
+      label: 'Scanbot',
+      description: 'Qualidade CamScanner. Requer a license configurada abaixo.',
+    },
+    {
+      value: 'web' as const,
+      label: 'Scanner web',
+      description: 'Motor base (jscanify), sem license e funciona offline.',
+    },
+  ]
+
+  return (
+    <Card>
+      <CardContent className="grid gap-4 p-6">
+        <div className="grid gap-1">
+          <h3 className="font-heading text-base font-medium text-foreground">
+            Servico de digitalizacao
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            Define qual motor o botao "Escanear documento" usa. Se o Scanbot
+            falhar, o scanner web e usado com aviso.
+          </p>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          {options.map((option) => (
+            <button
+              className={cn(
+                'rounded-xl border p-4 text-left transition disabled:opacity-60',
+                provider === option.value
+                  ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                  : 'border-border hover:border-primary/40',
+              )}
+              disabled={isBusy}
+              key={option.value}
+              onClick={() => {
+                if (provider !== option.value) {
+                  onChange(option.value)
+                }
+              }}
+              type="button"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium text-foreground">
+                  {option.label}
+                </span>
+                {provider === option.value ? (
+                  <StatusBadge tone="success">Ativo</StatusBadge>
+                ) : null}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {option.description}
+              </p>
+            </button>
+          ))}
+        </div>
+
+        {provider === 'scanbot' && !scanbotConfigured ? (
+          <p className="text-sm text-amber-600 dark:text-amber-400">
+            Scanbot selecionado, mas sem license — o scanner usara o modo web
+            ate a license ser configurada abaixo.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function SettingsPage() {
   const statusQuery = useQuery(settingsStatusOptions())
   const saveAnthropic = useSaveAnthropicKey()
   const clearAnthropic = useClearAnthropicKey()
   const saveScanbot = useSaveScanbotKey()
   const clearScanbot = useClearScanbotKey()
+  const saveScannerProvider = useSaveScannerProvider()
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('ai')
   const status = statusQuery.data
@@ -206,7 +292,19 @@ export function SettingsPage() {
             title="Chave da API Anthropic"
           />
         ) : (
-          <KeyCard
+          <div className="grid gap-6">
+            <ScannerProviderSelect
+              isBusy={saveScannerProvider.isPending}
+              onChange={(provider) =>
+                runMutation(
+                  saveScannerProvider.mutateAsync(provider),
+                  'Nao foi possivel salvar o servico de digitalizacao.',
+                )
+              }
+              provider={status?.scanner?.provider ?? 'web'}
+              scanbotConfigured={status?.scanbot?.configured ?? false}
+            />
+            <KeyCard
             description="License key do Scanbot Web SDK, usada no scanner de documentos (qualidade CamScanner, inclusive no iPhone). Sem ela, o scanner usa o modo alternativo (jscanify) com ajuste manual de bordas."
             helpText="Cole a chave inteira (varias linhas). E travada por dominio; sem ela o scanner cai no modo alternativo."
             isBusy={saveScanbot.isPending || clearScanbot.isPending}
@@ -225,10 +323,11 @@ export function SettingsPage() {
                 'Nao foi possivel salvar a license.',
               )
             }
-            placeholder="Cole aqui a license key do Scanbot..."
-            status={status?.scanbot}
-            title="License key do Scanbot"
-          />
+              placeholder="Cole aqui a license key do Scanbot..."
+              status={status?.scanbot}
+              title="License key do Scanbot"
+            />
+          </div>
         )}
       </SettingsLayout>
     </div>

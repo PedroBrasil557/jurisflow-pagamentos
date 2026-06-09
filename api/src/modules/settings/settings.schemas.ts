@@ -19,3 +19,11 @@ export const saveScanbotKeyPayloadSchema = z.object({
 })
 
 export type SaveScanbotKeyPayload = z.infer<typeof saveScanbotKeyPayloadSchema>
+
+export const saveScannerProviderPayloadSchema = z.object({
+  provider: z.enum(['scanbot', 'web']),
+})
+
+export type SaveScannerProviderPayload = z.infer<
+  typeof saveScannerProviderPayloadSchema
+>
