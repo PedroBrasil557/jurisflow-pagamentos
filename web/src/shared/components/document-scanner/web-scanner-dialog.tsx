@@ -147,6 +147,16 @@ function renderCroppedPage(
 
 type Screen = 'camera' | 'review' | 'edit'
 
+// Vibracao curta de confirmacao ao capturar (Web Vibration API). Suportada no
+// Android; iOS Safari nao implementa navigator.vibrate (sem efeito la).
+function hapticTap() {
+  try {
+    navigator.vibrate?.(40)
+  } catch {
+    // sem suporte ou bloqueado por policy — ignora.
+  }
+}
+
 export function WebScannerDialog({
   open,
   onClose,
@@ -498,6 +508,7 @@ export function WebScannerDialog({
       return
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    hapticTap()
     void addPageFromCanvas(canvas)
   }
 
