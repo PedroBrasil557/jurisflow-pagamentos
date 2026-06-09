@@ -55,6 +55,16 @@ export const housingComplexIdParamsSchema = z.object({
   housingComplexId: z.string().min(1),
 })
 
+export const housingComplexDocumentParamsSchema = z.object({
+  housingComplexId: z.string().min(1),
+  documentTypeKey: z.string().min(1),
+})
+
+export const housingComplexFileParamsSchema = z.object({
+  housingComplexId: z.string().min(1),
+  fileId: z.string().min(1),
+})
+
 export const housingComplexOptionsQuerySchema = z.object({
   search: z.string().trim().max(150).optional(),
   ids: z

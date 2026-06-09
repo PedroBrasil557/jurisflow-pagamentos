@@ -57,6 +57,13 @@
       "when": 1780952541201,
       "tag": "0007_yielding_centennial",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1780973314939,
+      "tag": "0008_third_namor",
+      "breakpoints": true
     }
   ]
 }
