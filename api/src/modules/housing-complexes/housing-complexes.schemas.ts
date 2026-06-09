@@ -19,6 +19,16 @@ const optionalHousingComplexStateSchema = z
   })
   .transform((value) => (value ? value.toUpperCase() : null))
 
+// Valor da causa do conjunto (mesmo formato do processo juridico: 1400,00).
+const optionalCauseValueSchema = z
+  .string()
+  .trim()
+  .max(20, 'Valor muito longo.')
+  .refine((value) => value === '' || /^\d+([.,]\d{1,2})?$/.test(value), {
+    message: 'Informe um valor numerico valido (ex: 1400,00).',
+  })
+  .transform((value) => (value ? value : null))
+
 export const listHousingComplexesQuerySchema = z.object({
   limit: paginationSchema.max(100).default(10),
   page: paginationSchema.default(1),
@@ -36,6 +46,8 @@ export const createHousingComplexPayloadSchema = z.object({
   city: optionalHousingComplexText(120),
   state: optionalHousingComplexStateSchema,
   zipcode: optionalHousingComplexText(9),
+  vara: optionalHousingComplexText(120),
+  causeValue: optionalCauseValueSchema,
 })
 
 export const updateHousingComplexPayloadSchema = z.object({
@@ -49,6 +61,8 @@ export const updateHousingComplexPayloadSchema = z.object({
   city: optionalHousingComplexText(120),
   state: optionalHousingComplexStateSchema,
   zipcode: optionalHousingComplexText(9),
+  vara: optionalHousingComplexText(120),
+  causeValue: optionalCauseValueSchema,
 })
 
 export const housingComplexIdParamsSchema = z.object({
@@ -70,7 +84,11 @@ export const housingComplexOptionsQuerySchema = z.object({
   ids: z
     .preprocess(
       (value) =>
-        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+        value === undefined
+          ? undefined
+          : Array.isArray(value)
+            ? value
+            : [value],
       z.array(z.string().trim().min(1)).max(100),
     )
     .optional(),

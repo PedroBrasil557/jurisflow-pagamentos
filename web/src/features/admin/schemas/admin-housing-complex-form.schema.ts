@@ -26,6 +26,14 @@ export const housingComplexFormSchema = z.object({
     })
     .transform((value) => value.toUpperCase()),
   zipcode: optionalHousingComplexText(9),
+  vara: optionalHousingComplexText(120),
+  causeValue: z
+    .string()
+    .trim()
+    .max(20, 'Valor muito longo.')
+    .refine((value) => value === '' || /^\d+([.,]\d{1,2})?$/.test(value), {
+      message: 'Informe um valor numerico valido (ex: 1400,00).',
+    }),
 })
 
 export type HousingComplexFormInput = z.input<typeof housingComplexFormSchema>

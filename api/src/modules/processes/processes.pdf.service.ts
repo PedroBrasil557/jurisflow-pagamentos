@@ -1,4 +1,4 @@
-import { inArray } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import {
   buildProcessGeneratedDocumentObjectKey,
@@ -10,6 +10,7 @@ import {
 import type { AppBindings } from '../../shared/types/app'
 import { normalizeCpf } from '../../shared/utils/cpf'
 import { user } from '../auth/auth.schema'
+import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import { assertProcessAction } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
 import { getProcessContextOrThrow } from './processes.access'
@@ -26,6 +27,7 @@ import {
   renderCancellationPdf,
   renderKitAdjudicacaoConjugePdf,
   renderKitAdjudicacaoPdf,
+  renderPeticaoInicialPdf,
 } from './processes.pdf.renderer'
 import { processGeneratedDocument } from './processes.schema'
 import { getProcessOrThrow } from './processes.service'
@@ -39,6 +41,32 @@ const processMaritalStatusLabels = {
   divorciado: 'DIVORCIADO(A)',
   viuvo: 'VIUVO(A)',
 } as const
+
+// Rotulos em caixa natural para a peticao inicial (texto corrido, nao caixa alta).
+const peticaoMaritalStatusLabels = {
+  solteiro: 'Solteiro(a)',
+  casado: 'Casado(a)',
+  separado_judicialmente: 'Separado(a) judicialmente',
+  divorciado: 'Divorciado(a)',
+  viuvo: 'Viuvo(a)',
+} as const
+
+// Formata o valor da causa do conjunto (ex.: "130000,00") como "R$ 130.000,00".
+// Sem valor configurado, devolve um espaco em branco para preencher a mao.
+function formatCauseValue(raw: string | null | undefined): string {
+  const value = raw?.trim()
+  if (!value) {
+    return '____'
+  }
+  const numeric = Number(value.replace(',', '.'))
+  if (!Number.isFinite(numeric)) {
+    return value
+  }
+  return numeric.toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  })
+}
 
 function formatCpf(value: string) {
   const normalized = normalizeCpf(value)
@@ -95,8 +123,30 @@ function buildPdfFileName(input: { modelKey: string; processCode: string }) {
     .replace(/[^A-Za-z0-9._-]/g, '')
 }
 
+// Dados do conjunto usados na peticao (vara e valor da causa herdados pelo
+// processo). null quando o processo nao esta vinculado a um conjunto.
+async function getProcessHousingComplexData(housingComplexId: string | null) {
+  if (!housingComplexId) {
+    return null
+  }
+
+  const [row] = await db
+    .select({
+      vara: housingComplex.vara,
+      causeValue: housingComplex.causeValue,
+    })
+    .from(housingComplex)
+    .where(eq(housingComplex.id, housingComplexId))
+    .limit(1)
+
+  return row ?? null
+}
+
 async function getProcessPdfData(processId: string) {
   const currentProcess = await getProcessOrThrow(processId)
+  const housingComplexData = await getProcessHousingComplexData(
+    currentProcess.housingComplexId,
+  )
 
   const witnessIds = [
     currentProcess.witness1Id,
@@ -108,6 +158,7 @@ async function getProcessPdfData(processId: string) {
   if (witnessIds.length === 0) {
     return {
       currentProcess,
+      housingComplex: housingComplexData,
       witnesses: [emptyWitness, emptyWitness] as const,
     }
   }
@@ -133,6 +184,7 @@ async function getProcessPdfData(processId: string) {
 
   return {
     currentProcess,
+    housingComplex: housingComplexData,
     witnesses: [witness1, witness2] as const,
   }
 }
@@ -142,6 +194,7 @@ function buildProcessPdfRenderData(input: {
   modelKey: ProcessPdfModelKey
   processId: string
   processRecord: Awaited<ReturnType<typeof getProcessOrThrow>>
+  housingComplex: { vara: string | null; causeValue: string | null } | null
   witnesses: readonly [
     { cpf: string; id: string; name: string },
     { cpf: string; id: string; name: string },
@@ -231,15 +284,49 @@ function buildProcessPdfRenderData(input: {
       }
     : undefined
 
-  const resolvedRendererKey = hasSpouse
-    ? 'KIT_ADJUDICACAO_CONJUGE_BASE'
-    : model.rendererKey
+  // O override para conjuge so vale para o kit de adjudicacao; demais modelos
+  // (ex.: peticao inicial) usam o renderer declarado no modelo.
+  const resolvedRendererKey =
+    hasSpouse && model.rendererKey === 'KIT_ADJUDICACAO_BASE'
+      ? 'KIT_ADJUDICACAO_CONJUGE_BASE'
+      : model.rendererKey
+
+  const city = toDocumentValue(input.processRecord.city)
+  const state = toDocumentValue(input.processRecord.state)
+  const cidadeUf = [city, state].filter(Boolean).join('/')
+
+  const petitionData = {
+    autorNome: toDocumentValue(input.processRecord.fullName),
+    autorNacionalidade: toDocumentValue(input.processRecord.nationality),
+    autorEstadoCivil:
+      peticaoMaritalStatusLabels[
+        input.processRecord
+          .maritalStatus as keyof typeof peticaoMaritalStatusLabels
+      ] ?? toDocumentValue(input.processRecord.maritalStatus),
+    autorProfissao: toDocumentValue(input.processRecord.profession),
+    autorCpf: formatCpf(input.processRecord.cpf),
+    autorEndereco: buildProcessAddress({
+      street: input.processRecord.street,
+      number: input.processRecord.number,
+      complement: input.processRecord.complement,
+      district: input.processRecord.district,
+      housingComplex: input.processRecord.housingComplex,
+    }),
+    autorCidadeUf: cidadeUf,
+    autorCep: toDocumentValue(input.processRecord.zipcode),
+    autorCidade: city,
+    autorUf: state,
+    vara: toDocumentValue(input.housingComplex?.vara) || '____',
+    secaoCidadeUf: cidadeUf,
+    valorCausa: formatCauseValue(input.housingComplex?.causeValue),
+  }
 
   const renderData: ProcessPdfRenderData = {
     attorney: model.attorneyProfile,
     generatedAtLabel: formatDate(input.generatedAt),
     locationLabel,
     party: partyData,
+    petition: petitionData,
     spouse: spouseData,
     witnesses: [
       {
@@ -265,6 +352,7 @@ function buildProcessPdfRenderData(input: {
         label: model.label,
       },
       party: renderData.party,
+      petition: renderData.petition,
       spouse: renderData.spouse,
       process: {
         code: input.processRecord.code,
@@ -285,6 +373,8 @@ function renderPdfForModel(input: {
       return renderKitAdjudicacaoPdf(input.data)
     case 'KIT_ADJUDICACAO_CONJUGE_BASE':
       return renderKitAdjudicacaoConjugePdf(input.data)
+    case 'PETICAO_INICIAL_BASE':
+      return renderPeticaoInicialPdf(input.data)
     default:
       throw new ProcessServiceError(404, 'Modelo de PDF nao encontrado.')
   }
@@ -352,13 +442,15 @@ export async function generateProcessPdf(input: {
     })
   }
 
-  const { witnesses } = await getProcessPdfData(input.processId)
+  const { housingComplex: housingComplexData, witnesses } =
+    await getProcessPdfData(input.processId)
   const { model, renderData, resolvedRendererKey, dataSnapshot } =
     buildProcessPdfRenderData({
       generatedAt,
       modelKey: input.modelKey as ProcessPdfModelKey,
       processId: input.processId,
       processRecord: currentProcess,
+      housingComplex: housingComplexData,
       witnesses,
     })
   const { bytes, pageCount } = await renderPdfForModel({

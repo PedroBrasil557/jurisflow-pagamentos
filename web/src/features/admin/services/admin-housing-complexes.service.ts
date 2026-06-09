@@ -27,6 +27,8 @@ export type HousingComplexPayload = {
   city: string
   state: string
   zipcode: string
+  vara: string
+  causeValue: string
 }
 
 export const defaultHousingComplexPageLimit = 10
