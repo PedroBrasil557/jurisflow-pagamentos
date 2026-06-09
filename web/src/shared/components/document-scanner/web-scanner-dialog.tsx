@@ -1,7 +1,16 @@
-import { Camera, Check, Crop, RotateCcw, ScanLine, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  Check,
+  ChevronLeft,
+  Crop,
+  Image as ImageIcon,
+  RotateCcw,
+  Trash2,
+  X,
+} from 'lucide-react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { Dialog as DialogPrimitive } from 'radix-ui'
 import { Button } from '#/components/ui/button'
-import { AppDialog } from '@/shared/components/app-dialog'
+import { cn } from '#/lib/utils'
 import { enhanceWithFilter, type FilterMode } from './scan-enhance'
 import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
 import {
@@ -17,6 +26,16 @@ type WebScannerDialogProps = {
   onComplete: (file: File) => void
 }
 
+type ScannedPage = {
+  id: string
+  originalDataUrl: string // quadro original (para reeditar)
+  corners: CornerPoints
+  filter: FilterMode
+  dataUrl: string // recorte + filtro (vai para o PDF)
+  width: number
+  height: number
+}
+
 const CORNER_KEYS = [
   'topLeftCorner',
   'topRightCorner',
@@ -24,13 +43,30 @@ const CORNER_KEYS = [
   'bottomLeftCorner',
 ] as const
 
+const FILTER_OPTIONS = [
+  { label: 'Cor', value: 'color' },
+  { label: 'Cinza', value: 'gray' },
+  { label: 'P&B', value: 'bw' },
+] as const
+
 function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
+// Cantos padrao (recuo de 8%) quando a deteccao automatica falha.
+function defaultCorners(width: number, height: number): CornerPoints {
+  const insetX = width * 0.08
+  const insetY = height * 0.08
+  return {
+    topLeftCorner: { x: insetX, y: insetY },
+    topRightCorner: { x: width - insetX, y: insetY },
+    bottomRightCorner: { x: width - insetX, y: height - insetY },
+    bottomLeftCorner: { x: insetX, y: height - insetY },
+  }
+}
+
 // No iOS (todos os browsers usam WebKit) a camera nativa (input capture) entrega
-// resolucao e foco bem melhores que o quadro do getUserMedia — entao ela vira o
-// caminho primario de captura ali.
+// resolucao/foco superiores ao quadro do video — atalho util na revisao.
 function isLikelyIOS(): boolean {
   if (typeof navigator === 'undefined') {
     return false
@@ -43,45 +79,69 @@ function isLikelyIOS(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || iPadOS
 }
 
-// Reduz o canvas para um lado maximo (preview do filtro rapido; o confirm usa
-// a resolucao cheia). Devolve a propria origem quando ja esta dentro do limite.
-function downscaleCanvas(
+function loadCanvas(src: string): Promise<HTMLCanvasElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('Nao foi possivel ler a imagem.'))
+        return
+      }
+      ctx.drawImage(image, 0, 0)
+      resolve(canvas)
+    }
+    image.onerror = () => reject(new Error('Nao foi possivel ler a imagem.'))
+    image.src = src
+  })
+}
+
+// Recorta pela perspectiva dos cantos e aplica o filtro, em resolucao cheia.
+function renderCroppedPage(
   source: HTMLCanvasElement,
-  maxDimension: number,
-): HTMLCanvasElement {
-  const scale = Math.min(
-    1,
-    maxDimension / Math.max(source.width, source.height),
+  corners: CornerPoints,
+  filter: FilterMode,
+  engineReady: boolean,
+): { dataUrl: string; width: number; height: number } {
+  const outWidth = Math.round(
+    Math.max(
+      distance(corners.topLeftCorner, corners.topRightCorner),
+      distance(corners.bottomLeftCorner, corners.bottomRightCorner),
+    ),
+  )
+  const outHeight = Math.round(
+    Math.max(
+      distance(corners.topLeftCorner, corners.bottomLeftCorner),
+      distance(corners.topRightCorner, corners.bottomRightCorner),
+    ),
   )
 
-  if (scale >= 1) {
-    return source
+  let extracted: HTMLCanvasElement | null = null
+  if (engineReady) {
+    try {
+      extracted = createScanner().extractPaper(
+        source,
+        outWidth || source.width,
+        outHeight || source.height,
+        corners,
+      )
+    } catch {
+      extracted = null
+    }
   }
 
-  const canvas = document.createElement('canvas')
-  canvas.width = Math.round(source.width * scale)
-  canvas.height = Math.round(source.height * scale)
-  const ctx = canvas.getContext('2d')
-
-  if (ctx) {
-    ctx.drawImage(source, 0, 0, canvas.width, canvas.height)
-  }
-
-  return canvas
-}
-
-// Cantos padrao (recuo de 8%) quando a deteccao automatica falha.
-function defaultCorners(width: number, height: number): CornerPoints {
-  const insetX = width * 0.08
-  const insetY = height * 0.08
-
+  const filtered = enhanceWithFilter(extracted ?? source, filter)
   return {
-    topLeftCorner: { x: insetX, y: insetY },
-    topRightCorner: { x: width - insetX, y: insetY },
-    bottomRightCorner: { x: width - insetX, y: height - insetY },
-    bottomLeftCorner: { x: insetX, y: height - insetY },
+    dataUrl: filtered.toDataURL('image/jpeg', 0.92),
+    width: filtered.width,
+    height: filtered.height,
   }
 }
+
+type Screen = 'camera' | 'review' | 'edit'
 
 export function WebScannerDialog({
   open,
@@ -89,37 +149,41 @@ export function WebScannerDialog({
   onComplete,
 }: WebScannerDialogProps) {
   const engineStatus = useScannerEngine(open)
+  const engineReady = engineStatus === 'ready'
+
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const cameraBoxRef = useRef<HTMLDivElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const pageIdRef = useRef(0)
+  const liveScannerRef = useRef<ReturnType<typeof createScanner> | null>(null)
+
+  const [screen, setScreen] = useState<Screen>('camera')
+  const [pages, setPages] = useState<ScannedPage[]>([])
+  const [filter, setFilter] = useState<FilterMode>('color')
+  const [error, setError] = useState('')
 
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
-  const [mode, setMode] = useState<'capture' | 'edit'>('capture')
-  const [captured, setCaptured] = useState<HTMLCanvasElement | null>(null)
-  const [capturedUrl, setCapturedUrl] = useState('')
-  const [previewUrl, setPreviewUrl] = useState('')
-  // Passo da edicao: ajustar bordas (cantos) ou revisar o recorte ja aplicado.
+  const [videoDim, setVideoDim] = useState<{ w: number; h: number } | null>(null)
+  const [boxSize, setBoxSize] = useState<{ w: number; h: number } | null>(null)
+  const [liveCorners, setLiveCorners] = useState<CornerPoints | null>(null)
+
+  // Edicao de uma pagina (recorte/filtro).
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editCanvas, setEditCanvas] = useState<HTMLCanvasElement | null>(null)
+  const [editCorners, setEditCorners] = useState<CornerPoints | null>(null)
   const [editStep, setEditStep] = useState<'adjust' | 'preview'>('adjust')
-  const [croppedUrl, setCroppedUrl] = useState('')
-  const [corners, setCorners] = useState<CornerPoints | null>(null)
+  const [editPreviewUrl, setEditPreviewUrl] = useState('')
+  const [editCroppedUrl, setEditCroppedUrl] = useState('')
   const [displayWidth, setDisplayWidth] = useState(0)
   const [dragging, setDragging] = useState<(typeof CORNER_KEYS)[number] | null>(
     null,
   )
-  const [filter, setFilter] = useState<FilterMode>('color')
-  const [pages, setPages] = useState<Array<ScanPage & { id: string }>>([])
-  const [error, setError] = useState('')
-  const pageIdRef = useRef(0)
-  // Cantos detectados ao entrar na edicao — usados por "Restaurar bordas".
-  const initialCornersRef = useRef<CornerPoints | null>(null)
-  // Pagina ja recortada/filtrada na pre-visualizacao, reutilizada no confirmar.
-  const previewedPageRef = useRef<{
-    dataUrl: string
-    width: number
-    height: number
-  } | null>(null)
+
+  const fileInputId = useId()
+  const preferNativeCapture = isLikelyIOS()
 
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => {
@@ -128,10 +192,12 @@ export function WebScannerDialog({
     streamRef.current = null
   }, [])
 
-  // Adquire o stream uma unica vez enquanto o dialog estiver aberto e o para ao
-  // fechar. Manter fora do ciclo de captura/edicao evita vazar streams.
+  // Adquire a camera na maior resolucao suportada pelo dispositivo.
   useEffect(() => {
-    if (!open || cameraFailed) {
+    if (!open || screen !== 'camera' || cameraFailed) {
+      return
+    }
+    if (streamRef.current) {
       return
     }
 
@@ -139,21 +205,31 @@ export function WebScannerDialog({
 
     async function start() {
       try {
-        // Pede a maior resolucao que a camera suportar (clamp automatico do
-        // browser). Frame de video em baixa resolucao deixa texto pequeno
-        // ilegivel; documentos precisam de muitos pixels.
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 4096 },
+            width: { ideal: 3840 },
             height: { ideal: 2160 },
           },
           audio: false,
         })
 
+        const track = stream.getVideoTracks()[0]
+        try {
+          const caps = track.getCapabilities?.()
+          if (caps?.width?.max && caps?.height?.max) {
+            await track.applyConstraints({
+              width: caps.width.max,
+              height: caps.height.max,
+            })
+          }
+        } catch {
+          // mantem a resolucao negociada inicialmente
+        }
+
         if (!active) {
-          stream.getTracks().forEach((track) => {
-            track.stop()
+          stream.getTracks().forEach((t) => {
+            t.stop()
           })
           return
         }
@@ -169,196 +245,241 @@ export function WebScannerDialog({
 
     return () => {
       active = false
-      stopStream()
-      setCameraReady(false)
     }
-  }, [open, cameraFailed, stopStream])
+  }, [open, screen, cameraFailed])
 
-  // Reanexa o stream ao elemento de video sempre que voltamos ao modo captura.
+  // Reanexa o stream ao elemento de video ao voltar para a camera.
   useEffect(() => {
-    if (mode !== 'capture' || !cameraReady) {
+    if (screen !== 'camera' || !cameraReady) {
       return
     }
-
     const video = videoRef.current
-
     if (video && streamRef.current) {
       video.srcObject = streamRef.current
       video.play().catch(() => undefined)
     }
-  }, [mode, cameraReady])
+  }, [screen, cameraReady])
 
-  // Mantem displayWidth em sincronia com o tamanho real exibido (rotacao/resize).
+  // Tamanho da area da camera (para alinhar o overlay de borda).
   useEffect(() => {
-    if (mode !== 'edit') {
+    if (screen !== 'camera') {
       return
     }
-
-    const wrapper = wrapperRef.current
-
-    if (!wrapper) {
+    const box = cameraBoxRef.current
+    if (!box) {
       return
     }
-
-    const update = () => setDisplayWidth(wrapper.clientWidth)
+    const update = () => setBoxSize({ w: box.clientWidth, h: box.clientHeight })
     update()
-
     const observer = new ResizeObserver(update)
-    observer.observe(wrapper)
-
+    observer.observe(box)
     return () => observer.disconnect()
-  }, [mode])
+  }, [screen])
 
-  // Preview ao vivo do filtro: aplica o realce numa versao reduzida da captura
-  // e exibe na tela de edicao, para o usuario ver o efeito antes de confirmar.
-  // O recorte (perspectiva) nao entra aqui — os cantos seguem ajustaveis sobre
-  // a imagem inteira; o confirm aplica recorte + filtro em resolucao cheia.
+  // Deteccao de borda ao vivo (throttle ~4fps, em quadro reduzido).
   useEffect(() => {
-    if (mode !== 'edit' || editStep !== 'adjust' || !captured) {
+    if (screen !== 'camera' || !cameraReady || !engineReady) {
+      setLiveCorners(null)
       return
     }
 
-    let cancelled = false
+    const small = document.createElement('canvas')
+    let stopped = false
 
-    // Adiado para nao travar o clique que trocou o filtro.
+    const tick = () => {
+      if (stopped) {
+        return
+      }
+      const video = videoRef.current
+      if (video?.videoWidth) {
+        const scale = 480 / Math.max(video.videoWidth, video.videoHeight)
+        small.width = Math.round(video.videoWidth * scale)
+        small.height = Math.round(video.videoHeight * scale)
+        const ctx = small.getContext('2d')
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, small.width, small.height)
+          try {
+            if (!liveScannerRef.current) {
+              liveScannerRef.current = createScanner()
+            }
+            const detected = detectCorners(liveScannerRef.current, small)
+            if (detected) {
+              const inv = 1 / scale
+              setLiveCorners({
+                topLeftCorner: scalePoint(detected.topLeftCorner, inv),
+                topRightCorner: scalePoint(detected.topRightCorner, inv),
+                bottomRightCorner: scalePoint(detected.bottomRightCorner, inv),
+                bottomLeftCorner: scalePoint(detected.bottomLeftCorner, inv),
+              })
+            } else {
+              setLiveCorners(null)
+            }
+          } catch {
+            setLiveCorners(null)
+          }
+        }
+      }
+    }
+
+    const interval = window.setInterval(tick, 250)
+    return () => {
+      stopped = true
+      window.clearInterval(interval)
+    }
+  }, [screen, cameraReady, engineReady])
+
+  // Preview ao vivo do filtro na edicao (sobre a imagem inteira).
+  useEffect(() => {
+    if (screen !== 'edit' || editStep !== 'adjust' || !editCanvas) {
+      return
+    }
+    let cancelled = false
     const timer = window.setTimeout(() => {
       if (cancelled) {
         return
       }
-
       try {
-        const base = downscaleCanvas(captured, 1400)
-        const filtered = enhanceWithFilter(base, filter)
+        const filtered = enhanceWithFilter(downscale(editCanvas, 1400), filter)
         if (!cancelled) {
-          setPreviewUrl(filtered.toDataURL('image/jpeg', 0.85))
+          setEditPreviewUrl(filtered.toDataURL('image/jpeg', 0.85))
         }
       } catch {
         if (!cancelled) {
-          setPreviewUrl('')
+          setEditPreviewUrl('')
         }
       }
     }, 0)
-
     return () => {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [mode, editStep, captured, filter])
+  }, [screen, editStep, editCanvas, filter])
 
-  // Limpa tudo ao fechar.
+  // Sincroniza a largura exibida na edicao (para posicionar os cantos).
   useEffect(() => {
-    if (open) {
+    if (screen !== 'edit' || editStep !== 'adjust') {
       return
     }
+    const wrapper = wrapperRef.current
+    if (!wrapper) {
+      return
+    }
+    const update = () => setDisplayWidth(wrapper.clientWidth)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(wrapper)
+    return () => observer.disconnect()
+  }, [screen, editStep])
 
+  const resetAll = useCallback(() => {
     stopStream()
+    setScreen('camera')
+    setPages([])
+    setFilter('color')
+    setError('')
     setCameraReady(false)
     setCameraFailed(false)
-    setMode('capture')
-    setCaptured(null)
-    setCapturedUrl('')
-    setPreviewUrl('')
-    setCroppedUrl('')
+    setVideoDim(null)
+    setBoxSize(null)
+    setLiveCorners(null)
+    setEditingId(null)
+    setEditCanvas(null)
+    setEditCorners(null)
     setEditStep('adjust')
-    previewedPageRef.current = null
-    setCorners(null)
-    setFilter('color')
-    setPages([])
-    setError('')
-  }, [open, stopStream])
+    setEditPreviewUrl('')
+    setEditCroppedUrl('')
+    liveScannerRef.current = null
+  }, [stopStream])
 
-  function detectAndEnterEdit(canvas: HTMLCanvasElement) {
+  // Limpa ao fechar.
+  useEffect(() => {
+    if (!open) {
+      resetAll()
+    }
+  }, [open, resetAll])
+
+  function handleClose() {
+    stopStream()
+    onClose()
+  }
+
+  function addPageFromCanvas(canvas: HTMLCanvasElement) {
     let detected: CornerPoints | null = null
-
-    if (engineStatus === 'ready') {
+    if (engineReady) {
       try {
         detected = detectCorners(createScanner(), canvas)
       } catch {
         detected = null
       }
     }
+    const corners = detected ?? defaultCorners(canvas.width, canvas.height)
+    const rendered = renderCroppedPage(canvas, corners, filter, engineReady)
 
-    const startCorners = detected ?? defaultCorners(canvas.width, canvas.height)
-    initialCornersRef.current = startCorners
-    previewedPageRef.current = null
-
-    setCaptured(canvas)
-    setCapturedUrl(canvas.toDataURL('image/jpeg', 0.9))
-    setPreviewUrl('')
-    setCroppedUrl('')
-    setEditStep('adjust')
-    setCorners(startCorners)
-    setMode('edit')
+    pageIdRef.current += 1
+    setPages((prev) => [
+      ...prev,
+      {
+        id: `page-${pageIdRef.current}`,
+        originalDataUrl: canvas.toDataURL('image/jpeg', 0.92),
+        corners,
+        filter,
+        dataUrl: rendered.dataUrl,
+        width: rendered.width,
+        height: rendered.height,
+      },
+    ])
   }
 
-  function handleCapture() {
+  function handleShutter() {
     const video = videoRef.current
-
-    if (!video || !video.videoWidth) {
+    if (!video?.videoWidth) {
       return
     }
-
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
     const ctx = canvas.getContext('2d')
-
     if (!ctx) {
       return
     }
-
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    detectAndEnterEdit(canvas)
-  }
-
-  function loadCanvasFromFile(file: File): Promise<HTMLCanvasElement> {
-    return new Promise((resolve, reject) => {
-      const image = new Image()
-      const url = URL.createObjectURL(file)
-
-      image.onload = () => {
-        const canvas = document.createElement('canvas')
-        canvas.width = image.naturalWidth
-        canvas.height = image.naturalHeight
-        const ctx = canvas.getContext('2d')
-        URL.revokeObjectURL(url)
-
-        if (!ctx) {
-          reject(new Error('Nao foi possivel ler a imagem.'))
-          return
-        }
-
-        ctx.drawImage(image, 0, 0)
-        resolve(canvas)
-      }
-
-      image.onerror = () => {
-        URL.revokeObjectURL(url)
-        reject(new Error('Nao foi possivel ler a imagem.'))
-      }
-
-      image.src = url
-    })
+    addPageFromCanvas(canvas)
   }
 
   async function handleFilesSelected(
     event: React.ChangeEvent<HTMLInputElement>,
   ) {
     const file = event.target.files?.[0]
-
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
-
     if (!file) {
       return
     }
-
     try {
-      const canvas = await loadCanvasFromFile(file)
-      detectAndEnterEdit(canvas)
+      const url = URL.createObjectURL(file)
+      const canvas = await loadCanvas(url)
+      URL.revokeObjectURL(url)
+      addPageFromCanvas(canvas)
+      setScreen('review')
     } catch {
       setError('Nao foi possivel abrir a imagem selecionada.')
+    }
+  }
+
+  async function openEdit(page: ScannedPage) {
+    try {
+      const canvas = await loadCanvas(page.originalDataUrl)
+      setEditingId(page.id)
+      setEditCanvas(canvas)
+      setEditCorners(page.corners)
+      setFilter(page.filter)
+      setEditPreviewUrl('')
+      setEditCroppedUrl('')
+      setEditStep('adjust')
+      setScreen('edit')
+    } catch {
+      setError('Nao foi possivel abrir a pagina para edicao.')
     }
   }
 
@@ -368,143 +489,79 @@ export function WebScannerDialog({
     clientY: number,
   ) {
     const wrapper = wrapperRef.current
-    const source = captured
-
+    const source = editCanvas
     if (!wrapper || !source) {
       return
     }
-
     const rect = wrapper.getBoundingClientRect()
     const scale = source.width / rect.width
     const x = Math.min(Math.max((clientX - rect.left) * scale, 0), source.width)
     const y = Math.min(Math.max((clientY - rect.top) * scale, 0), source.height)
-
-    setCorners((prev) => (prev ? { ...prev, [key]: { x, y } } : prev))
+    setEditCorners((prev) => (prev ? { ...prev, [key]: { x, y } } : prev))
   }
 
-  // Recorta pela perspectiva dos cantos e aplica o filtro, em resolucao cheia.
-  function buildCroppedPage(): {
-    dataUrl: string
-    width: number
-    height: number
-  } | null {
-    if (!captured || !corners) {
-      return null
-    }
-
-    const outWidth = Math.round(
-      Math.max(
-        distance(corners.topLeftCorner, corners.topRightCorner),
-        distance(corners.bottomLeftCorner, corners.bottomRightCorner),
-      ),
-    )
-    const outHeight = Math.round(
-      Math.max(
-        distance(corners.topLeftCorner, corners.bottomLeftCorner),
-        distance(corners.topRightCorner, corners.bottomRightCorner),
-      ),
-    )
-
-    let extracted: HTMLCanvasElement | null = null
-
-    if (engineStatus === 'ready') {
-      try {
-        extracted = createScanner().extractPaper(
-          captured,
-          outWidth || captured.width,
-          outHeight || captured.height,
-          corners,
-        )
-      } catch {
-        extracted = null
-      }
-    }
-
-    const filtered = enhanceWithFilter(extracted ?? captured, filter)
-
-    return {
-      dataUrl: filtered.toDataURL('image/jpeg', 0.92),
-      width: filtered.width,
-      height: filtered.height,
-    }
-  }
-
-  // Aplica o recorte e mostra o resultado para revisao antes de confirmar.
   function handlePreviewCrop() {
-    const page = buildCroppedPage()
-
-    if (!page) {
+    if (!editCanvas || !editCorners) {
       return
     }
-
-    previewedPageRef.current = page
-    setCroppedUrl(page.dataUrl)
+    const rendered = renderCroppedPage(
+      editCanvas,
+      editCorners,
+      filter,
+      engineReady,
+    )
+    setEditCroppedUrl(rendered.dataUrl)
     setEditStep('preview')
   }
 
-  // Volta para o ajuste de bordas, descartando a pre-visualizacao.
-  function handleBackToAdjust() {
-    previewedPageRef.current = null
-    setCroppedUrl('')
-    setEditStep('adjust')
-  }
-
-  // Descarta o ajuste manual e volta aos cantos detectados automaticamente.
-  function handleResetCorners() {
-    if (initialCornersRef.current) {
-      setCorners(initialCornersRef.current)
-    }
-  }
-
-  function handleConfirmPage() {
-    const page = previewedPageRef.current ?? buildCroppedPage()
-
-    if (!page) {
+  function handleConfirmEdit() {
+    if (!(editingId && editCanvas && editCorners)) {
       return
     }
-
-    pageIdRef.current += 1
-    setPages((prev) => [
-      ...prev,
-      {
-        id: `page-${pageIdRef.current}`,
-        dataUrl: page.dataUrl,
-        width: page.width,
-        height: page.height,
-      },
-    ])
-    previewedPageRef.current = null
-    setCaptured(null)
-    setCapturedUrl('')
-    setPreviewUrl('')
-    setCroppedUrl('')
+    const rendered = renderCroppedPage(
+      editCanvas,
+      editCorners,
+      filter,
+      engineReady,
+    )
+    setPages((prev) =>
+      prev.map((page) =>
+        page.id === editingId
+          ? {
+              ...page,
+              corners: editCorners,
+              filter,
+              dataUrl: rendered.dataUrl,
+              width: rendered.width,
+              height: rendered.height,
+            }
+          : page,
+      ),
+    )
+    setScreen('review')
+    setEditingId(null)
+    setEditCanvas(null)
+    setEditCorners(null)
+    setEditCroppedUrl('')
+    setEditPreviewUrl('')
     setEditStep('adjust')
-    setCorners(null)
-    setMode('capture')
   }
 
-  function handleDiscardCapture() {
-    previewedPageRef.current = null
-    setCaptured(null)
-    setCapturedUrl('')
-    setPreviewUrl('')
-    setCroppedUrl('')
-    setEditStep('adjust')
-    setCorners(null)
-    setMode('capture')
-  }
-
-  function handleRemovePage(index: number) {
-    setPages((prev) => prev.filter((_, i) => i !== index))
+  function handleRemovePage(id: string) {
+    setPages((prev) => prev.filter((page) => page.id !== id))
   }
 
   function handleFinish() {
     if (pages.length === 0) {
       return
     }
-
     try {
-      const file = pagesToPdfFile(pages, buildScanFileName(new Date()))
+      const scanPages: ScanPage[] = pages.map((page) => ({
+        dataUrl: page.dataUrl,
+        width: page.width,
+        height: page.height,
+      }))
+      const file = pagesToPdfFile(scanPages, buildScanFileName(new Date()))
       stopStream()
       onComplete(file)
     } catch (finishError) {
@@ -516,299 +573,654 @@ export function WebScannerDialog({
     }
   }
 
-  const scale = captured && displayWidth ? displayWidth / captured.width : 1
-  const preferNativeCapture = isLikelyIOS()
+  const lastPage = pages.at(-1)
+  const fit = computeFit(boxSize, videoDim)
+  const editScale =
+    editCanvas && displayWidth ? displayWidth / editCanvas.width : 1
 
   return (
-    <AppDialog
-      description="Bata a foto, ajuste os cantos e gere um PDF do documento."
-      footer={
-        <>
-          <Button onClick={onClose} type="button" variant="ghost">
-            Cancelar
-          </Button>
-          <Button
-            disabled={pages.length === 0}
-            onClick={handleFinish}
-            type="button"
-          >
-            {`Anexar PDF (${pages.length})`}
-          </Button>
-        </>
-      }
-      icon={ScanLine}
-      maxWidth="2xl"
-      onClose={onClose}
+    <DialogPrimitive.Root
       open={open}
-      title="Escanear documento"
-      variant="info"
+      onOpenChange={(next) => {
+        if (!next) {
+          handleClose()
+        }
+      }}
     >
-      <div className="grid gap-4">
-        {mode === 'capture' ? (
-          <div className="grid gap-3">
-            {cameraFailed ? (
-              <div className="grid gap-3 rounded-2xl border border-dashed border-border bg-muted/35 p-6 text-center">
-                <p className="text-sm text-muted-foreground">
-                  Nao foi possivel acessar a camera. Use a opcao abaixo para
-                  tirar uma foto ou enviar uma imagem.
-                </p>
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  type="button"
-                  variant="outline"
-                >
-                  <Camera className="size-4" />
-                  Tirar foto ou enviar imagem
-                </Button>
-              </div>
-            ) : (
-              <div className="grid gap-3">
-                <div className="overflow-hidden rounded-2xl border border-border bg-black">
-                  <video className="h-auto w-full" playsInline ref={videoRef}>
-                    <track kind="captions" />
-                  </video>
-                </div>
-                {preferNativeCapture ? (
-                  <>
-                    <Button
-                      onClick={() => fileInputRef.current?.click()}
-                      type="button"
-                    >
-                      <Camera className="size-4" />
-                      Tirar foto em alta resolucao
-                    </Button>
-                    <Button
-                      disabled={!cameraReady}
-                      onClick={handleCapture}
-                      type="button"
-                      variant="outline"
-                    >
-                      <Camera className="size-4" />
-                      {cameraReady ? 'Usar quadro do video' : 'Iniciando camera...'}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button
-                      disabled={!cameraReady}
-                      onClick={handleCapture}
-                      type="button"
-                    >
-                      <Camera className="size-4" />
-                      {cameraReady ? 'Capturar' : 'Iniciando camera...'}
-                    </Button>
-                    <Button
-                      onClick={() => fileInputRef.current?.click()}
-                      type="button"
-                      variant="outline"
-                    >
-                      <Camera className="size-4" />
-                      Tirar foto em alta resolucao
-                    </Button>
-                  </>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Para documentos com texto pequeno, prefira "Tirar foto em alta
-                  resolucao" — usa a camera do sistema (qualidade bem superior ao
-                  quadro do video).
-                </p>
-              </div>
-            )}
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/70" />
+        <DialogPrimitive.Content className="fixed inset-0 z-50 flex h-[100dvh] flex-col bg-black text-white outline-none">
+          <DialogPrimitive.Title className="sr-only">
+            Escanear documento
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="sr-only">
+            Capture, ajuste e gere um PDF do documento.
+          </DialogPrimitive.Description>
 
-            {engineStatus === 'loading' ? (
-              <p className="text-xs text-muted-foreground">
-                Carregando motor de digitalizacao...
-              </p>
-            ) : null}
-            {engineStatus === 'error' ? (
-              <p className="text-xs text-muted-foreground">
-                Ajuste automatico de bordas indisponivel. Voce ainda pode
-                ajustar os cantos manualmente.
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-
-        {mode === 'edit' && captured && editStep === 'adjust' ? (
-          <div className="grid gap-3">
-            <p className="text-xs text-muted-foreground">
-              Arraste os cantos para alinhar com as bordas do documento.
-            </p>
-            <div className="relative mx-auto w-full" ref={wrapperRef}>
-              <img
-                alt="Documento capturado"
-                className="block h-auto w-full rounded-2xl border border-border"
-                onLoad={(event) =>
-                  setDisplayWidth(event.currentTarget.clientWidth)
-                }
-                src={previewUrl || capturedUrl}
-              />
-              {corners ? (
-                <svg
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 h-full w-full"
-                  preserveAspectRatio="none"
-                  viewBox={`0 0 ${captured.width} ${captured.height}`}
-                >
-                  <polygon
-                    className="fill-primary/10 stroke-primary"
-                    points={CORNER_KEYS.map(
-                      (key) => `${corners[key].x},${corners[key].y}`,
-                    ).join(' ')}
-                    strokeWidth={2}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                </svg>
-              ) : null}
-              {corners
-                ? CORNER_KEYS.map((key) => {
-                    const point = corners[key]
-
-                    return (
-                      <button
-                        aria-label={`Ajustar canto ${key}`}
-                        className="absolute size-6 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none rounded-full border-2 border-white bg-primary shadow-md"
-                        key={key}
-                        onPointerDown={(event) => {
-                          event.currentTarget.setPointerCapture(event.pointerId)
-                          setDragging(key)
-                        }}
-                        onPointerMove={(event) => {
-                          if (dragging === key) {
-                            updateCorner(key, event.clientX, event.clientY)
-                          }
-                        }}
-                        onPointerUp={() => setDragging(null)}
-                        style={{
-                          left: point.x * scale,
-                          top: point.y * scale,
-                        }}
-                        type="button"
-                      />
-                    )
-                  })
-                : null}
+          {error ? (
+            <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top)+0.5rem)] z-20 mx-auto w-fit max-w-[90%] rounded-md bg-destructive px-3 py-2 text-center text-xs text-white">
+              {error}
             </div>
+          ) : null}
 
-            <div className="flex flex-wrap gap-2">
-              {(
-                [
-                  { label: 'Cor', value: 'color' },
-                  { label: 'Tons de cinza', value: 'gray' },
-                  { label: 'Preto e branco', value: 'bw' },
-                ] as const
-              ).map((option) => (
-                <Button
-                  key={option.value}
-                  onClick={() => setFilter(option.value)}
-                  size="sm"
-                  type="button"
-                  variant={filter === option.value ? 'default' : 'outline'}
-                >
-                  {option.label}
-                </Button>
-              ))}
-            </div>
-
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-              <Button
-                onClick={handleDiscardCapture}
-                type="button"
-                variant="ghost"
-              >
-                <RotateCcw className="size-4" />
-                Refazer foto
-              </Button>
-              <div className="flex flex-col-reverse gap-2 sm:flex-row">
-                <Button
-                  onClick={handleResetCorners}
-                  type="button"
-                  variant="outline"
-                >
-                  Restaurar bordas
-                </Button>
-                <Button onClick={handlePreviewCrop} type="button">
-                  <Crop className="size-4" />
-                  Pre-visualizar
-                </Button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {mode === 'edit' && captured && editStep === 'preview' ? (
-          <div className="grid gap-3">
-            <p className="text-xs text-muted-foreground">
-              Confira o recorte. Se precisar, volte para ajustar as bordas.
-            </p>
-            <img
-              alt="Pre-visualizacao do recorte"
-              className="mx-auto block h-auto w-full rounded-2xl border border-border"
-              src={croppedUrl}
+          {screen === 'camera' ? (
+            <CameraScreen
+              boxRef={cameraBoxRef}
+              cameraFailed={cameraFailed}
+              cameraReady={cameraReady}
+              engineStatus={engineStatus}
+              filter={filter}
+              fit={fit}
+              liveCorners={liveCorners}
+              onClose={handleClose}
+              onOpenNative={() => fileInputRef.current?.click()}
+              onOpenReview={() => setScreen('review')}
+              onShutter={handleShutter}
+              pagesCount={pages.length}
+              lastThumb={lastPage?.dataUrl}
+              setFilter={setFilter}
+              videoDim={videoDim}
+              videoRef={videoRef}
+              onVideoMeta={(w, h) => setVideoDim({ w, h })}
             />
+          ) : null}
 
-            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <Button
-                onClick={handleBackToAdjust}
-                type="button"
-                variant="ghost"
-              >
-                <RotateCcw className="size-4" />
-                Ajustar bordas
-              </Button>
-              <Button onClick={handleConfirmPage} type="button">
-                <Check className="size-4" />
-                Confirmar pagina
-              </Button>
-            </div>
-          </div>
-        ) : null}
+          {screen === 'review' ? (
+            <ReviewScreen
+              onAddMore={() => setScreen('camera')}
+              onClose={handleClose}
+              onEdit={openEdit}
+              onFinish={handleFinish}
+              onNativeCapture={() => fileInputRef.current?.click()}
+              onRemove={handleRemovePage}
+              pages={pages}
+              preferNativeCapture={preferNativeCapture}
+            />
+          ) : null}
 
-        {pages.length > 0 ? (
-          <div className="grid gap-2">
-            <p className="text-sm font-semibold text-muted-foreground">
-              {`Paginas (${pages.length})`}
+          {screen === 'edit' && editCanvas ? (
+            <EditScreen
+              corners={editCorners}
+              croppedUrl={editCroppedUrl}
+              dragging={dragging}
+              editCanvas={editCanvas}
+              filter={filter}
+              onConfirm={handleConfirmEdit}
+              onPreview={handlePreviewCrop}
+              onBack={() => {
+                setScreen('review')
+                setEditingId(null)
+              }}
+              onBackToAdjust={() => {
+                setEditCroppedUrl('')
+                setEditStep('adjust')
+              }}
+              onPointerDownCorner={setDragging}
+              onPointerUpCorner={() => setDragging(null)}
+              onReset={() => {
+                if (editCanvas) {
+                  setEditCorners(
+                    defaultCorners(editCanvas.width, editCanvas.height),
+                  )
+                }
+              }}
+              onSetDisplayWidth={setDisplayWidth}
+              previewUrl={editPreviewUrl}
+              scale={editScale}
+              setFilter={setFilter}
+              step={editStep}
+              updateCorner={updateCorner}
+              wrapperRef={wrapperRef}
+            />
+          ) : null}
+
+          <input
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            id={fileInputId}
+            onChange={handleFilesSelected}
+            ref={fileInputRef}
+            type="file"
+          />
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  )
+}
+
+function scalePoint(p: { x: number; y: number }, factor: number) {
+  return { x: p.x * factor, y: p.y * factor }
+}
+
+function downscale(
+  source: HTMLCanvasElement,
+  maxDimension: number,
+): HTMLCanvasElement {
+  const scale = Math.min(
+    1,
+    maxDimension / Math.max(source.width, source.height),
+  )
+  if (scale >= 1) {
+    return source
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(source.width * scale)
+  canvas.height = Math.round(source.height * scale)
+  canvas.getContext('2d')?.drawImage(source, 0, 0, canvas.width, canvas.height)
+  return canvas
+}
+
+// Caixa "contain" do video dentro do container (para alinhar o overlay).
+function computeFit(
+  box: { w: number; h: number } | null,
+  video: { w: number; h: number } | null,
+) {
+  if (!box || !video || video.w === 0 || video.h === 0) {
+    return null
+  }
+  const scale = Math.min(box.w / video.w, box.h / video.h)
+  const width = video.w * scale
+  const height = video.h * scale
+  return {
+    left: (box.w - width) / 2,
+    top: (box.h - height) / 2,
+    width,
+    height,
+  }
+}
+
+function FilterChips({
+  filter,
+  setFilter,
+}: {
+  filter: FilterMode
+  setFilter: (f: FilterMode) => void
+}) {
+  return (
+    <div className="flex justify-center gap-2">
+      {FILTER_OPTIONS.map((option) => (
+        <button
+          className={cn(
+            'rounded-full px-3 py-1 text-xs font-medium transition',
+            filter === option.value
+              ? 'bg-white text-black'
+              : 'bg-white/15 text-white',
+          )}
+          key={option.value}
+          onClick={() => setFilter(option.value)}
+          type="button"
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function CornerOverlay({
+  corners,
+  viewBox,
+  style,
+}: {
+  corners: CornerPoints
+  viewBox: string
+  style: React.CSSProperties
+}) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="pointer-events-none absolute"
+      preserveAspectRatio="none"
+      style={style}
+      viewBox={viewBox}
+    >
+      <polygon
+        fill="rgba(56,132,255,0.15)"
+        points={CORNER_KEYS.map((k) => `${corners[k].x},${corners[k].y}`).join(
+          ' ',
+        )}
+        stroke="rgb(56,132,255)"
+        strokeWidth={2}
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  )
+}
+
+type CameraScreenProps = {
+  boxRef: React.RefObject<HTMLDivElement | null>
+  cameraFailed: boolean
+  cameraReady: boolean
+  engineStatus: string
+  filter: FilterMode
+  fit: { left: number; top: number; width: number; height: number } | null
+  liveCorners: CornerPoints | null
+  onClose: () => void
+  onOpenNative: () => void
+  onOpenReview: () => void
+  onShutter: () => void
+  pagesCount: number
+  lastThumb?: string
+  setFilter: (f: FilterMode) => void
+  videoDim: { w: number; h: number } | null
+  videoRef: React.RefObject<HTMLVideoElement | null>
+  onVideoMeta: (w: number, h: number) => void
+}
+
+function CameraScreen({
+  boxRef,
+  cameraFailed,
+  cameraReady,
+  engineStatus,
+  filter,
+  fit,
+  liveCorners,
+  onClose,
+  onOpenNative,
+  onOpenReview,
+  onShutter,
+  pagesCount,
+  lastThumb,
+  setFilter,
+  videoDim,
+  videoRef,
+  onVideoMeta,
+}: CameraScreenProps) {
+  return (
+    <>
+      <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-center pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
+        <FilterChips filter={filter} setFilter={setFilter} />
+      </div>
+
+      <div className="relative flex-1 overflow-hidden" ref={boxRef}>
+        {cameraFailed ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+            <p className="text-sm text-white/80">
+              Nao foi possivel acessar a camera. Use a camera do sistema para
+              tirar a foto.
             </p>
-            <div className="flex flex-wrap gap-3">
-              {pages.map((page, index) => (
-                <div
-                  className="relative size-20 overflow-hidden rounded-lg border border-border"
-                  key={page.id}
+            <Button onClick={onOpenNative} type="button" variant="secondary">
+              Tirar foto
+            </Button>
+          </div>
+        ) : (
+          <>
+            <video
+              autoPlay
+              className="h-full w-full object-contain"
+              muted
+              onLoadedMetadata={(e) =>
+                onVideoMeta(
+                  e.currentTarget.videoWidth,
+                  e.currentTarget.videoHeight,
+                )
+              }
+              playsInline
+              ref={videoRef}
+            >
+              <track kind="captions" />
+            </video>
+            {liveCorners && fit && videoDim ? (
+              <CornerOverlay
+                corners={liveCorners}
+                style={{
+                  left: fit.left,
+                  top: fit.top,
+                  width: fit.width,
+                  height: fit.height,
+                }}
+                viewBox={`0 0 ${videoDim.w} ${videoDim.h}`}
+              />
+            ) : null}
+            {!cameraReady ? (
+              <div className="absolute inset-0 flex items-center justify-center text-sm text-white/70">
+                Iniciando camera...
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
+
+      <div className="z-10 flex items-center justify-between px-8 pt-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+        <button
+          aria-label="Cancelar"
+          className="flex size-12 items-center justify-center rounded-full text-white"
+          onClick={onClose}
+          type="button"
+        >
+          <X className="size-6" />
+        </button>
+
+        <button
+          aria-label="Capturar"
+          className="flex size-18 items-center justify-center rounded-full ring-4 ring-white/80 disabled:opacity-40"
+          disabled={!cameraReady}
+          onClick={onShutter}
+          type="button"
+        >
+          <span className="size-15 rounded-full bg-white" />
+        </button>
+
+        <button
+          aria-label={`Revisar ${pagesCount} paginas`}
+          className="flex size-12 items-center justify-center overflow-hidden rounded-lg border border-white/40 bg-white/10 disabled:opacity-30"
+          disabled={pagesCount === 0}
+          onClick={onOpenReview}
+          type="button"
+        >
+          {lastThumb ? (
+            <span className="relative block size-full">
+              <img
+                alt="Ultima pagina"
+                className="size-full object-cover"
+                src={lastThumb}
+              />
+              <span className="absolute -top-1.5 -right-1.5 flex min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-white">
+                {pagesCount}
+              </span>
+            </span>
+          ) : (
+            <ImageIcon className="size-5 text-white/70" />
+          )}
+        </button>
+      </div>
+
+      {engineStatus === 'loading' ? (
+        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6rem)] text-center text-[11px] text-white/60">
+          Carregando deteccao de bordas...
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+type ReviewScreenProps = {
+  onAddMore: () => void
+  onClose: () => void
+  onEdit: (page: ScannedPage) => void
+  onFinish: () => void
+  onNativeCapture: () => void
+  onRemove: (id: string) => void
+  pages: ScannedPage[]
+  preferNativeCapture: boolean
+}
+
+function ReviewScreen({
+  onAddMore,
+  onClose,
+  onEdit,
+  onFinish,
+  onNativeCapture,
+  onRemove,
+  pages,
+  preferNativeCapture,
+}: ReviewScreenProps) {
+  return (
+    <div className="flex h-full flex-col bg-background text-foreground">
+      <div className="flex shrink-0 items-center justify-between border-b px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
+        <button
+          aria-label="Voltar para a camera"
+          className="flex items-center gap-1 text-sm font-medium"
+          onClick={onAddMore}
+          type="button"
+        >
+          <ChevronLeft className="size-5" />
+          Camera
+        </button>
+        <span className="text-sm font-semibold">{`${pages.length} ${pages.length === 1 ? 'pagina' : 'paginas'}`}</span>
+        <button
+          aria-label="Fechar"
+          className="flex size-8 items-center justify-center rounded-full"
+          onClick={onClose}
+          type="button"
+        >
+          <X className="size-5" />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {pages.length === 0 ? (
+          <p className="mt-10 text-center text-sm text-muted-foreground">
+            Nenhuma pagina ainda. Volte para a camera e capture.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {pages.map((page, index) => (
+              <div className="relative" key={page.id}>
+                <button
+                  className="block w-full overflow-hidden rounded-lg border border-border bg-card"
+                  onClick={() => onEdit(page)}
+                  type="button"
                 >
                   <img
                     alt={`Pagina ${index + 1}`}
-                    className="size-full object-cover"
+                    className="aspect-3/4 w-full object-cover"
                     src={page.dataUrl}
                   />
-                  <button
-                    aria-label={`Remover pagina ${index + 1}`}
-                    className="absolute right-1 top-1 flex size-5 items-center justify-center rounded-full bg-destructive text-white"
-                    onClick={() => handleRemovePage(index)}
-                    type="button"
-                  >
-                    <Trash2 className="size-3" />
-                  </button>
-                </div>
-              ))}
+                </button>
+                <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 text-[10px] font-medium text-white">
+                  {index + 1}
+                </span>
+                <button
+                  aria-label={`Remover pagina ${index + 1}`}
+                  className="absolute top-1 right-1 flex size-6 items-center justify-center rounded-full bg-destructive text-white"
+                  onClick={() => onRemove(page.id)}
+                  type="button"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex shrink-0 flex-col gap-2 border-t bg-muted/40 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+        {preferNativeCapture ? (
+          <Button onClick={onNativeCapture} type="button" variant="outline">
+            Adicionar foto em alta resolucao
+          </Button>
+        ) : null}
+        <Button disabled={pages.length === 0} onClick={onFinish} type="button">
+          {`Anexar PDF (${pages.length})`}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+type EditScreenProps = {
+  corners: CornerPoints | null
+  croppedUrl: string
+  dragging: (typeof CORNER_KEYS)[number] | null
+  editCanvas: HTMLCanvasElement
+  filter: FilterMode
+  onBack: () => void
+  onBackToAdjust: () => void
+  onConfirm: () => void
+  onPointerDownCorner: (k: (typeof CORNER_KEYS)[number]) => void
+  onPointerUpCorner: () => void
+  onPreview: () => void
+  onReset: () => void
+  onSetDisplayWidth: (w: number) => void
+  previewUrl: string
+  scale: number
+  setFilter: (f: FilterMode) => void
+  step: 'adjust' | 'preview'
+  updateCorner: (
+    k: (typeof CORNER_KEYS)[number],
+    clientX: number,
+    clientY: number,
+  ) => void
+  wrapperRef: React.RefObject<HTMLDivElement | null>
+}
+
+function EditScreen({
+  corners,
+  croppedUrl,
+  dragging,
+  editCanvas,
+  filter,
+  onBack,
+  onBackToAdjust,
+  onConfirm,
+  onPointerDownCorner,
+  onPointerUpCorner,
+  onPreview,
+  onReset,
+  onSetDisplayWidth,
+  previewUrl,
+  scale,
+  setFilter,
+  step,
+  updateCorner,
+  wrapperRef,
+}: EditScreenProps) {
+  const capturedUrl =
+    step === 'adjust'
+      ? previewUrl || editCanvas.toDataURL('image/jpeg', 0.85)
+      : ''
+
+  return (
+    <div className="flex h-full flex-col bg-background text-foreground">
+      <div className="flex shrink-0 items-center justify-between border-b px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
+        <button
+          aria-label="Voltar"
+          className="flex items-center gap-1 text-sm font-medium"
+          onClick={onBack}
+          type="button"
+        >
+          <ChevronLeft className="size-5" />
+          Paginas
+        </button>
+        <span className="text-sm font-semibold">
+          {step === 'adjust' ? 'Ajustar bordas' : 'Revisar recorte'}
+        </span>
+        <span className="size-8" />
+      </div>
+
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-4">
+        {step === 'adjust' ? (
+          <div className="relative mx-auto w-full" ref={wrapperRef}>
+            <img
+              alt="Documento capturado"
+              className="block h-auto w-full rounded-lg border border-border"
+              onLoad={(e) => onSetDisplayWidth(e.currentTarget.clientWidth)}
+              src={capturedUrl}
+            />
+            {corners ? (
+              <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 h-full w-full"
+                preserveAspectRatio="none"
+                viewBox={`0 0 ${editCanvas.width} ${editCanvas.height}`}
+              >
+                <polygon
+                  className="fill-primary/10 stroke-primary"
+                  points={CORNER_KEYS.map(
+                    (k) => `${corners[k].x},${corners[k].y}`,
+                  ).join(' ')}
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                />
+              </svg>
+            ) : null}
+            {corners
+              ? CORNER_KEYS.map((key) => {
+                  const point = corners[key]
+                  return (
+                    <button
+                      aria-label={`Ajustar canto ${key}`}
+                      className="absolute size-6 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-none rounded-full border-2 border-white bg-primary shadow-md"
+                      key={key}
+                      onPointerDown={(e) => {
+                        e.currentTarget.setPointerCapture(e.pointerId)
+                        onPointerDownCorner(key)
+                      }}
+                      onPointerMove={(e) => {
+                        if (dragging === key) {
+                          updateCorner(key, e.clientX, e.clientY)
+                        }
+                      }}
+                      onPointerUp={onPointerUpCorner}
+                      style={{ left: point.x * scale, top: point.y * scale }}
+                      type="button"
+                    />
+                  )
+                })
+              : null}
+          </div>
+        ) : (
+          <img
+            alt="Pre-visualizacao do recorte"
+            className="mx-auto block h-auto max-h-full w-auto rounded-lg border border-border"
+            src={croppedUrl}
+          />
+        )}
+      </div>
+
+      <div className="shrink-0 border-t bg-muted/40 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+        {step === 'adjust' ? (
+          <div className="flex flex-col gap-3">
+            <FilterChipsLight filter={filter} setFilter={setFilter} />
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                onClick={onReset}
+                type="button"
+                variant="outline"
+              >
+                Restaurar bordas
+              </Button>
+              <Button className="flex-1" onClick={onPreview} type="button">
+                <Crop className="size-4" />
+                Pre-visualizar
+              </Button>
             </div>
           </div>
-        ) : null}
-
-        {error ? (
-          <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
+        ) : (
+          <div className="flex gap-2">
+            <Button
+              className="flex-1"
+              onClick={onBackToAdjust}
+              type="button"
+              variant="outline"
+            >
+              <RotateCcw className="size-4" />
+              Ajustar bordas
+            </Button>
+            <Button className="flex-1" onClick={onConfirm} type="button">
+              <Check className="size-4" />
+              Confirmar
+            </Button>
           </div>
-        ) : null}
-
-        <input
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={handleFilesSelected}
-          ref={fileInputRef}
-          type="file"
-        />
+        )}
       </div>
-    </AppDialog>
+    </div>
+  )
+}
+
+function FilterChipsLight({
+  filter,
+  setFilter,
+}: {
+  filter: FilterMode
+  setFilter: (f: FilterMode) => void
+}) {
+  return (
+    <div className="flex justify-center gap-2">
+      {FILTER_OPTIONS.map((option) => (
+        <Button
+          key={option.value}
+          onClick={() => setFilter(option.value)}
+          size="sm"
+          type="button"
+          variant={filter === option.value ? 'default' : 'outline'}
+        >
+          {option.label}
+        </Button>
+      ))}
+    </div>
   )
 }
