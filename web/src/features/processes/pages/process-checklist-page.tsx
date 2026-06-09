@@ -368,8 +368,12 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
 
   async function handleDownloadAllBatch() {
     try {
-      const { downloadUrl, fileName } =
+      const { downloadUrl, fileName, fileCount } =
         await downloadAllBatchZipRequest(processId)
+      if (fileCount === 0) {
+        toast.info('Nenhum arquivo de lote para baixar.')
+        return
+      }
       await downloadFile(downloadUrl, fileName)
     } catch (error) {
       toast.error(
@@ -382,8 +386,12 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
 
   async function handleDownloadAllChecklist() {
     try {
-      const { downloadUrl, fileName } =
+      const { downloadUrl, fileName, fileCount } =
         await downloadAllChecklistZipRequest(processId)
+      if (fileCount === 0) {
+        toast.info('Nenhum documento para baixar.')
+        return
+      }
       await downloadFile(downloadUrl, fileName)
     } catch (error) {
       toast.error(

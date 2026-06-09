@@ -259,13 +259,19 @@ function detectDocumentQuad(cv: OpenCvModule, mat: CvMat): CornerPoints | null {
   const contours = new cv.MatVector()
   const hierarchy = new cv.Mat()
   let kernel: CvMat | null = null
+  // cv.Size aloca na heap do WASM e precisa de delete() (o loop ao vivo roda
+  // ~4x/s, entao vazar aqui cresceria rapido).
+  let blurKsize: CvSize | null = null
+  let morphKsize: CvSize | null = null
   let best: CornerPoints | null = null
 
   try {
     cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY)
-    cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT)
+    blurKsize = new cv.Size(5, 5)
+    cv.GaussianBlur(gray, blur, blurKsize, 0, 0, cv.BORDER_DEFAULT)
     cv.Canny(blur, edges, 60, 180)
-    kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(7, 7))
+    morphKsize = new cv.Size(7, 7)
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, morphKsize)
     cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel)
     cv.findContours(
       edges,
@@ -329,6 +335,8 @@ function detectDocumentQuad(cv: OpenCvModule, mat: CvMat): CornerPoints | null {
     contours.delete()
     hierarchy.delete()
     kernel?.delete()
+    blurKsize?.delete()
+    morphKsize?.delete()
   }
 }
 
@@ -364,19 +372,14 @@ export function detectCorners(
   const scale = longest > MAX_DETECT_DIM ? MAX_DETECT_DIM / longest : 1
 
   let work = mat
+  let resizeKsize: CvSize | null = null
   if (scale < 1) {
     work = new cv.Mat()
-    cv.resize(
-      mat,
-      work,
-      new cv.Size(
-        Math.round(fullWidth * scale),
-        Math.round(fullHeight * scale),
-      ),
-      0,
-      0,
-      cv.INTER_AREA,
+    resizeKsize = new cv.Size(
+      Math.round(fullWidth * scale),
+      Math.round(fullHeight * scale),
     )
+    cv.resize(mat, work, resizeKsize, 0, 0, cv.INTER_AREA)
   }
   const inv = 1 / scale
 
@@ -426,6 +429,7 @@ export function detectCorners(
     if (work !== mat) {
       work.delete()
     }
+    resizeKsize?.delete()
     mat.delete()
   }
 }

@@ -1,6 +1,6 @@
 import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import { RemovalPolicy, CfnOutput } from 'aws-cdk-lib';
+import { RemovalPolicy, CfnOutput, Duration } from 'aws-cdk-lib';
 import { env } from '../config/env';
 import { getEnvName } from '../utils/getEnvName';
 
@@ -15,6 +15,15 @@ export class Storage extends Construct {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       autoDeleteObjects: true,
       removalPolicy: RemovalPolicy.DESTROY,
+      lifecycleRules: [
+        // ZIPs do "baixar todos" sao artefatos efemeros (key unica por download).
+        // Expira-os para nao acumular copias dos documentos no bucket.
+        {
+          id: 'expire-tmp-zips',
+          prefix: 'tmp-zips/',
+          expiration: Duration.days(1),
+        },
+      ],
       cors: [
         {
           allowedOrigins: env.webDomainNames.map((d) => `https://${d}`),
