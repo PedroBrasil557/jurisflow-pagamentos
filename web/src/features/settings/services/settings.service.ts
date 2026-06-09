@@ -5,12 +5,14 @@ import { getErrorMessage } from '@/shared/services/api-error'
 const settingsClientRoute = apiClient.api.admin.settings
 const anthropicKeyClientRoute = settingsClientRoute['anthropic-key']
 const scanbotKeyClientRoute = settingsClientRoute['scanbot-license']
+const scannerProviderClientRoute = settingsClientRoute['scanner-provider']
 
 export type SettingsStatus = InferResponseType<
   typeof settingsClientRoute.$get,
   200
 >
 export type KeyStatus = SettingsStatus['anthropic']
+export type ScannerProvider = 'scanbot' | 'web'
 
 export async function fetchSettingsStatus(): Promise<SettingsStatus> {
   const response = await settingsClientRoute.$get()
@@ -81,6 +83,26 @@ export async function saveScanbotKeyRequest(scanbotLicenseKey: string) {
 
   return (await response.json()) as InferResponseType<
     typeof scanbotKeyClientRoute.$put,
+    200
+  >
+}
+
+export async function saveScannerProviderRequest(provider: ScannerProvider) {
+  const response = await scannerProviderClientRoute.$put({
+    json: { provider },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel salvar o servico de digitalizacao.',
+      ),
+    )
+  }
+
+  return (await response.json()) as InferResponseType<
+    typeof scannerProviderClientRoute.$put,
     200
   >
 }

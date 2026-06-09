@@ -32,3 +32,25 @@ export const scanbotLicenseQuery = queryOptions({
 export function resolveScanbotKey(apiKey: string | null | undefined): string {
   return (apiKey ?? '').trim() || envKey
 }
+
+// --- Servico de digitalizacao escolhido no painel ---
+export type ScannerProvider = 'scanbot' | 'web'
+
+async function fetchScannerProvider(): Promise<ScannerProvider> {
+  try {
+    const response = await apiClient.api.settings['scanner-provider'].$get()
+    if (!response.ok) {
+      return 'web'
+    }
+    const data = (await response.json()) as { provider: ScannerProvider }
+    return data.provider
+  } catch {
+    return 'web'
+  }
+}
+
+export const scannerProviderQuery = queryOptions({
+  queryKey: ['scanner-provider'] as const,
+  queryFn: fetchScannerProvider,
+  staleTime: 5 * 60 * 1000,
+})

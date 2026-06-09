@@ -5,6 +5,8 @@ import {
   clearScanbotKeyRequest,
   saveAnthropicKeyRequest,
   saveScanbotKeyRequest,
+  type ScannerProvider,
+  saveScannerProviderRequest,
 } from './settings.service'
 
 export function useSaveAnthropicKey() {
@@ -51,6 +53,19 @@ export function useClearScanbotKey() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
       queryClient.invalidateQueries({ queryKey: ['scanbot-license'] })
+    },
+  })
+}
+
+export function useSaveScannerProvider() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (provider: ScannerProvider) =>
+      saveScannerProviderRequest(provider),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
+      queryClient.invalidateQueries({ queryKey: ['scanner-provider'] })
     },
   })
 }
