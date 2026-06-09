@@ -4,6 +4,7 @@
 // tensor ja pre-processado (Float32 NCHW) e devolve os 4 cantos crus em
 // coordenadas da imagem original (a ordenacao/validacao fica na thread
 // principal, evitando importar scanner-engine/React aqui).
+import type { CornerPoints } from '../scanner-engine'
 import { INPUT_SIZE } from './config'
 import { postprocessHeatmap } from './postprocess'
 import { createTensor, getSession } from './runtime'
@@ -24,7 +25,7 @@ async function runInfer(
   data: Float32Array,
   sourceWidth: number,
   sourceHeight: number,
-) {
+): Promise<CornerPoints | null> {
   const session = await getSession()
   const input = await createTensor(data, [1, 3, INPUT_SIZE, INPUT_SIZE])
   const results = await session.run({ [session.inputNames[0]]: input })
@@ -52,8 +53,6 @@ ctx.onmessage = async (event: MessageEvent<IncomingMessage>) => {
       await runInfer(new Float32Array(INPUT_SIZE * INPUT_SIZE * 3), 1, 1)
       ctx.postMessage({ type: 'ready' })
     } catch (error) {
-      // Loga no console (contexto worker) e devolve o motivo para a thread
-      // principal poder mostrar/registrar.
       console.error('[docaligner worker] falha ao iniciar', error)
       ctx.postMessage({
         type: 'error',

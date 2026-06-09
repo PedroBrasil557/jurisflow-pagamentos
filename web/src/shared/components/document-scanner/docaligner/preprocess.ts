@@ -27,7 +27,10 @@ export function preprocess(source: ImageSource): PreprocessResult {
   const canvas = document.createElement('canvas')
   canvas.width = INPUT_SIZE
   canvas.height = INPUT_SIZE
-  const ctx = canvas.getContext('2d')
+  // willReadFrequently: este canvas e lido com getImageData a cada frame. Sem a
+  // flag, sob aceleracao de GPU o Chrome pode passar a devolver leitura
+  // preta/defasada apos um tempo — zerando o brilho/confianca da deteccao.
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
   if (!ctx) {
     throw new Error('Canvas 2D indisponivel para o DocAligner.')
   }

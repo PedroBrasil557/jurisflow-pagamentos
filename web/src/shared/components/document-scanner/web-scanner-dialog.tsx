@@ -193,7 +193,6 @@ export function WebScannerDialog({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const cameraBoxRef = useRef<HTMLDivElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const pageIdRef = useRef(0)
 
@@ -230,6 +229,27 @@ export function WebScannerDialog({
       track.stop()
     })
     streamRef.current = null
+  }, [])
+
+  // Mede a area da camera com callback ref (em vez de um efeito): dispara quando
+  // o <div> realmente monta — inclusive tardiamente, pelo portal do dialogo —
+  // garantindo o boxSize ja no 1o open (antes, o efeito rodava cedo demais, com
+  // a ref nula, e nao remedia ate trocar de tela; por isso a borda so aparecia
+  // depois de ir as paginas e voltar).
+  const boxObserverRef = useRef<ResizeObserver | null>(null)
+  const measureCameraBox = useCallback((node: HTMLDivElement | null) => {
+    boxObserverRef.current?.disconnect()
+    boxObserverRef.current = null
+    if (!node) {
+      setBoxSize(null)
+      return
+    }
+    const update = () =>
+      setBoxSize({ w: node.clientWidth, h: node.clientHeight })
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(node)
+    boxObserverRef.current = observer
   }, [])
 
   // Adquire a camera na maior resolucao suportada pelo dispositivo. Para o stream
@@ -304,22 +324,6 @@ export function WebScannerDialog({
     }
   }, [screen, cameraReady])
 
-  // Tamanho da area da camera (para alinhar o overlay de borda).
-  useEffect(() => {
-    if (screen !== 'camera') {
-      return
-    }
-    const box = cameraBoxRef.current
-    if (!box) {
-      return
-    }
-    const update = () => setBoxSize({ w: box.clientWidth, h: box.clientHeight })
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(box)
-    return () => observer.disconnect()
-  }, [screen])
-
   // Deteccao de borda ao vivo (throttle ~4fps, em quadro reduzido). A inferencia
   // pode ser assincrona (DocAligner), entao guardamos contra chamadas
   // concorrentes (`busy`) para nao acumular frames atrasados.
@@ -332,6 +336,11 @@ export function WebScannerDialog({
     const small = document.createElement('canvas')
     let stopped = false
     let busy = false
+    // Segura a ultima borda detectada por um curto periodo: quedas momentaneas
+    // (frame borrado ao mover a camera) nao apagam o overlay na hora, evitando
+    // que a borda "pisque".
+    let lastGoodAt = 0
+    const HOLD_MS = 400
 
     const tick = async () => {
       if (stopped || busy) {
@@ -346,7 +355,7 @@ export function WebScannerDialog({
         const scale = 480 / Math.max(video.videoWidth, video.videoHeight)
         small.width = Math.round(video.videoWidth * scale)
         small.height = Math.round(video.videoHeight * scale)
-        const ctx = small.getContext('2d')
+        const ctx = small.getContext('2d', { willReadFrequently: true })
         if (!ctx) {
           return
         }
@@ -356,6 +365,7 @@ export function WebScannerDialog({
           return
         }
         if (detected) {
+          lastGoodAt = Date.now()
           const inv = 1 / scale
           setLiveCorners({
             topLeftCorner: scalePoint(detected.topLeftCorner, inv),
@@ -363,7 +373,8 @@ export function WebScannerDialog({
             bottomRightCorner: scalePoint(detected.bottomRightCorner, inv),
             bottomLeftCorner: scalePoint(detected.bottomLeftCorner, inv),
           })
-        } else {
+        } else if (Date.now() - lastGoodAt > HOLD_MS) {
+          // So apaga apos o periodo de "hold" sem nenhuma deteccao.
           setLiveCorners(null)
         }
       } catch {
@@ -649,7 +660,7 @@ export function WebScannerDialog({
 
           {screen === 'camera' ? (
             <CameraScreen
-              boxRef={cameraBoxRef}
+              boxRef={measureCameraBox}
               cameraFailed={cameraFailed}
               cameraReady={cameraReady}
               engineStatus={engineStatus}
@@ -834,7 +845,7 @@ function CornerOverlay({
 }
 
 type CameraScreenProps = {
-  boxRef: React.RefObject<HTMLDivElement | null>
+  boxRef: React.Ref<HTMLDivElement>
   cameraFailed: boolean
   cameraReady: boolean
   engineStatus: string

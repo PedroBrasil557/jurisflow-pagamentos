@@ -234,6 +234,17 @@ function scaleCorners(corners: CornerPoints, factor: number): CornerPoints {
 // em resolucao cheia, ~4000px) faz as bordas do documento nao fecharem.
 const MAX_DETECT_DIM = 640
 
+// Limiares geometricos da validacao de quadrilatero. Os defaults sao calibrados
+// para o detector OpenCV/jscanify (descartar ruido minusculo e o frame inteiro,
+// que indicam ausencia de documento). O detector DocAligner (IA) sobrescreve
+// com limites mais frouxos: confia nos cantos do modelo e permite o documento
+// preencher o quadro (maxAreaRatio: 1), mantendo so um piso anti-degenerescencia.
+export type PlausibleQuadOptions = {
+  minAreaRatio?: number
+  maxAreaRatio?: number
+  minSideRatio?: number
+}
+
 // Descarta deteccoes improvaveis: contorno minusculo (ruido), o frame inteiro
 // (sem documento real) ou lados degenerados — nesses casos e melhor usar os
 // cantos padrao do que aplicar um recorte/perspectiva torto.
@@ -241,11 +252,17 @@ export function isPlausibleQuad(
   corners: CornerPoints,
   width: number,
   height: number,
+  options: PlausibleQuadOptions = {},
 ): boolean {
+  const {
+    minAreaRatio = 0.12,
+    maxAreaRatio = 0.998,
+    minSideRatio = 0.2,
+  } = options
   const imageArea = width * height
   const area = quadArea(corners)
 
-  if (area < imageArea * 0.12 || area > imageArea * 0.998) {
+  if (area < imageArea * minAreaRatio || area > imageArea * maxAreaRatio) {
     return false
   }
 
@@ -256,7 +273,7 @@ export function isPlausibleQuad(
     distance(corners.bottomLeftCorner, corners.topLeftCorner),
   ]
 
-  return Math.min(...sides) >= Math.min(width, height) * 0.2
+  return Math.min(...sides) >= Math.min(width, height) * minSideRatio
 }
 
 // Detector robusto: encontra o MAIOR quadrilatero convexo da imagem via

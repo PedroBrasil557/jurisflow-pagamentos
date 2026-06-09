@@ -6,6 +6,15 @@ import {
 } from '../scanner-engine'
 import { preprocess } from './preprocess'
 
+// Limites geometricos frouxos para o ML: confiamos nos cantos do modelo (so o
+// documento gera heatmap forte). Permitimos o documento preencher o quadro
+// (maxAreaRatio: 1) e baixamos os pisos, mantendo um minimo anti-degenerescencia.
+const ML_QUAD_OPTIONS = {
+  minAreaRatio: 0.05,
+  maxAreaRatio: 1,
+  minSideRatio: 0.05,
+} as const
+
 type WorkerOut =
   | { type: 'ready' }
   | { type: 'error'; message?: string }
@@ -14,16 +23,6 @@ type WorkerOut =
 export type DocAlignerDetector = CornerDetector & {
   warmup(): Promise<void>
   dispose(): void
-}
-
-// Log throttled (~1x/s) do resultado da deteccao ao vivo, para diagnostico.
-let lastDebugAt = 0
-function debugLive(outcome: string) {
-  const now = Date.now()
-  if (now - lastDebugAt > 1000) {
-    lastDebugAt = now
-    console.info('[docaligner] live:', outcome)
-  }
 }
 
 // Detector DocAligner: pre-processa o frame na thread principal (canvas) e
@@ -79,16 +78,17 @@ export function createDocAlignerDetector(): DocAlignerDetector {
           )
         })
         if (!raw) {
-          debugLive('sem cantos (heatmap fraco)')
           return null
         }
         const ordered = orderCorners(raw)
-        if (isPlausibleQuad(ordered, sourceWidth, sourceHeight)) {
-          debugLive('OK')
-          return ordered
-        }
-        debugLive('rejeitado por isPlausibleQuad')
-        return null
+        return isPlausibleQuad(
+          ordered,
+          sourceWidth,
+          sourceHeight,
+          ML_QUAD_OPTIONS,
+        )
+          ? ordered
+          : null
       } catch {
         return null
       }
