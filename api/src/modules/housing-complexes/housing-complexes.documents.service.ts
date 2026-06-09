@@ -77,7 +77,12 @@ export async function uploadHousingComplexFile(input: {
   ])
 
   const bytes = new Uint8Array(await input.file.arrayBuffer())
-  await uploadStorageObject({ body: bytes, bucketName, contentType: mimeType, objectKey })
+  await uploadStorageObject({
+    body: bytes,
+    bucketName,
+    contentType: mimeType,
+    objectKey,
+  })
 
   try {
     // Substituicao do arquivo corrente atomica: marca o anterior como nao-corrente
@@ -192,7 +197,9 @@ export async function deleteHousingComplexFile(input: {
     objectKey: fileRow.objectKey,
   })
 
-  await db.delete(housingComplexFile).where(eq(housingComplexFile.id, fileRow.id))
+  await db
+    .delete(housingComplexFile)
+    .where(eq(housingComplexFile.id, fileRow.id))
 }
 
 export type HousingComplexChecklistFile = {
@@ -203,6 +210,8 @@ export type HousingComplexChecklistFile = {
   uploadedAt: Date
   uploadedBy: { id: string; name: string; role: string }
   downloadUrl: string
+  bucketName: string
+  objectKey: string
 }
 
 // Arquivos correntes do conjunto por tipo, com URL assinada — usado para
@@ -240,6 +249,8 @@ export async function getHousingComplexChecklistFiles(
       sizeInBytes: row.sizeInBytes,
       uploadedAt: row.uploadedAt,
       uploadedBy: row.uploadedBy,
+      bucketName: row.bucketName,
+      objectKey: row.objectKey,
       downloadUrl: await createStorageObjectDownloadUrl({
         bucketName: row.bucketName,
         objectKey: row.objectKey,

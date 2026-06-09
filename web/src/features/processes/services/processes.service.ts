@@ -911,3 +911,53 @@ export async function downloadAllChecklistFilesRequest(processId: string) {
 
   return (await response.json()) as DownloadAllChecklistFilesResponse
 }
+
+function parseZipFileName(header: string | null, fallback: string): string {
+  const match = header?.match(/filename="?([^"]+)"?/i)
+  return match?.[1] ?? fallback
+}
+
+// Baixa um ZIP unico (endpoint autenticado) com todos os documentos do checklist.
+export async function downloadAllChecklistZipRequest(processId: string) {
+  const response = await processChecklistClientRoute['download-all.zip'].$get({
+    param: { processId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel baixar os documentos.'),
+    )
+  }
+
+  const blob = await response.blob()
+  const fileName = parseZipFileName(
+    response.headers.get('content-disposition'),
+    `documentos-${processId}.zip`,
+  )
+
+  return { blob, fileName }
+}
+
+// Baixa um ZIP unico com todos os arquivos do lote.
+export async function downloadAllBatchZipRequest(processId: string) {
+  const response = await processBatchClientRoute['download-all.zip'].$get({
+    param: { processId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel baixar os arquivos em lote.',
+      ),
+    )
+  }
+
+  const blob = await response.blob()
+  const fileName = parseZipFileName(
+    response.headers.get('content-disposition'),
+    `lote-${processId}.zip`,
+  )
+
+  return { blob, fileName }
+}
