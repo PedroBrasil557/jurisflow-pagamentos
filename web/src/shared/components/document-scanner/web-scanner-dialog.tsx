@@ -247,6 +247,10 @@ export function WebScannerDialog({
       active = false
       stopStream()
       setCameraReady(false)
+      // Limpa as dimensoes/cantos do stream anterior para o overlay nao usar
+      // valores defasados por 1-2 frames ao reabrir a camera.
+      setVideoDim(null)
+      setLiveCorners(null)
     }
   }, [open, screen, cameraFailed, stopStream])
 
