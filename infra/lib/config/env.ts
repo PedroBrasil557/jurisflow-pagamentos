@@ -1,14 +1,14 @@
-const isProd = process.env.ENVIRONMENT === 'prod';
+const isProd = process.env.ENVIRONMENT === "prod";
 
 export const env = {
-  envName: process.env.ENVIRONMENT ?? '',
+  envName: process.env.ENVIRONMENT ?? "",
   isProd,
-  slackBotToken: process.env.SLACK_BOT_TOKEN ?? '',
-  domainCertificateArn: process.env.DOMAIN_CERTIFICATE_ARN ?? '',
+  slackBotToken: process.env.SLACK_BOT_TOKEN ?? "",
+  domainCertificateArn: process.env.DOMAIN_CERTIFICATE_ARN ?? "",
   apiDomainName: isProd
-    ? 'hk9iayyyce.execute-api.us-east-1.amazonaws.com'
-    : 'bq81uw2pw0.execute-api.us-east-1.amazonaws.com',
+    ? "hk9iayyyce.execute-api.us-east-1.amazonaws.com"
+    : "bq81uw2pw0.execute-api.us-east-1.amazonaws.com",
   webDomainNames: isProd
-    ? ['d91mdzg8zlb5o.cloudfront.net']
-    : ['d1son9ku39ox5g.cloudfront.net'],
+    ? ["jurisflow.icsf.com.br"]
+    : ["dev.jurisflow.icsf.com.br"],
 };
