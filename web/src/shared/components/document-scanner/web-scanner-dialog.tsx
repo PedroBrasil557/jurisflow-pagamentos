@@ -989,11 +989,6 @@ function CameraScreen({
           Carregando IA de deteccao de bordas...
         </p>
       ) : null}
-      {mlStatus === 'ready' ? (
-        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-emerald-300/80">
-          IA de bordas ativa
-        </p>
-      ) : null}
       {mlStatus === 'error' ? (
         <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-amber-300/90">
           IA indisponivel — usando deteccao padrao.
