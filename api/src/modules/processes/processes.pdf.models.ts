@@ -12,6 +12,7 @@ export type ProcessPdfAttorneyProfile = {
 export type ProcessPdfRendererKey =
   | 'KIT_ADJUDICACAO_BASE'
   | 'KIT_ADJUDICACAO_CONJUGE_BASE'
+  | 'PETICAO_INICIAL_BASE'
 
 export type ProcessPdfModelDefinition = {
   description: string
@@ -48,6 +49,14 @@ export const processPdfModels = [
     label: 'Kit adjudicacao Bromelia 06',
     description: 'Gera o modelo padrao de adjudicacao MCMV.',
     rendererKey: 'KIT_ADJUDICACAO_BASE',
+    attorneyProfile: defaultAttorneyProfile,
+  },
+  {
+    key: 'PETICAO_INICIAL',
+    label: 'Peticao inicial',
+    description:
+      'Gera a peticao inicial (obrigacao de fazer c/c adjudicacao compulsoria - MCMV).',
+    rendererKey: 'PETICAO_INICIAL_BASE',
     attorneyProfile: defaultAttorneyProfile,
   },
 ] as const satisfies readonly ProcessPdfModelDefinition[]

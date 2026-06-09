@@ -19,6 +19,9 @@ export const housingComplex = pgTable(
     city: text('city'),
     state: text('state'),
     zipcode: text('zipcode'),
+    // Dados usados na geracao da peticao inicial dos processos do conjunto.
+    vara: text('vara'),
+    causeValue: text('cause_value'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at')
       .defaultNow()

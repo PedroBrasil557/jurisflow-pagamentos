@@ -30,11 +30,28 @@ export type ProcessPdfSpouseData = {
   zipcode: string
 }
 
+export type ProcessPdfPetitionData = {
+  autorNome: string
+  autorNacionalidade: string
+  autorEstadoCivil: string
+  autorProfissao: string
+  autorCpf: string
+  autorEndereco: string
+  autorCidadeUf: string
+  autorCep: string
+  autorCidade: string
+  autorUf: string
+  vara: string
+  secaoCidadeUf: string
+  valorCausa: string
+}
+
 export type ProcessPdfRenderData = {
   attorney: ProcessPdfAttorneyProfile
   generatedAtLabel: string
   locationLabel: string
   party: ProcessPdfPartyData
+  petition?: ProcessPdfPetitionData
   spouse?: ProcessPdfSpouseData
   witnesses: readonly [
     {
@@ -51,6 +68,7 @@ export type ProcessPdfRenderData = {
 let templatePromise: Promise<Buffer> | null = null
 let conjueTemplatePromise: Promise<Buffer> | null = null
 let cancellationTemplatePromise: Promise<Buffer> | null = null
+let peticaoTemplatePromise: Promise<Buffer> | null = null
 
 function getTemplate() {
   if (!templatePromise) {
@@ -77,6 +95,15 @@ function getCancellationTemplate() {
     )
   }
   return cancellationTemplatePromise
+}
+
+function getPeticaoTemplate() {
+  if (!peticaoTemplatePromise) {
+    peticaoTemplatePromise = readFile(
+      new URL('./templates/peticao-inicial-base.docx', import.meta.url),
+    )
+  }
+  return peticaoTemplatePromise
 }
 
 export async function renderKitAdjudicacaoPdf(
@@ -167,6 +194,46 @@ export async function renderKitAdjudicacaoConjugePdf(
   return {
     bytes: pdfBytes,
     pageCount,
+  }
+}
+
+export async function renderPeticaoInicialPdf(
+  data: ProcessPdfRenderData,
+): Promise<{ bytes: Uint8Array; pageCount: number }> {
+  if (!data.petition) {
+    throw new Error('Dados da peticao sao obrigatorios para este modelo.')
+  }
+
+  const template = await getPeticaoTemplate()
+  const p = data.petition
+
+  const docxBuffer = await createReport({
+    template,
+    cmdDelimiter: ['{', '}'],
+    failFast: true,
+    data: {
+      autorNome: p.autorNome,
+      autorNacionalidade: p.autorNacionalidade,
+      autorEstadoCivil: p.autorEstadoCivil,
+      autorProfissao: p.autorProfissao,
+      autorCpf: p.autorCpf,
+      autorEndereco: p.autorEndereco,
+      autorCidadeUf: p.autorCidadeUf,
+      autorCep: p.autorCep,
+      autorCidade: p.autorCidade,
+      autorUf: p.autorUf,
+      vara: p.vara,
+      secaoCidadeUf: p.secaoCidadeUf,
+      valorCausa: p.valorCausa,
+    },
+  })
+
+  const pdfBytes = await convertDocxToPdf(docxBuffer)
+  const pdfDocument = await PDFDocument.load(pdfBytes)
+
+  return {
+    bytes: pdfBytes,
+    pageCount: pdfDocument.getPageCount(),
   }
 }
 

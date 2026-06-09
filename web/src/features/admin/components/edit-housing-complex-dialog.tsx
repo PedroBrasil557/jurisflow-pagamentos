@@ -37,6 +37,8 @@ export function EditHousingComplexDialog({
       city: housingComplex.city ?? '',
       state: housingComplex.state ?? '',
       zipcode: housingComplex.zipcode ?? '',
+      vara: housingComplex.vara ?? '',
+      causeValue: housingComplex.causeValue ?? '',
     },
     schema: housingComplexFormSchema,
   })
@@ -126,6 +128,28 @@ export function EditHousingComplexDialog({
                 event.target.value = formatZipCode(event.target.value)
                 clearErrors('root')
               },
+            })}
+          />
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <FormInput
+            error={errors.vara?.message}
+            hint="Usada na peticao inicial"
+            label="Vara"
+            placeholder="Ex: 2a Vara Civel Federal"
+            {...register('vara', {
+              onChange: () => clearErrors('root'),
+            })}
+          />
+
+          <FormInput
+            error={errors.causeValue?.message}
+            hint="Valor da causa (ex: 130000,00)"
+            label="Valor da causa"
+            placeholder="0,00"
+            {...register('causeValue', {
+              onChange: () => clearErrors('root'),
             })}
           />
         </div>

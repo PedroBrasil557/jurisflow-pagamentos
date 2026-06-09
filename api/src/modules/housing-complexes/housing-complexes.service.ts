@@ -15,6 +15,8 @@ type CreateHousingComplexPayload = {
   city: string | null
   state: string | null
   zipcode: string | null
+  vara: string | null
+  causeValue: string | null
 }
 
 type UpdateHousingComplexPayload = {
@@ -23,6 +25,8 @@ type UpdateHousingComplexPayload = {
   city: string | null
   state: string | null
   zipcode: string | null
+  vara: string | null
+  causeValue: string | null
 }
 
 function selectHousingComplexFields() {
@@ -33,6 +37,8 @@ function selectHousingComplexFields() {
     city: housingComplex.city,
     state: housingComplex.state,
     zipcode: housingComplex.zipcode,
+    vara: housingComplex.vara,
+    causeValue: housingComplex.causeValue,
     createdAt: housingComplex.createdAt,
   }
 }
@@ -138,6 +144,8 @@ export async function createHousingComplex(
       city: payload.city,
       state: payload.state,
       zipcode: payload.zipcode,
+      vara: payload.vara,
+      causeValue: payload.causeValue,
     })
     .returning(selectHousingComplexFields())
 
@@ -179,6 +187,8 @@ export async function updateHousingComplex(
       city: payload.city,
       state: payload.state,
       zipcode: payload.zipcode,
+      vara: payload.vara,
+      causeValue: payload.causeValue,
     })
     .where(eq(housingComplex.id, id))
     .returning(selectHousingComplexFields())
