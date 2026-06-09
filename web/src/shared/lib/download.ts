@@ -1,3 +1,17 @@
+// Dispara o download de um Blob ja em memoria (ex.: ZIP vindo de um endpoint
+// autenticado). Um unico download — sem o bloqueio de multiplos downloads.
+export function downloadBlob(blob: Blob, fileName: string) {
+  const objectUrl = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = objectUrl
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(objectUrl)
+}
+
 export async function downloadFile(url: string, fileName: string) {
   try {
     // Try fetch + blob approach (works for same-origin or CORS-enabled URLs)

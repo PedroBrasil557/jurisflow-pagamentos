@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '#/components/ui/tabs'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { ConfirmDialog } from '@/shared/components/confirm-dialog'
 import { PageHeader } from '@/shared/components/page-header'
-import { downloadFile } from '@/shared/lib/download'
+import { downloadBlob, downloadFile } from '@/shared/lib/download'
 import { BatchSection } from '../components/process-batch-section'
 import { ChecklistItemCard } from '../components/process-checklist-item-card'
 import { ChecklistItemDialog } from '../components/process-checklist-item-dialog'
@@ -47,8 +47,8 @@ import {
   processKeys,
 } from '../services/processes.queries'
 import {
-  downloadAllBatchFilesRequest,
-  downloadAllChecklistFilesRequest,
+  downloadAllBatchZipRequest,
+  downloadAllChecklistZipRequest,
   getBatchFileDownloadRequest,
   getProcessChecklistFileDownloadRequest,
   getProcessStatusLabel,
@@ -154,9 +154,7 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
       queryClient.invalidateQueries({ queryKey: processKeys.detail(processId) })
       queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     } else if (file.splitStatus === 'error') {
-      toast.error(
-        file.splitMessage ?? 'Nao foi possivel desmembrar o arquivo.',
-      )
+      toast.error(file.splitMessage ?? 'Nao foi possivel desmembrar o arquivo.')
     }
 
     splitSawProcessingRef.current = false
@@ -370,11 +368,8 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
 
   async function handleDownloadAllBatch() {
     try {
-      const result = await downloadAllBatchFilesRequest(processId)
-
-      for (const file of result.files) {
-        await downloadFile(file.downloadUrl, file.originalFileName)
-      }
+      const { blob, fileName } = await downloadAllBatchZipRequest(processId)
+      downloadBlob(blob, fileName)
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -386,16 +381,8 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
 
   async function handleDownloadAllChecklist() {
     try {
-      const result = await downloadAllChecklistFilesRequest(processId)
-
-      if (result.files.length === 0) {
-        toast.info('Nenhum documento individual para baixar.')
-        return
-      }
-
-      for (const file of result.files) {
-        await downloadFile(file.downloadUrl, file.originalFileName)
-      }
+      const { blob, fileName } = await downloadAllChecklistZipRequest(processId)
+      downloadBlob(blob, fileName)
     } catch (error) {
       toast.error(
         error instanceof Error

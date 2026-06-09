@@ -9,6 +9,7 @@ import {
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
+import { createStorageObjectsZip } from '../../shared/storage/zip'
 import type { AppBindings } from '../../shared/types/app'
 import { normalizeCpf } from '../../shared/utils/cpf'
 import { buildBatchDownloadFileName } from '../../shared/utils/file-name'
@@ -835,4 +836,46 @@ export async function downloadAllBatchFiles(
   )
 
   return { files: result }
+}
+
+// ZIP unico com todos os arquivos do lote (download unico — evita o bloqueio de
+// multiplos downloads do navegador e CORS por arquivo das URLs assinadas).
+export async function downloadAllBatchFilesZip(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { relationship } = await getProcessContextOrThrow({
+    processId,
+    userId,
+    perms,
+  })
+  assertCanAccessBatch(perms, relationship)
+
+  const currentProcess = await getProcessRecordOrThrow(processId)
+
+  const files = await db
+    .select({
+      bucketName: processBatchFile.bucketName,
+      objectKey: processBatchFile.objectKey,
+      originalFileName: processBatchFile.originalFileName,
+    })
+    .from(processBatchFile)
+    .where(eq(processBatchFile.processId, processId))
+    .orderBy(asc(processBatchFile.uploadedAt))
+
+  const entries = files.map((file) => ({
+    bucketName: file.bucketName,
+    objectKey: file.objectKey,
+    fileName: buildBatchDownloadFileName({
+      processCode: currentProcess.code,
+      processFullName: currentProcess.fullName,
+      originalFileName: file.originalFileName,
+    }),
+  }))
+
+  const bytes = await createStorageObjectsZip(entries)
+  const zipFileName = `lote-${currentProcess.code}.zip`.replace(/\s+/g, '-')
+
+  return { bytes, fileName: zipFileName, fileCount: entries.length }
 }
