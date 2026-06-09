@@ -3,6 +3,7 @@ import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import {
   buildProcessBatchObjectKey,
+  buildStorageObjectKey,
   createStorageObjectDownloadUrl,
   deleteStorageObject,
   getStorageObjectBytes,
@@ -877,5 +878,26 @@ export async function downloadAllBatchFilesZip(
   const bytes = await createStorageObjectsZip(entries)
   const zipFileName = `lote-${currentProcess.code}.zip`.replace(/\s+/g, '-')
 
-  return { bytes, fileName: zipFileName, fileCount: entries.length }
+  // Sobe o ZIP no storage e devolve URL assinada (download direto do S3, fora da
+  // API) — evita o "Request Entity Too Large" do gateway em ZIPs grandes.
+  const bucketName = storageBuckets.processDocuments
+  const objectKey = buildStorageObjectKey([
+    'processes',
+    processId,
+    'zips',
+    zipFileName,
+  ])
+  await uploadStorageObject({
+    body: new Uint8Array(bytes),
+    bucketName,
+    contentType: 'application/zip',
+    objectKey,
+  })
+  const downloadUrl = await createStorageObjectDownloadUrl({
+    bucketName,
+    objectKey,
+    downloadFileName: zipFileName,
+  })
+
+  return { downloadUrl, fileName: zipFileName, fileCount: entries.length }
 }

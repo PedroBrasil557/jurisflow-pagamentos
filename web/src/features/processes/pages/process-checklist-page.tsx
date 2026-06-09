@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '#/components/ui/tabs'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { ConfirmDialog } from '@/shared/components/confirm-dialog'
 import { PageHeader } from '@/shared/components/page-header'
-import { downloadBlob, downloadFile } from '@/shared/lib/download'
+import { downloadFile } from '@/shared/lib/download'
 import { BatchSection } from '../components/process-batch-section'
 import { ChecklistItemCard } from '../components/process-checklist-item-card'
 import { ChecklistItemDialog } from '../components/process-checklist-item-dialog'
@@ -368,8 +368,9 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
 
   async function handleDownloadAllBatch() {
     try {
-      const { blob, fileName } = await downloadAllBatchZipRequest(processId)
-      downloadBlob(blob, fileName)
+      const { downloadUrl, fileName } =
+        await downloadAllBatchZipRequest(processId)
+      await downloadFile(downloadUrl, fileName)
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -381,8 +382,9 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
 
   async function handleDownloadAllChecklist() {
     try {
-      const { blob, fileName } = await downloadAllChecklistZipRequest(processId)
-      downloadBlob(blob, fileName)
+      const { downloadUrl, fileName } =
+        await downloadAllChecklistZipRequest(processId)
+      await downloadFile(downloadUrl, fileName)
     } catch (error) {
       toast.error(
         error instanceof Error

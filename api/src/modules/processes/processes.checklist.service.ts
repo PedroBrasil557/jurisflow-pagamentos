@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import {
   buildProcessDocumentObjectKey,
+  buildStorageObjectKey,
   createStorageObjectDownloadUrl,
   deleteStorageObject,
   storageBuckets,
@@ -1525,5 +1526,27 @@ export async function downloadAllChecklistFilesZip(
     '-',
   )
 
-  return { bytes, fileName: zipFileName, fileCount: entries.length }
+  // Sobe o ZIP no storage e devolve URL assinada: o download vai do S3 direto ao
+  // navegador, sem passar pela API (evita o limite de payload do gateway que
+  // causava "Request Entity Too Large" em ZIPs grandes).
+  const bucketName = storageBuckets.processDocuments
+  const objectKey = buildStorageObjectKey([
+    'processes',
+    processId,
+    'zips',
+    zipFileName,
+  ])
+  await uploadStorageObject({
+    body: new Uint8Array(bytes),
+    bucketName,
+    contentType: 'application/zip',
+    objectKey,
+  })
+  const downloadUrl = await createStorageObjectDownloadUrl({
+    bucketName,
+    objectKey,
+    downloadFileName: zipFileName,
+  })
+
+  return { downloadUrl, fileName: zipFileName, fileCount: entries.length }
 }
