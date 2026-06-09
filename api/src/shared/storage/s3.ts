@@ -178,12 +178,17 @@ export async function createStorageObjectDownloadUrl(input: {
   bucketName: StorageBucketName
   expiresInSeconds?: number
   objectKey: string
+  // Forca o navegador a baixar com este nome (mesmo cross-origin do S3).
+  downloadFileName?: string
 }) {
   return getSignedUrl(
     publicStorageClient,
     new GetObjectCommand({
       Bucket: input.bucketName,
       Key: input.objectKey,
+      ResponseContentDisposition: input.downloadFileName
+        ? `attachment; filename="${input.downloadFileName.replace(/"/g, '')}"`
+        : undefined,
     }),
     {
       expiresIn: input.expiresInSeconds ?? 60 * 10,

@@ -912,12 +912,9 @@ export async function downloadAllChecklistFilesRequest(processId: string) {
   return (await response.json()) as DownloadAllChecklistFilesResponse
 }
 
-function parseZipFileName(header: string | null, fallback: string): string {
-  const match = header?.match(/filename="?([^"]+)"?/i)
-  return match?.[1] ?? fallback
-}
-
-// Baixa um ZIP unico (endpoint autenticado) com todos os documentos do checklist.
+// Baixa um ZIP unico com todos os documentos do checklist. O servidor monta o
+// ZIP, sobe no storage e retorna a URL assinada — o download vai do S3 direto ao
+// navegador (sem passar pela API/gateway, que limitava o tamanho do payload).
 export async function downloadAllChecklistZipRequest(processId: string) {
   const response = await processChecklistClientRoute['download-all.zip'].$get({
     param: { processId },
@@ -929,16 +926,14 @@ export async function downloadAllChecklistZipRequest(processId: string) {
     )
   }
 
-  const blob = await response.blob()
-  const fileName = parseZipFileName(
-    response.headers.get('content-disposition'),
-    `documentos-${processId}.zip`,
-  )
-
-  return { blob, fileName }
+  return (await response.json()) as {
+    downloadUrl: string
+    fileName: string
+    fileCount: number
+  }
 }
 
-// Baixa um ZIP unico com todos os arquivos do lote.
+// Baixa um ZIP unico com todos os arquivos do lote (mesmo fluxo via storage).
 export async function downloadAllBatchZipRequest(processId: string) {
   const response = await processBatchClientRoute['download-all.zip'].$get({
     param: { processId },
@@ -953,11 +948,9 @@ export async function downloadAllBatchZipRequest(processId: string) {
     )
   }
 
-  const blob = await response.blob()
-  const fileName = parseZipFileName(
-    response.headers.get('content-disposition'),
-    `lote-${processId}.zip`,
-  )
-
-  return { blob, fileName }
+  return (await response.json()) as {
+    downloadUrl: string
+    fileName: string
+    fileCount: number
+  }
 }

@@ -548,18 +548,13 @@ export const processRoutes = new Hono<AppBindings>()
     async (c) => {
       try {
         const { currentUser, perms } = await getCurrentUserWithPermissions(c)
-        const { bytes, fileName } = await downloadAllChecklistFilesZip(
+        const result = await downloadAllChecklistFilesZip(
           c.req.valid('param').processId,
           currentUser.id,
           perms,
         )
 
-        return new Response(bytes, {
-          status: 200,
-          headers: {
-            'Content-Disposition': `attachment; filename="${fileName}"`,
-          },
-        })
+        return c.json(result, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }
@@ -571,18 +566,13 @@ export const processRoutes = new Hono<AppBindings>()
     async (c) => {
       try {
         const { currentUser, perms } = await getCurrentUserWithPermissions(c)
-        const { bytes, fileName } = await downloadAllBatchFilesZip(
+        const result = await downloadAllBatchFilesZip(
           c.req.valid('param').processId,
           currentUser.id,
           perms,
         )
 
-        return new Response(bytes, {
-          status: 200,
-          headers: {
-            'Content-Disposition': `attachment; filename="${fileName}"`,
-          },
-        })
+        return c.json(result, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }
