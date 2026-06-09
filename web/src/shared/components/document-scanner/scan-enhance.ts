@@ -16,12 +16,16 @@ export type FilterMode = 'color' | 'gray' | 'bw'
 const BACKGROUND_CELLS = 96
 const GRID_BLUR_RADIUS = 2
 
-// Niveis aplicados sobre a razao pixel/fundo (papel ~ 1.0).
-const WHITE_POINT = 0.88 // razao >= isto -> branco puro
-const BLACK_POINT = 0.15 // razao <= isto -> preto puro
-const GAMMA = 1.1 // > 1 escurece os meios-tons (texto mais firme)
+// Realce SUAVE: achata a iluminacao de forma multiplicativa (preserva o conteudo
+// e NAO forca branco). Crucial para documentos coloridos/claros como CNH/RG, que
+// a normalizacao agressiva "lavava". Texto preto-no-branco continua limpo via
+// contraste; binarizacao forte fica so no modo preto e branco.
+const PAPER_TARGET = 235 // alvo de brilho do fundo (nao e branco puro)
+const ILLUM_STRENGTH = 0.55 // quanto a iluminacao e achatada (0..1)
+const COLOR_CONTRAST = 1.12 // contraste leve no modo cor (fiel)
+const GRAY_CONTRAST = 1.28 // contraste um pouco maior no modo cinza
 
-const SATURATION = 1.45 // realce de cor (modo cor)
+const SATURATION = 1.35 // realce de cor (modo cor)
 const SHARPEN_AMOUNT = 0.8 // intensidade da nitidez
 const SHARPEN_RADIUS = 1 // raio do unsharp (px)
 
@@ -162,27 +166,46 @@ function sampleGrid(
   return top + (bottom - top) * fy
 }
 
-// Razao pixel/fundo -> niveis (ponto preto/branco) -> gama -> 0..255.
-function applyLevels(pixel: number, background: number): number {
-  const ratio = pixel / (background < 1 ? 1 : background)
-  let t = ratio > WHITE_POINT ? WHITE_POINT : ratio
-  t = (t - BLACK_POINT) / (WHITE_POINT - BLACK_POINT)
-  if (t < 0) {
-    t = 0
-  }
-  return clamp8(t ** GAMMA * 255)
-}
+// Limiar adaptivo de Sauvola: T(x,y) = m * (1 + k*(s/R - 1)), com media (m) e
+// desvio-padrao (s) locais por janela. Lida melhor com iluminacao irregular e
+// fundo nao-uniforme do que so-media (Bradley). Usa imagens integrais; reaproveita
+// o mesmo buffer para soma e soma-dos-quadrados (memoria estavel em fotos grandes).
+const SAUVOLA_K = 0.2
+const SAUVOLA_R = 128
 
-// Limiar adaptivo (Bradley/Wellner) via imagem integral: media local por janela.
-function adaptiveThreshold(
+function sauvolaThreshold(
   gray: Uint8ClampedArray,
   width: number,
   height: number,
 ): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(gray.length)
+  const n = width * height
+  const out = new Uint8ClampedArray(n)
   const stride = width + 1
   const integral = new Float64Array(stride * (height + 1))
+  const radius = Math.max(10, Math.floor(Math.min(width, height) / 50))
 
+  const windowArea = (x: number, y: number): number => {
+    const x1 = Math.max(0, x - radius)
+    const y1 = Math.max(0, y - radius)
+    const x2 = Math.min(width - 1, x + radius)
+    const y2 = Math.min(height - 1, y + radius)
+    return (x2 - x1 + 1) * (y2 - y1 + 1)
+  }
+
+  const windowSum = (x: number, y: number): number => {
+    const x1 = Math.max(0, x - radius)
+    const y1 = Math.max(0, y - radius)
+    const x2 = Math.min(width - 1, x + radius)
+    const y2 = Math.min(height - 1, y + radius)
+    return (
+      integral[(y2 + 1) * stride + (x2 + 1)] -
+      integral[y1 * stride + (x2 + 1)] -
+      integral[(y2 + 1) * stride + x1] +
+      integral[y1 * stride + x1]
+    )
+  }
+
+  // 1) integral das somas -> media local (guardada em 8 bits para economizar).
   for (let y = 0; y < height; y++) {
     let rowSum = 0
     for (let x = 0; x < width; x++) {
@@ -191,24 +214,33 @@ function adaptiveThreshold(
         integral[y * stride + (x + 1)] + rowSum
     }
   }
+  const mean = new Uint8ClampedArray(n)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      mean[y * width + x] = windowSum(x, y) / windowArea(x, y)
+    }
+  }
 
-  const radius = Math.max(8, Math.floor(Math.min(width, height) / 30))
-  const t = 0.15
+  // 2) integral das somas dos quadrados (reusa o buffer) -> variancia -> desvio.
+  integral.fill(0)
+  for (let y = 0; y < height; y++) {
+    let rowSum = 0
+    for (let x = 0; x < width; x++) {
+      const v = gray[y * width + x]
+      rowSum += v * v
+      integral[(y + 1) * stride + (x + 1)] =
+        integral[y * stride + (x + 1)] + rowSum
+    }
+  }
 
   for (let y = 0; y < height; y++) {
-    const y1 = Math.max(0, y - radius)
-    const y2 = Math.min(height - 1, y + radius)
     for (let x = 0; x < width; x++) {
-      const x1 = Math.max(0, x - radius)
-      const x2 = Math.min(width - 1, x + radius)
-      const area = (x2 - x1 + 1) * (y2 - y1 + 1)
-      const sum =
-        integral[(y2 + 1) * stride + (x2 + 1)] -
-        integral[y1 * stride + (x2 + 1)] -
-        integral[(y2 + 1) * stride + x1] +
-        integral[y1 * stride + x1]
-      const mean = sum / area
-      out[y * width + x] = gray[y * width + x] < mean * (1 - t) ? 0 : 255
+      const idx = y * width + x
+      const m = mean[idx]
+      const variance = windowSum(x, y) / windowArea(x, y) - m * m
+      const std = variance > 0 ? Math.sqrt(variance) : 0
+      const threshold = m * (1 + SAUVOLA_K * (std / SAUVOLA_R - 1))
+      out[idx] = gray[idx] < threshold ? 0 : 255
     }
   }
 
@@ -254,7 +286,7 @@ export function enhanceWithFilter(
     for (let i = 0, j = 0; i < data.length; i += 4, j++) {
       gray[j] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
     }
-    const bw = adaptiveThreshold(gray, width, height)
+    const bw = sauvolaThreshold(gray, width, height)
     for (let i = 0, j = 0; i < data.length; i += 4, j++) {
       data[i] = bw[j]
       data[i + 1] = bw[j]
@@ -266,6 +298,7 @@ export function enhanceWithFilter(
 
   const grid = estimatePaperGrid(data, width, height)
   const isGray = mode === 'gray'
+  const contrast = isGray ? GRAY_CONTRAST : COLOR_CONTRAST
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -274,9 +307,15 @@ export function enhanceWithFilter(
       const bgG = sampleGrid(grid.g, grid.cols, grid.rows, grid.cell, x, y)
       const bgB = sampleGrid(grid.b, grid.cols, grid.rows, grid.cell, x, y)
 
-      let r = applyLevels(data[idx], bgR)
-      let g = applyLevels(data[idx + 1], bgG)
-      let b = applyLevels(data[idx + 2], bgB)
+      // Fator multiplicativo: levanta sombra (fundo escuro) sem estourar onde o
+      // fundo ja e claro. Preserva o conteudo colorido/claro (CNH/RG).
+      const fR = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgR < 1 ? 1 : bgR) - 1)
+      const fG = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgG < 1 ? 1 : bgG) - 1)
+      const fB = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgB < 1 ? 1 : bgB) - 1)
+
+      let r = (data[idx] * fR - 128) * contrast + 128
+      let g = (data[idx + 1] * fG - 128) * contrast + 128
+      let b = (data[idx + 2] * fB - 128) * contrast + 128
 
       if (isGray) {
         const lum = r * 0.299 + g * 0.587 + b * 0.114
@@ -285,14 +324,14 @@ export function enhanceWithFilter(
         b = lum
       } else {
         const lum = r * 0.299 + g * 0.587 + b * 0.114
-        r = clamp8(lum + (r - lum) * SATURATION)
-        g = clamp8(lum + (g - lum) * SATURATION)
-        b = clamp8(lum + (b - lum) * SATURATION)
+        r = lum + (r - lum) * SATURATION
+        g = lum + (g - lum) * SATURATION
+        b = lum + (b - lum) * SATURATION
       }
 
-      data[idx] = r
-      data[idx + 1] = g
-      data[idx + 2] = b
+      data[idx] = clamp8(r)
+      data[idx + 1] = clamp8(g)
+      data[idx + 2] = clamp8(b)
     }
   }
 

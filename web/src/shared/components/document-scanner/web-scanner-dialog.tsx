@@ -28,6 +28,21 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
+// No iOS (todos os browsers usam WebKit) a camera nativa (input capture) entrega
+// resolucao e foco bem melhores que o quadro do getUserMedia — entao ela vira o
+// caminho primario de captura ali.
+function isLikelyIOS(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+  const ua = navigator.userAgent || ''
+  const iPadOS =
+    ua.includes('Macintosh') &&
+    typeof document !== 'undefined' &&
+    'ontouchend' in document
+  return /iPad|iPhone|iPod/.test(ua) || iPadOS
+}
+
 // Reduz o canvas para um lado maximo (preview do filtro rapido; o confirm usa
 // a resolucao cheia). Devolve a propria origem quando ja esta dentro do limite.
 function downscaleCanvas(
@@ -502,6 +517,7 @@ export function WebScannerDialog({
   }
 
   const scale = captured && displayWidth ? displayWidth / captured.width : 1
+  const preferNativeCapture = isLikelyIOS()
 
   return (
     <AppDialog
@@ -552,22 +568,45 @@ export function WebScannerDialog({
                     <track kind="captions" />
                   </video>
                 </div>
-                <Button
-                  disabled={!cameraReady}
-                  onClick={handleCapture}
-                  type="button"
-                >
-                  <Camera className="size-4" />
-                  {cameraReady ? 'Capturar' : 'Iniciando camera...'}
-                </Button>
-                <Button
-                  onClick={() => fileInputRef.current?.click()}
-                  type="button"
-                  variant="outline"
-                >
-                  <Camera className="size-4" />
-                  Tirar foto em alta resolucao
-                </Button>
+                {preferNativeCapture ? (
+                  <>
+                    <Button
+                      onClick={() => fileInputRef.current?.click()}
+                      type="button"
+                    >
+                      <Camera className="size-4" />
+                      Tirar foto em alta resolucao
+                    </Button>
+                    <Button
+                      disabled={!cameraReady}
+                      onClick={handleCapture}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Camera className="size-4" />
+                      {cameraReady ? 'Usar quadro do video' : 'Iniciando camera...'}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      disabled={!cameraReady}
+                      onClick={handleCapture}
+                      type="button"
+                    >
+                      <Camera className="size-4" />
+                      {cameraReady ? 'Capturar' : 'Iniciando camera...'}
+                    </Button>
+                    <Button
+                      onClick={() => fileInputRef.current?.click()}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Camera className="size-4" />
+                      Tirar foto em alta resolucao
+                    </Button>
+                  </>
+                )}
                 <p className="text-xs text-muted-foreground">
                   Para documentos com texto pequeno, prefira "Tirar foto em alta
                   resolucao" — usa a camera do sistema (qualidade bem superior ao
