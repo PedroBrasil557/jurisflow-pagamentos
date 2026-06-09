@@ -11,6 +11,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { cn } from '#/lib/utils'
+import { type DocAlignerStatus, useDocAlignerDetector } from './docaligner'
 import { enhanceWithFilter, type FilterMode } from './scan-enhance'
 import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
 import {
@@ -24,6 +25,9 @@ type WebScannerDialogProps = {
   open: boolean
   onClose: () => void
   onComplete: (file: File) => void
+  // Quando true, usa o DocAligner (IA) como detector primario de bordas, com o
+  // OpenCV/jscanify como fallback. Provider 'docaligner' nas Configuracoes.
+  useMl?: boolean
 }
 
 type ScannedPage = {
@@ -147,9 +151,44 @@ export function WebScannerDialog({
   open,
   onClose,
   onComplete,
+  useMl = false,
 }: WebScannerDialogProps) {
   const engineStatus = useScannerEngine(open)
   const engineReady = engineStatus === 'ready'
+
+  // Detector DocAligner (IA): so carrega quando o provider e 'docaligner'.
+  const { detector: mlDetector, status: mlStatus } = useDocAlignerDetector(
+    open && useMl,
+  )
+
+  // Deteccao "melhor disponivel": tenta o DocAligner (se pronto); se ele nao
+  // achar, cai no OpenCV/jscanify. Unico ponto de fallback do dialogo.
+  const detectBest = useCallback(
+    async (
+      source: HTMLCanvasElement,
+      opts: { fallback?: boolean },
+    ): Promise<CornerPoints | null> => {
+      if (mlDetector) {
+        try {
+          const ml = await mlDetector.detect(source, { fallback: false })
+          if (ml) {
+            return ml
+          }
+        } catch {
+          // cai no OpenCV abaixo
+        }
+      }
+      if (engineReady) {
+        try {
+          return detectCorners(createScanner(), source, opts)
+        } catch {
+          return null
+        }
+      }
+      return null
+    },
+    [mlDetector, engineReady],
+  )
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -157,7 +196,6 @@ export function WebScannerDialog({
   const cameraBoxRef = useRef<HTMLDivElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const pageIdRef = useRef(0)
-  const liveScannerRef = useRef<ReturnType<typeof createScanner> | null>(null)
 
   const [screen, setScreen] = useState<Screen>('camera')
   const [pages, setPages] = useState<ScannedPage[]>([])
@@ -282,59 +320,65 @@ export function WebScannerDialog({
     return () => observer.disconnect()
   }, [screen])
 
-  // Deteccao de borda ao vivo (throttle ~4fps, em quadro reduzido).
+  // Deteccao de borda ao vivo (throttle ~4fps, em quadro reduzido). A inferencia
+  // pode ser assincrona (DocAligner), entao guardamos contra chamadas
+  // concorrentes (`busy`) para nao acumular frames atrasados.
   useEffect(() => {
-    if (screen !== 'camera' || !cameraReady || !engineReady) {
+    if (screen !== 'camera' || !cameraReady || !(engineReady || mlDetector)) {
       setLiveCorners(null)
       return
     }
 
     const small = document.createElement('canvas')
     let stopped = false
+    let busy = false
 
-    const tick = () => {
-      if (stopped) {
+    const tick = async () => {
+      if (stopped || busy) {
         return
       }
       const video = videoRef.current
-      if (video?.videoWidth) {
+      if (!video?.videoWidth) {
+        return
+      }
+      busy = true
+      try {
         const scale = 480 / Math.max(video.videoWidth, video.videoHeight)
         small.width = Math.round(video.videoWidth * scale)
         small.height = Math.round(video.videoHeight * scale)
         const ctx = small.getContext('2d')
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, small.width, small.height)
-          try {
-            if (!liveScannerRef.current) {
-              liveScannerRef.current = createScanner()
-            }
-            const detected = detectCorners(liveScannerRef.current, small, {
-              fallback: false,
-            })
-            if (detected) {
-              const inv = 1 / scale
-              setLiveCorners({
-                topLeftCorner: scalePoint(detected.topLeftCorner, inv),
-                topRightCorner: scalePoint(detected.topRightCorner, inv),
-                bottomRightCorner: scalePoint(detected.bottomRightCorner, inv),
-                bottomLeftCorner: scalePoint(detected.bottomLeftCorner, inv),
-              })
-            } else {
-              setLiveCorners(null)
-            }
-          } catch {
-            setLiveCorners(null)
-          }
+        if (!ctx) {
+          return
         }
+        ctx.drawImage(video, 0, 0, small.width, small.height)
+        const detected = await detectBest(small, { fallback: false })
+        if (stopped) {
+          return
+        }
+        if (detected) {
+          const inv = 1 / scale
+          setLiveCorners({
+            topLeftCorner: scalePoint(detected.topLeftCorner, inv),
+            topRightCorner: scalePoint(detected.topRightCorner, inv),
+            bottomRightCorner: scalePoint(detected.bottomRightCorner, inv),
+            bottomLeftCorner: scalePoint(detected.bottomLeftCorner, inv),
+          })
+        } else {
+          setLiveCorners(null)
+        }
+      } catch {
+        setLiveCorners(null)
+      } finally {
+        busy = false
       }
     }
 
-    const interval = window.setInterval(tick, 250)
+    const interval = window.setInterval(() => void tick(), 250)
     return () => {
       stopped = true
       window.clearInterval(interval)
     }
-  }, [screen, cameraReady, engineReady])
+  }, [screen, cameraReady, engineReady, mlDetector, detectBest])
 
   // Preview ao vivo do filtro na edicao (sobre a imagem inteira).
   useEffect(() => {
@@ -396,7 +440,6 @@ export function WebScannerDialog({
     setEditStep('adjust')
     setEditPreviewUrl('')
     setEditCroppedUrl('')
-    liveScannerRef.current = null
   }, [stopStream])
 
   // Limpa ao fechar.
@@ -411,15 +454,8 @@ export function WebScannerDialog({
     onClose()
   }
 
-  function addPageFromCanvas(canvas: HTMLCanvasElement) {
-    let detected: CornerPoints | null = null
-    if (engineReady) {
-      try {
-        detected = detectCorners(createScanner(), canvas)
-      } catch {
-        detected = null
-      }
-    }
+  async function addPageFromCanvas(canvas: HTMLCanvasElement) {
+    const detected = await detectBest(canvas, { fallback: true })
     const corners = detected ?? defaultCorners(canvas.width, canvas.height)
     const rendered = renderCroppedPage(canvas, corners, filter, engineReady)
 
@@ -451,7 +487,7 @@ export function WebScannerDialog({
       return
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    addPageFromCanvas(canvas)
+    void addPageFromCanvas(canvas)
   }
 
   async function handleFilesSelected(
@@ -468,7 +504,7 @@ export function WebScannerDialog({
       const url = URL.createObjectURL(file)
       const canvas = await loadCanvas(url)
       URL.revokeObjectURL(url)
-      addPageFromCanvas(canvas)
+      await addPageFromCanvas(canvas)
       setScreen('review')
     } catch {
       setError('Nao foi possivel abrir a imagem selecionada.')
@@ -617,6 +653,7 @@ export function WebScannerDialog({
               cameraFailed={cameraFailed}
               cameraReady={cameraReady}
               engineStatus={engineStatus}
+              mlStatus={useMl ? mlStatus : null}
               filter={filter}
               fit={fit}
               liveCorners={liveCorners}
@@ -801,6 +838,7 @@ type CameraScreenProps = {
   cameraFailed: boolean
   cameraReady: boolean
   engineStatus: string
+  mlStatus: DocAlignerStatus | null
   filter: FilterMode
   fit: { left: number; top: number; width: number; height: number } | null
   liveCorners: CornerPoints | null
@@ -821,6 +859,7 @@ function CameraScreen({
   cameraFailed,
   cameraReady,
   engineStatus,
+  mlStatus,
   filter,
   fit,
   liveCorners,
@@ -934,6 +973,21 @@ function CameraScreen({
         </button>
       </div>
 
+      {mlStatus === 'loading' ? (
+        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-white/60">
+          Carregando IA de deteccao de bordas...
+        </p>
+      ) : null}
+      {mlStatus === 'ready' ? (
+        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-emerald-300/80">
+          IA de bordas ativa
+        </p>
+      ) : null}
+      {mlStatus === 'error' ? (
+        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-amber-300/90">
+          IA indisponivel — usando deteccao padrao.
+        </p>
+      ) : null}
       {engineStatus === 'loading' ? (
         <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6rem)] text-center text-[11px] text-white/60">
           Carregando deteccao de bordas...

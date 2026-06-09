@@ -34,7 +34,7 @@ export function resolveScanbotKey(apiKey: string | null | undefined): string {
 }
 
 // --- Servico de digitalizacao escolhido no painel ---
-export type ScannerProvider = 'scanbot' | 'web'
+export type ScannerProvider = 'scanbot' | 'web' | 'docaligner'
 
 async function fetchScannerProvider(): Promise<ScannerProvider> {
   try {

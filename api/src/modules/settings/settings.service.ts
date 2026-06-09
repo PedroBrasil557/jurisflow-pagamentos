@@ -139,7 +139,7 @@ export async function saveScanbotLicenseKey(key: string): Promise<KeyStatus> {
 
 // --- Servico de digitalizacao (escolha explicita no painel) ---
 
-export type ScannerProvider = 'scanbot' | 'web'
+export type ScannerProvider = 'scanbot' | 'web' | 'docaligner'
 
 // Provedor efetivo: o salvo no painel; se nao houver escolha, usa 'scanbot'
 // quando ha license configurada, senao 'web' (preserva o comportamento atual).
@@ -151,7 +151,7 @@ export async function getScannerProvider(): Promise<ScannerProvider> {
     .limit(1)
 
   const stored = row?.scannerProvider
-  if (stored === 'scanbot' || stored === 'web') {
+  if (stored === 'scanbot' || stored === 'web' || stored === 'docaligner') {
     return stored
   }
 
