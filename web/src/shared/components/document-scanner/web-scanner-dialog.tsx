@@ -194,12 +194,10 @@ export function WebScannerDialog({
     streamRef.current = null
   }, [])
 
-  // Adquire a camera na maior resolucao suportada pelo dispositivo.
+  // Adquire a camera na maior resolucao suportada pelo dispositivo. Para o stream
+  // ao sair da tela de captura (revisao/edicao) para nao manter a camera ligada.
   useEffect(() => {
     if (!open || screen !== 'camera' || cameraFailed) {
-      return
-    }
-    if (streamRef.current) {
       return
     }
 
@@ -247,8 +245,10 @@ export function WebScannerDialog({
 
     return () => {
       active = false
+      stopStream()
+      setCameraReady(false)
     }
-  }, [open, screen, cameraFailed])
+  }, [open, screen, cameraFailed, stopStream])
 
   // Reanexa o stream ao elemento de video ao voltar para a camera.
   useEffect(() => {

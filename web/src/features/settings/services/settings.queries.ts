@@ -1,14 +1,14 @@
 import { queryOptions } from '@tanstack/react-query'
-import { fetchAnthropicKeyStatus } from './settings.service'
+import { fetchSettingsStatus } from './settings.service'
 
 export const settingsKeys = {
   all: ['settings'] as const,
-  anthropicKey: () => [...settingsKeys.all, 'anthropic-key'] as const,
+  status: () => [...settingsKeys.all, 'status'] as const,
 }
 
-export function anthropicKeyStatusOptions() {
+export function settingsStatusOptions() {
   return queryOptions({
-    queryKey: settingsKeys.anthropicKey(),
-    queryFn: fetchAnthropicKeyStatus,
+    queryKey: settingsKeys.status(),
+    queryFn: fetchSettingsStatus,
   })
 }

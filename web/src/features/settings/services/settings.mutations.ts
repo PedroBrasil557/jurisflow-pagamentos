@@ -2,7 +2,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { settingsKeys } from './settings.queries'
 import {
   clearAnthropicKeyRequest,
+  clearScanbotKeyRequest,
   saveAnthropicKeyRequest,
+  saveScanbotKeyRequest,
 } from './settings.service'
 
 export function useSaveAnthropicKey() {
@@ -12,7 +14,7 @@ export function useSaveAnthropicKey() {
     mutationFn: (anthropicApiKey: string) =>
       saveAnthropicKeyRequest(anthropicApiKey),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: settingsKeys.anthropicKey() })
+      queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
     },
   })
 }
@@ -23,7 +25,32 @@ export function useClearAnthropicKey() {
   return useMutation({
     mutationFn: () => clearAnthropicKeyRequest(),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: settingsKeys.anthropicKey() })
+      queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
+    },
+  })
+}
+
+export function useSaveScanbotKey() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (scanbotLicenseKey: string) =>
+      saveScanbotKeyRequest(scanbotLicenseKey),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
+      queryClient.invalidateQueries({ queryKey: ['scanbot-license'] })
+    },
+  })
+}
+
+export function useClearScanbotKey() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => clearScanbotKeyRequest(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
+      queryClient.invalidateQueries({ queryKey: ['scanbot-license'] })
     },
   })
 }

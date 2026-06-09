@@ -6,21 +6,16 @@ const ENGINE_PATH = '/vendor/document-scanner/'
 
 let initPromise: Promise<void> | null = null
 
-function getLicenseKey(): string {
-  // A chave do Scanbot contem quebras de linha. Aceitamos tanto quebras reais
-  // quanto a sequencia literal "\n" (comum quem cola a chave em uma so linha).
-  return (import.meta.env.VITE_SCANBOT_LICENSE_KEY ?? '').replace(/\\n/g, '\n')
+// A chave do Scanbot contem quebras de linha. Aceitamos tanto quebras reais
+// quanto a sequencia literal "\n" (comum quem cola a chave em uma so linha).
+function normalizeLicenseKey(key: string): string {
+  return key.replace(/\\n/g, '\n')
 }
 
-// Indica se o Scanbot esta configurado. Sem license key usamos o fallback jscanify.
-export function isScanbotConfigured(): boolean {
-  return getLicenseKey().length > 0
-}
-
-function ensureInitialized(): Promise<void> {
+function ensureInitialized(licenseKey: string): Promise<void> {
   if (!initPromise) {
     initPromise = ScanbotSDK.initialize({
-      licenseKey: getLicenseKey(),
+      licenseKey: normalizeLicenseKey(licenseKey),
       enginePath: ENGINE_PATH,
     })
       .then(() => undefined)
@@ -35,8 +30,11 @@ function ensureInitialized(): Promise<void> {
 
 // Abre o scanner do Scanbot (captura automatica, ajuste de cantos, filtros e
 // remocao de sombra) e devolve um PDF. Retorna null se o usuario cancelar.
-export async function scanWithScanbot(): Promise<File | null> {
-  await ensureInitialized()
+// A license key vem das Configuracoes (ver scanbot-license.ts).
+export async function scanWithScanbot(
+  licenseKey: string,
+): Promise<File | null> {
+  await ensureInitialized(licenseKey)
 
   const config = new ScanbotSDK.UI.Config.DocumentScanningFlow()
   const result = await ScanbotSDK.UI.createDocumentScanner(config)

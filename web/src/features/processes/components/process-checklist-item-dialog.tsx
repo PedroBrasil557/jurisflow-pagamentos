@@ -140,6 +140,14 @@ export function ChecklistItemDialog({
       variant="info"
     >
       <div className="grid gap-4 rounded-[1.75rem] border border-dashed border-border bg-muted/35 p-5">
+        {item.readOnly ? (
+          <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-700 dark:text-blue-400">
+            {item.housingComplexLinked
+              ? 'Este documento e anexado no cadastro do conjunto (somente admin). Aqui ele e apenas exibido.'
+              : 'Vincule um conjunto ao processo para que este documento seja anexado no cadastro do conjunto.'}
+          </div>
+        ) : null}
+
         <div className="grid gap-2">
           <p className="text-sm font-semibold text-muted-foreground">
             Arquivo atual
@@ -161,39 +169,58 @@ export function ChecklistItemDialog({
                       {file.originalFileName}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {`${formatBytes(file.sizeInBytes)} • REVISAO ${file.revision}`}
+                      {`${formatBytes(file.sizeInBytes)}${
+                        file.source === 'housing_complex'
+                          ? ' • No conjunto'
+                          : ` • REVISAO ${file.revision}`
+                      }`}
                     </p>
                   </div>
 
                   <div className="flex gap-2">
-                    <Button
-                      onClick={() => void handleDownload(file.id)}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                    >
-                      <Download className="size-3.5" />
-                      Baixar
-                    </Button>
-                    <Button
-                      onClick={() =>
-                        canDeleteFiles
-                          ? onDeleteFile({
-                              fileId: file.id,
-                              fileName: file.originalFileName,
-                              processDocumentId: currentItem.id,
-                            })
-                          : undefined
-                      }
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                      className="text-destructive hover:text-destructive"
-                      disabled={!canDeleteFiles}
-                    >
-                      <Trash2 className="size-3.5" />
-                      Remover
-                    </Button>
+                    {file.source === 'housing_complex' && file.downloadUrl ? (
+                      <Button asChild size="sm" type="button" variant="outline">
+                        <a
+                          href={file.downloadUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          <Download className="size-3.5" />
+                          Baixar
+                        </a>
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => void handleDownload(file.id)}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        <Download className="size-3.5" />
+                        Baixar
+                      </Button>
+                    )}
+                    {file.source === 'housing_complex' ? null : (
+                      <Button
+                        onClick={() =>
+                          canDeleteFiles
+                            ? onDeleteFile({
+                                fileId: file.id,
+                                fileName: file.originalFileName,
+                                processDocumentId: currentItem.id,
+                              })
+                            : undefined
+                        }
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                        className="text-destructive hover:text-destructive"
+                        disabled={!canDeleteFiles}
+                      >
+                        <Trash2 className="size-3.5" />
+                        Remover
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -201,7 +228,7 @@ export function ChecklistItemDialog({
           )}
         </div>
 
-        {canSubmit ? (
+        {canSubmit && !item.readOnly ? (
           <div className="grid gap-3">
             <label
               className="flex cursor-pointer flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-card px-5 py-10 text-center transition hover:border-primary/35 hover:bg-primary/5"
@@ -299,7 +326,7 @@ export function ChecklistItemDialog({
               </p>
             ) : null}
           </div>
-        ) : (
+        ) : item.readOnly ? null : (
           <div className="rounded-2xl border border-border bg-card px-4 py-4 text-sm text-muted-foreground">
             Seu perfil permite visualizar este item, mas nao editar a
             documentacao.
@@ -307,31 +334,33 @@ export function ChecklistItemDialog({
         )}
       </div>
 
-      <div className="grid gap-3">
-        <Controller
-          control={control}
-          name="observation"
-          render={({ field }) => (
-            <FormTextArea
-              error={errors.observation?.message}
-              id={observationInputId}
-              label="Observações (max 300 caracteres)"
-              maxLength={300}
-              onBlur={field.onBlur}
-              onChange={(event) => {
-                field.onChange(event.target.value)
-              }}
-              placeholder="Adicione uma observação sobre este documento..."
-              ref={field.ref}
-              textareaClassName="min-h-36"
-              value={field.value}
-            />
-          )}
-        />
-        <p className="text-right text-xs text-muted-foreground">
-          {`${observation.length}/300`}
-        </p>
-      </div>
+      {item.readOnly ? null : (
+        <div className="grid gap-3">
+          <Controller
+            control={control}
+            name="observation"
+            render={({ field }) => (
+              <FormTextArea
+                error={errors.observation?.message}
+                id={observationInputId}
+                label="Observações (max 300 caracteres)"
+                maxLength={300}
+                onBlur={field.onBlur}
+                onChange={(event) => {
+                  field.onChange(event.target.value)
+                }}
+                placeholder="Adicione uma observação sobre este documento..."
+                ref={field.ref}
+                textareaClassName="min-h-36"
+                value={field.value}
+              />
+            )}
+          />
+          <p className="text-right text-xs text-muted-foreground">
+            {`${observation.length}/300`}
+          </p>
+        </div>
+      )}
 
       {errorMessage ? (
         <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -343,7 +372,7 @@ export function ChecklistItemDialog({
         <Button onClick={onClose} type="button" variant="ghost">
           Fechar
         </Button>
-        {canSubmit ? (
+        {canSubmit && !item.readOnly ? (
           <Button
             disabled={isSubmitting}
             onClick={() => void handleSubmit(handleFormSubmit)()}

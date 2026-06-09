@@ -4,6 +4,7 @@ import { pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 export const appSettings = pgTable('app_settings', {
   id: text('id').primaryKey(),
   anthropicApiKey: text('anthropic_api_key'),
+  scanbotLicenseKey: text('scanbot_license_key'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at')
     .defaultNow()

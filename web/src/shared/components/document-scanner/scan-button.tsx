@@ -1,8 +1,10 @@
 import { Capacitor } from '@capacitor/core'
+import { useQuery } from '@tanstack/react-query'
 import { ScanLine } from 'lucide-react'
 import { lazy, Suspense, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
+import { resolveScanbotKey, scanbotLicenseQuery } from './scanbot-license'
 
 const WebScannerDialog = lazy(() =>
   import('./web-scanner-dialog').then((module) => ({
@@ -18,6 +20,7 @@ type ScanButtonProps = {
 export function ScanButton({ onComplete, disabled }: ScanButtonProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  const licenseQuery = useQuery(scanbotLicenseQuery)
 
   async function handleClick() {
     // No app nativo (iOS/Android) usamos o scanner do sistema (VisionKit/ML Kit).
@@ -40,14 +43,16 @@ export function ScanButton({ onComplete, disabled }: ScanButtonProps) {
       return
     }
 
-    // No navegador, se houver license key, usamos o Scanbot (qualidade CamScanner,
-    // funciona ate no iPhone). Em caso de falha de licenca/engine, cai no jscanify.
-    if (import.meta.env.VITE_SCANBOT_LICENSE_KEY) {
+    // No navegador, se houver license key (Configuracoes ou env), usamos o
+    // Scanbot (qualidade CamScanner, funciona ate no iPhone). Em caso de falha
+    // de licenca/engine, cai no jscanify.
+    const scanbotKey = resolveScanbotKey(licenseQuery.data)
+    if (scanbotKey) {
       setBusy(true)
 
       try {
         const { scanWithScanbot } = await import('./scanbot-scan')
-        const file = await scanWithScanbot()
+        const file = await scanWithScanbot(scanbotKey)
 
         if (file) {
           onComplete(file)

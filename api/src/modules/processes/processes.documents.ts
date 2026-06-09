@@ -72,6 +72,14 @@ export const defaultProcessDocumentTypes = [
     allowsMultipleFiles: false,
   },
   {
+    key: 'matricula_imovel',
+    label: 'Visualizacao da matricula do imovel',
+    sortOrder: 90,
+    displayNumber: '9',
+    isRequired: true,
+    allowsMultipleFiles: false,
+  },
+  {
     key: 'contrato_honorarios_advocaticios',
     label: 'Contrato de honorarios advocaticios',
     sortOrder: 100,
@@ -141,3 +149,31 @@ export const documentDisplayNumberByKey = new Map<string, string | null>(
     (type) => [type.key, type.displayNumber],
   ),
 )
+
+// Tipos cujo arquivo e anexado UMA vez no cadastro do CONJUNTO (housing_complex)
+// e espelhado (somente leitura) no checklist de todos os processos do conjunto.
+export const housingComplexDocumentKeys = new Set<string>([
+  'solicitacao_caixa',
+  'requerimento_adm_caixa',
+  'matricula_imovel',
+])
+
+export function isHousingComplexDocument(key: string): boolean {
+  return housingComplexDocumentKeys.has(key)
+}
+
+// Rotulo por key (para telas que listam documentos do conjunto).
+export const documentLabelByKey = new Map<string, string>(
+  [...defaultProcessDocumentTypes, ...conditionalProcessDocumentTypes].map(
+    (type) => [type.key, type.label],
+  ),
+)
+
+// Tipos do conjunto na ordem de exibicao, para a tela do cadastro do conjunto.
+export const housingComplexDocumentTypes = defaultProcessDocumentTypes
+  .filter((type) => housingComplexDocumentKeys.has(type.key))
+  .map((type) => ({
+    key: type.key,
+    label: type.label,
+    displayNumber: type.displayNumber,
+  }))

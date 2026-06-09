@@ -9,3 +9,13 @@ export const saveAnthropicKeyPayloadSchema = z.object({
 export type SaveAnthropicKeyPayload = z.infer<
   typeof saveAnthropicKeyPayloadSchema
 >
+
+export const saveScanbotKeyPayloadSchema = z.object({
+  scanbotLicenseKey: z
+    .string()
+    .trim()
+    .min(20, { message: 'License key do Scanbot invalida.' })
+    .max(4000, { message: 'License key do Scanbot muito longa.' }),
+})
+
+export type SaveScanbotKeyPayload = z.infer<typeof saveScanbotKeyPayloadSchema>

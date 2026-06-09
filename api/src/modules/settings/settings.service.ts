@@ -5,13 +5,17 @@ import { appSettings } from './settings.schema'
 
 const SETTINGS_ID = 'default'
 
-export type AnthropicKeySource = 'database' | 'environment' | null
+export type KeySource = 'database' | 'environment' | null
 
-export type AnthropicKeyStatus = {
+export type KeyStatus = {
   configured: boolean
   last4: string | null
-  source: AnthropicKeySource
+  source: KeySource
 }
+
+// Mantido por compatibilidade com importacoes existentes.
+export type AnthropicKeySource = KeySource
+export type AnthropicKeyStatus = KeyStatus
 
 // Le a chave salva no banco (texto puro), ou null se nao houver.
 export async function getAnthropicApiKey(): Promise<string | null> {
@@ -83,4 +87,71 @@ export async function clearAnthropicApiKey(): Promise<AnthropicKeyStatus> {
     })
 
   return getAnthropicKeyStatus()
+}
+
+// --- Scanbot Web SDK license key ---
+// Diferente da chave Anthropic (so-servidor), esta precisa chegar ao navegador
+// para inicializar o SDK. E travada por dominio, entao nao e segredo real.
+
+// Le a license inteira salva no banco (texto puro), ou null se nao houver.
+export async function getScanbotLicenseKey(): Promise<string | null> {
+  const [row] = await db
+    .select({ scanbotLicenseKey: appSettings.scanbotLicenseKey })
+    .from(appSettings)
+    .where(eq(appSettings.id, SETTINGS_ID))
+    .limit(1)
+
+  const key = row?.scanbotLicenseKey?.trim()
+
+  return key ? key : null
+}
+
+// Status para o painel admin. Nunca retorna a chave inteira.
+export async function getScanbotKeyStatus(): Promise<KeyStatus> {
+  const dbKey = await getScanbotLicenseKey()
+
+  if (dbKey) {
+    return { configured: true, last4: dbKey.slice(-4), source: 'database' }
+  }
+
+  return { configured: false, last4: null, source: null }
+}
+
+export async function saveScanbotLicenseKey(key: string): Promise<KeyStatus> {
+  const trimmed = key.trim()
+  const now = new Date()
+
+  await db
+    .insert(appSettings)
+    .values({
+      id: SETTINGS_ID,
+      scanbotLicenseKey: trimmed,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { scanbotLicenseKey: trimmed, updatedAt: now },
+    })
+
+  return getScanbotKeyStatus()
+}
+
+export async function clearScanbotLicenseKey(): Promise<KeyStatus> {
+  const now = new Date()
+
+  await db
+    .insert(appSettings)
+    .values({
+      id: SETTINGS_ID,
+      scanbotLicenseKey: null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { scanbotLicenseKey: null, updatedAt: now },
+    })
+
+  return getScanbotKeyStatus()
 }

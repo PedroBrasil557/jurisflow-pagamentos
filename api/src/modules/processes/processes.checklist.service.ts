@@ -21,9 +21,15 @@ import {
   getProcessRecordOrThrow,
 } from './processes.access'
 import {
+  getHousingComplexChecklistFiles,
+  type HousingComplexChecklistFile,
+} from '../housing-complexes/housing-complexes.documents.service'
+import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
   documentDisplayNumberByKey,
+  documentLabelByKey,
+  isHousingComplexDocument,
 } from './processes.documents'
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
@@ -466,32 +472,100 @@ function getChecklistSubmitSuccessMessage(input: {
   return 'Observacao salva com sucesso.'
 }
 
+type ChecklistResponseFile = {
+  id: string
+  processDocumentId: string
+  originalFileName: string
+  mimeType: string
+  sizeInBytes: number
+  revision: number | null
+  uploadedAt: Date
+  uploadedBy: { id: string; name: string; role: string }
+  source: 'process' | 'housing_complex'
+  downloadUrl: string | null
+}
+
 function buildChecklistResponse(input: {
   checklistItems: Awaited<ReturnType<typeof listChecklistItems>>
   currentFiles: ChecklistFileRecord
+  housingComplexId: string | null
+  housingComplexFiles: Map<string, HousingComplexChecklistFile>
 }) {
   const currentFilesByChecklistItemId = groupCurrentFilesByChecklistItemId(
     input.currentFiles,
   )
 
   const items = input.checklistItems.map((checklistItem) => {
-    const files = currentFilesByChecklistItemId.get(checklistItem.id) ?? []
+    const key = checklistItem.documentType.key
+    const scope = isHousingComplexDocument(key) ? 'housing_complex' : 'process'
+
+    // Arquivos do processo (legado/normais).
+    const processFiles: ChecklistResponseFile[] = (
+      currentFilesByChecklistItemId.get(checklistItem.id) ?? []
+    ).map((file) => ({
+      id: file.id,
+      processDocumentId: file.processDocumentId,
+      originalFileName: file.originalFileName,
+      mimeType: file.mimeType,
+      sizeInBytes: file.sizeInBytes,
+      revision: file.revision,
+      uploadedAt: file.uploadedAt,
+      uploadedBy: file.uploadedBy,
+      source: 'process',
+      downloadUrl: null,
+    }))
+
+    let currentFiles = processFiles
+    let housingComplexLinked = true
+
+    if (scope === 'housing_complex') {
+      housingComplexLinked = input.housingComplexId !== null
+      const conjuntoFile = input.housingComplexFiles.get(key)
+
+      if (conjuntoFile) {
+        // Espelho do conjunto na frente; arquivos legados do processo contam como
+        // fallback (nada se perde do que ja foi anexado por processo).
+        currentFiles = [
+          {
+            id: conjuntoFile.id,
+            processDocumentId: checklistItem.id,
+            originalFileName: conjuntoFile.originalFileName,
+            mimeType: conjuntoFile.mimeType,
+            sizeInBytes: conjuntoFile.sizeInBytes,
+            revision: null,
+            uploadedAt: conjuntoFile.uploadedAt,
+            uploadedBy: conjuntoFile.uploadedBy,
+            source: 'housing_complex',
+            downloadUrl: conjuntoFile.downloadUrl,
+          },
+          ...processFiles,
+        ]
+      }
+    }
 
     return {
       id: checklistItem.id,
       status: checklistItem.status,
       observation: checklistItem.observation,
+      scope,
+      readOnly: scope === 'housing_complex',
+      housingComplexLinked,
       documentType: {
         ...checklistItem.documentType,
-        number:
-          documentDisplayNumberByKey.get(checklistItem.documentType.key) ??
-          null,
+        number: documentDisplayNumberByKey.get(key) ?? null,
+        scope,
       },
-      currentFiles: files,
+      currentFiles,
     }
   })
 
-  const requiredItems = items.filter((item) => item.documentType.isRequired)
+  // Itens de conjunto sem conjunto vinculado nao contam como obrigatorios (nao ha
+  // como anexar) — ficam visiveis/pendentes com aviso, mas nao travam a completude.
+  const requiredItems = items.filter(
+    (item) =>
+      item.documentType.isRequired &&
+      !(item.scope === 'housing_complex' && !item.housingComplexLinked),
+  )
   const requiredCompleted = requiredItems.filter((item) =>
     getChecklistPresenceStatus({
       currentFileCount: item.currentFiles.length,
@@ -877,6 +951,44 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   return updatedProcess
 }
 
+// Monta o checklist do processo SEM checagem de acesso (uso interno: getProcessChecklist
+// adiciona o controle de acesso antes; o re-sync por conjunto chama direto).
+async function loadProcessChecklistData(currentProcess: ProcessRecord) {
+  await ensureProcessChecklistItems(currentProcess.id)
+
+  const allConditionalKeys = new Set<string>(
+    conditionalProcessDocumentTypes.map((d) => d.key),
+  )
+  const activeConditionalKeys = getConditionalDocumentKeys(currentProcess)
+
+  const allChecklistItems = await listChecklistItems(currentProcess.id)
+
+  // Filter out conditional items that don't apply to this process
+  const checklistItems = allChecklistItems.filter((item) => {
+    if (!allConditionalKeys.has(item.documentType.key)) {
+      return true
+    }
+
+    return activeConditionalKeys.has(item.documentType.key)
+  })
+
+  const housingComplexId = currentProcess.housingComplexId ?? null
+
+  const [currentFiles, housingComplexFiles] = await Promise.all([
+    listCurrentChecklistFiles(checklistItems.map((item) => item.id)),
+    housingComplexId
+      ? getHousingComplexChecklistFiles(housingComplexId)
+      : Promise.resolve(new Map<string, HousingComplexChecklistFile>()),
+  ])
+
+  return buildChecklistResponse({
+    checklistItems,
+    currentFiles,
+    housingComplexId,
+    housingComplexFiles,
+  })
+}
+
 export async function getProcessChecklist(
   processId: string,
   userId: string,
@@ -890,32 +1002,30 @@ export async function getProcessChecklist(
     })
   assertCanAccessChecklist(perms, relationship)
 
-  await ensureProcessChecklistItems(processId)
+  return loadProcessChecklistData(currentProcess)
+}
 
-  const allConditionalKeys = new Set<string>(
-    conditionalProcessDocumentTypes.map((d) => d.key),
-  )
-  const activeConditionalKeys = getConditionalDocumentKeys(currentProcess)
+// Re-sincroniza o status de todos os processos de um conjunto. Chamado quando um
+// documento do conjunto e anexado/removido — a completude desses processos muda
+// sem que haja qualquer mutacao de checklist no proprio processo.
+export async function syncProcessesForHousingComplex(input: {
+  housingComplexId: string
+  actor: ProcessActor
+}) {
+  const processes = await db
+    .select({ id: process.id })
+    .from(process)
+    .where(eq(process.housingComplexId, input.housingComplexId))
 
-  const allChecklistItems = await listChecklistItems(processId)
-
-  // Filter out conditional items that don't apply to this process
-  const checklistItems = allChecklistItems.filter((item) => {
-    if (!allConditionalKeys.has(item.documentType.key)) {
-      return true
-    }
-
-    return activeConditionalKeys.has(item.documentType.key)
-  })
-
-  const currentFiles = await listCurrentChecklistFiles(
-    checklistItems.map((item) => item.id),
-  )
-
-  return buildChecklistResponse({
-    checklistItems,
-    currentFiles,
-  })
+  for (const { id } of processes) {
+    const currentProcess = await getProcessRecordOrThrow(id)
+    const checklist = await loadProcessChecklistData(currentProcess)
+    await syncProcessStatusAfterChecklistChange({
+      processId: id,
+      checklist,
+      actor: input.actor,
+    })
+  }
 }
 
 export async function submitProcessChecklistItem(input: {
@@ -961,6 +1071,16 @@ export async function submitProcessChecklistItem(input: {
     input.markOkWithoutFile === false &&
     checklistItem.status === 'OK_SEM_ARQUIVO'
   const selectedFile = input.file ?? null
+
+  // Documentos do conjunto sao gerenciados no cadastro do conjunto (somente admin).
+  // No processo sao 100% somente leitura — bloqueia anexo, marcacao, desmarcacao
+  // e ate edicao de observacao.
+  if (isHousingComplexDocument(checklistItem.documentType.key)) {
+    throw new ProcessServiceError(
+      400,
+      'Este documento e gerenciado no cadastro do conjunto, nao no processo.',
+    )
+  }
 
   if (
     !selectedFile &&
@@ -1271,10 +1391,6 @@ export async function downloadAllChecklistFiles(
       asc(processDocumentFile.uploadedAt),
     )
 
-  if (files.length === 0) {
-    return { files: [] }
-  }
-
   const expiresInSeconds = 60 * 10
   const result = await Promise.all(
     files.map(async (file) => {
@@ -1300,6 +1416,26 @@ export async function downloadAllChecklistFiles(
       }
     }),
   )
+
+  // Inclui os documentos do conjunto (espelhados no checklist) no "baixar todos".
+  if (currentProcess.housingComplexId) {
+    const conjuntoFiles = await getHousingComplexChecklistFiles(
+      currentProcess.housingComplexId,
+    )
+    for (const [key, file] of conjuntoFiles) {
+      result.push({
+        id: file.id,
+        originalFileName: buildChecklistDownloadFileName({
+          documentNumber: documentDisplayNumberByKey.get(key) ?? null,
+          documentTypeLabel: documentLabelByKey.get(key) ?? key,
+          processCode: currentProcess.code,
+          processFullName: currentProcess.fullName,
+          originalFileName: file.originalFileName,
+        }),
+        downloadUrl: file.downloadUrl,
+      })
+    }
+  }
 
   return { files: result }
 }

@@ -106,3 +106,82 @@ export async function deleteHousingComplexRequest(housingComplexId: string) {
 
   return await response.json()
 }
+
+// --- Documentos do conjunto ---
+
+const housingComplexDocumentsRoute =
+  adminHousingComplexesRoute[':housingComplexId'].documents
+
+type HousingComplexFilesResponse = InferResponseType<
+  typeof housingComplexDocumentsRoute.$get,
+  200
+>
+
+export type HousingComplexFile = HousingComplexFilesResponse['items'][number]
+
+export async function fetchHousingComplexFiles(housingComplexId: string) {
+  const response = await housingComplexDocumentsRoute.$get({
+    param: { housingComplexId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar os documentos do conjunto.',
+      ),
+    )
+  }
+
+  return (await response.json()) as HousingComplexFilesResponse
+}
+
+export async function uploadHousingComplexFileRequest(input: {
+  housingComplexId: string
+  documentTypeKey: string
+  file: File
+}) {
+  const url = housingComplexDocumentsRoute[':documentTypeKey'].$url({
+    param: {
+      housingComplexId: input.housingComplexId,
+      documentTypeKey: input.documentTypeKey,
+    },
+  })
+
+  const formData = new FormData()
+  formData.append('file', input.file)
+
+  const response = await fetch(url, {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel anexar o documento.'),
+    )
+  }
+
+  return await response.json()
+}
+
+export async function deleteHousingComplexFileRequest(input: {
+  housingComplexId: string
+  fileId: string
+}) {
+  const response = await housingComplexDocumentsRoute[':fileId'].$delete({
+    param: {
+      housingComplexId: input.housingComplexId,
+      fileId: input.fileId,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel remover o documento.'),
+    )
+  }
+
+  return await response.json()
+}
