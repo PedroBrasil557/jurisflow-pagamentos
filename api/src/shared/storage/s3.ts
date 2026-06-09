@@ -180,7 +180,13 @@ export async function deleteStorageObject(input: {
 function buildAttachmentDisposition(fileName: string): string {
   const clean = fileName.replace(/[\r\n"]/g, '')
   const asciiFallback = clean.replace(/[^\x20-\x7E]/g, '_')
-  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(clean)}`
+  // encodeURIComponent deixa ' ( ) * sem encodar, mas eles nao sao validos no
+  // ext-value do RFC 5987 — encoda-os tambem para nomes com apostrofo etc.
+  const encoded = encodeURIComponent(clean).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`
 }
 
 export async function createStorageObjectDownloadUrl(input: {
