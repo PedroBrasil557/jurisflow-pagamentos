@@ -9,7 +9,7 @@ sessão usa sua própria worktree** (pasta + index próprios, histórico compart
 ```powershell
 cd c:\jurisflow_web\jurisflow
 git fetch origin
-git worktree add ..\wt-<nome> -b feat/<nome> origin/dev
+git worktree add ..\wt-<nome> -b feat/<nome> origin/main
 git worktree list
 ```
 
@@ -52,5 +52,6 @@ git worktree remove ..\wt-<nome>     # remove a pasta (a branch permanece)
 1. **Uma branch por sessão** — nunca duas sessões na mesma branch.
 2. **`git add <caminhos>` explícito** — nunca `git add -A`/`.` em pasta compartilhada.
    (Em pasta compartilhada, prefira `git commit -- <caminhos>` para commitar só o seu.)
-3. **`git pull --rebase origin dev`** antes de começar; commits pequenos e frequentes.
-4. **Integrar via PR para `dev`** (uma branch por frente).
+3. **`git pull --rebase origin main`** antes de começar; commits pequenos e frequentes.
+4. **Integrar via PR para `main`** (uma branch por frente). ⚠️ merge na `main`
+   dispara o deploy de **produção** (.github/workflows/deploy.yml).
