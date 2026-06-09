@@ -57,7 +57,9 @@ export function ChecklistItemCard({
   item: ProcessChecklistItem
   onOpen: (item: ProcessChecklistItem) => void
 }) {
-  const sortOrderLabel = String(item.documentType.sortOrder).padStart(2, '0')
+  const numberPrefix = item.documentType.number
+    ? `${item.documentType.number}. `
+    : ''
 
   return (
     <button
@@ -68,7 +70,7 @@ export function ChecklistItemCard({
       <div className="flex items-start justify-between gap-3">
         <div className="grid gap-2">
           <p className="text-lg font-semibold text-foreground">
-            {`${sortOrderLabel}. ${item.documentType.label}`}
+            {`${numberPrefix}${item.documentType.label}`}
           </p>
           <p className="text-sm text-muted-foreground">
             {getChecklistItemSecondaryLabel(item)}

@@ -304,7 +304,9 @@ export function WebScannerDialog({
             if (!liveScannerRef.current) {
               liveScannerRef.current = createScanner()
             }
-            const detected = detectCorners(liveScannerRef.current, small)
+            const detected = detectCorners(liveScannerRef.current, small, {
+              fallback: false,
+            })
             if (detected) {
               const inv = 1 / scale
               setLiveCorners({

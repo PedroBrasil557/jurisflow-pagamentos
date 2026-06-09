@@ -23,6 +23,7 @@ import {
 import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
+  documentDisplayNumberByKey,
 } from './processes.documents'
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
@@ -480,7 +481,12 @@ function buildChecklistResponse(input: {
       id: checklistItem.id,
       status: checklistItem.status,
       observation: checklistItem.observation,
-      documentType: checklistItem.documentType,
+      documentType: {
+        ...checklistItem.documentType,
+        number:
+          documentDisplayNumberByKey.get(checklistItem.documentType.key) ??
+          null,
+      },
       currentFiles: files,
     }
   })
@@ -1100,7 +1106,8 @@ export async function getProcessChecklistFileDownload(input: {
   }
 
   const downloadFileName = buildChecklistDownloadFileName({
-    documentTypeSortOrder: checklistItem.documentType.sortOrder,
+    documentNumber:
+      documentDisplayNumberByKey.get(checklistItem.documentType.key) ?? null,
     documentTypeLabel: checklistItem.documentType.label,
     processCode: currentProcess.code,
     processFullName: currentProcess.fullName,
@@ -1241,8 +1248,8 @@ export async function downloadAllChecklistFiles(
       bucketName: processDocumentFile.bucketName,
       objectKey: processDocumentFile.objectKey,
       originalFileName: processDocumentFile.originalFileName,
+      documentTypeKey: processDocumentType.key,
       documentTypeLabel: processDocumentType.label,
-      documentTypeSortOrder: processDocumentType.sortOrder,
     })
     .from(processDocumentFile)
     .innerJoin(
@@ -1278,7 +1285,8 @@ export async function downloadAllChecklistFiles(
       })
 
       const downloadFileName = buildChecklistDownloadFileName({
-        documentTypeSortOrder: file.documentTypeSortOrder,
+        documentNumber:
+          documentDisplayNumberByKey.get(file.documentTypeKey) ?? null,
         documentTypeLabel: file.documentTypeLabel,
         processCode: currentProcess.code,
         processFullName: currentProcess.fullName,

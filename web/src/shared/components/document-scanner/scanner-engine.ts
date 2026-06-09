@@ -47,12 +47,21 @@ type OpenCvModule = {
     closed: boolean,
   ): void
   isContourConvex(contour: CvMat): boolean
+  resize(
+    src: CvMat,
+    dst: CvMat,
+    dsize: CvSize,
+    fx?: number,
+    fy?: number,
+    interpolation?: number,
+  ): void
   COLOR_RGBA2GRAY: number
   MORPH_RECT: number
   MORPH_CLOSE: number
   RETR_EXTERNAL: number
   CHAIN_APPROX_SIMPLE: number
   BORDER_DEFAULT: number
+  INTER_AREA: number
 }
 
 type ImageSource = HTMLCanvasElement | HTMLImageElement
@@ -198,6 +207,21 @@ function orderCorners(corners: CornerPoints): CornerPoints {
   }
 }
 
+function scaleCorners(corners: CornerPoints, factor: number): CornerPoints {
+  const scale = (p: Corner): Corner => ({ x: p.x * factor, y: p.y * factor })
+  return {
+    topLeftCorner: scale(corners.topLeftCorner),
+    topRightCorner: scale(corners.topRightCorner),
+    bottomRightCorner: scale(corners.bottomRightCorner),
+    bottomLeftCorner: scale(corners.bottomLeftCorner),
+  }
+}
+
+// Resolucao de trabalho da deteccao. Os parametros (blur/morfologia) sao fixos
+// em pixels e so funcionam bem em imagens pequenas; detectar acima disso (foto
+// em resolucao cheia, ~4000px) faz as bordas do documento nao fecharem.
+const MAX_DETECT_DIM = 640
+
 // Descarta deteccoes improvaveis: contorno minusculo (ruido), o frame inteiro
 // (sem documento real) ou lados degenerados — nesses casos e melhor usar os
 // cantos padrao do que aplicar um recorte/perspectiva torto.
@@ -262,31 +286,36 @@ function detectDocumentQuad(cv: OpenCvModule, mat: CvMat): CornerPoints | null {
       try {
         const area = cv.contourArea(contour)
 
-        if (area < imageArea * 0.08 || area > imageArea * 0.99) {
+        // Mesmo piso de area do isPlausibleQuad (12%) para nao gastar
+        // approxPolyDP num quad que seria descartado depois.
+        if (area < imageArea * 0.12 || area > imageArea * 0.99) {
           continue
         }
 
         const peri = cv.arcLength(contour, true)
         const approx = new cv.Mat()
-        cv.approxPolyDP(contour, approx, 0.02 * peri, true)
 
-        // Apenas quadrilateros convexos sao candidatos a documento. A ordem dos
-        // pontos vem arbitraria do contorno; orderCorners() normaliza depois.
-        if (
-          approx.rows === 4 &&
-          cv.isContourConvex(approx) &&
-          area > bestArea
-        ) {
-          bestArea = area
-          best = {
-            topLeftCorner: { x: approx.data32S[0], y: approx.data32S[1] },
-            topRightCorner: { x: approx.data32S[2], y: approx.data32S[3] },
-            bottomRightCorner: { x: approx.data32S[4], y: approx.data32S[5] },
-            bottomLeftCorner: { x: approx.data32S[6], y: approx.data32S[7] },
+        try {
+          cv.approxPolyDP(contour, approx, 0.02 * peri, true)
+
+          // Apenas quadrilateros convexos sao candidatos a documento. A ordem
+          // dos pontos vem arbitraria; orderCorners() normaliza depois.
+          if (
+            approx.rows === 4 &&
+            cv.isContourConvex(approx) &&
+            area > bestArea
+          ) {
+            bestArea = area
+            best = {
+              topLeftCorner: { x: approx.data32S[0], y: approx.data32S[1] },
+              topRightCorner: { x: approx.data32S[2], y: approx.data32S[3] },
+              bottomRightCorner: { x: approx.data32S[4], y: approx.data32S[5] },
+              bottomLeftCorner: { x: approx.data32S[6], y: approx.data32S[7] },
+            }
           }
+        } finally {
+          approx.delete()
         }
-
-        approx.delete()
       } finally {
         contour.delete()
       }
@@ -306,24 +335,58 @@ function detectDocumentQuad(cv: OpenCvModule, mat: CvMat): CornerPoints | null {
 // Detecta automaticamente os 4 cantos do documento numa imagem/canvas.
 // Tenta primeiro o detector robusto (approxPolyDP); se falhar, recorre ao
 // jscanify. Reordena e valida; devolve null quando nada e confiavel.
+//
+// `fallback` controla o segundo motor (jscanify), que roda outro pipeline
+// Canny/contorno completo. No preview ao vivo (~4fps) passamos `false` para
+// nao executar dois pipelines por quadro — o proximo quadro tenta de novo.
 export function detectCorners(
   scanner: JscanifyInstance,
   source: ImageSource,
+  options: { fallback?: boolean } = {},
 ): CornerPoints | null {
+  const { fallback = true } = options
   const cv = window.cv
   if (!cv) {
     return null
   }
 
   const mat = cv.imread(source)
+  const fullWidth = mat.cols
+  const fullHeight = mat.rows
+
+  // Detecta sempre num quadro reduzido: os parametros (blur/morfologia) sao
+  // fixos em pixels e so funcionam em imagens pequenas; numa foto em resolucao
+  // cheia (~4000px) eles nao fecham as bordas e a deteccao falha. Detecta no
+  // reduzido e escala os cantos de volta para a resolucao original (o recorte
+  // continua usando a imagem cheia, sem perda de qualidade). Tambem e mais
+  // rapido.
+  const longest = Math.max(fullWidth, fullHeight)
+  const scale = longest > MAX_DETECT_DIM ? MAX_DETECT_DIM / longest : 1
+
+  let work = mat
+  if (scale < 1) {
+    work = new cv.Mat()
+    cv.resize(
+      mat,
+      work,
+      new cv.Size(
+        Math.round(fullWidth * scale),
+        Math.round(fullHeight * scale),
+      ),
+      0,
+      0,
+      cv.INTER_AREA,
+    )
+  }
+  const inv = 1 / scale
 
   try {
     // 1) Detector robusto (maior quadrilatero convexo).
     try {
-      const quad = detectDocumentQuad(cv, mat)
+      const quad = detectDocumentQuad(cv, work)
       if (quad) {
-        const ordered = orderCorners(quad)
-        if (isPlausibleQuad(ordered, mat.cols, mat.rows)) {
+        const ordered = orderCorners(scaleCorners(quad, inv))
+        if (isPlausibleQuad(ordered, fullWidth, fullHeight)) {
           return ordered
         }
       }
@@ -331,8 +394,12 @@ export function detectCorners(
       // Cai para o jscanify abaixo.
     }
 
+    if (!fallback) {
+      return null
+    }
+
     // 2) Fallback jscanify (findPaperContour devolve copia propria; liberar).
-    const contour = scanner.findPaperContour(mat)
+    const contour = scanner.findPaperContour(work)
     if (!contour) {
       return null
     }
@@ -349,13 +416,16 @@ export function detectCorners(
         return null
       }
 
-      const ordered = orderCorners(corners as CornerPoints)
+      const ordered = orderCorners(scaleCorners(corners as CornerPoints, inv))
 
-      return isPlausibleQuad(ordered, mat.cols, mat.rows) ? ordered : null
+      return isPlausibleQuad(ordered, fullWidth, fullHeight) ? ordered : null
     } finally {
       contour.delete()
     }
   } finally {
+    if (work !== mat) {
+      work.delete()
+    }
     mat.delete()
   }
 }

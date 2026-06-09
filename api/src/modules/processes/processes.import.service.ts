@@ -6,10 +6,7 @@ import {
   getProcessChecklist,
   uploadProcessChecklistFile,
 } from './processes.checklist.service'
-import {
-  conditionalProcessDocumentTypes,
-  defaultProcessDocumentTypes,
-} from './processes.documents'
+import { documentDisplayNumberByKey } from './processes.documents'
 import { SPLITTABLE_DOCUMENT_KEYS } from './processes.extraction.normalizer'
 import { MAX_FILE_SIZE_IN_BYTES } from './processes.extraction.service'
 import type { ExtractedDocument } from './processes.extraction.types'
@@ -25,15 +22,10 @@ export const importBundleDocumentsSchema = z.array(
   }),
 )
 
-const sortOrderByKey = new Map<string, number>(
-  [...defaultProcessDocumentTypes, ...conditionalProcessDocumentTypes].map(
-    (type) => [type.key, type.sortOrder],
-  ),
-)
-
 function buildSplitFileName(documentTypeKey: string) {
-  const sortOrder = sortOrderByKey.get(documentTypeKey) ?? 0
-  return `${String(sortOrder).padStart(2, '0')}-${documentTypeKey}.pdf`
+  const number = documentDisplayNumberByKey.get(documentTypeKey)
+  const prefix = number ? `${number}-` : ''
+  return `${prefix}${documentTypeKey}.pdf`
 }
 
 // Desmembra o PDF empacotado e anexa cada parte ao item de checklist do tipo.
