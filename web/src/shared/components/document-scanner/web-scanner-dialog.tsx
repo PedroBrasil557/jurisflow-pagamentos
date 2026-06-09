@@ -210,6 +210,7 @@ export function WebScannerDialog({
   const [pages, setPages] = useState<ScannedPage[]>([])
   const [filter, setFilter] = useState<FilterMode>('color')
   const [error, setError] = useState('')
+  const [flash, setFlash] = useState(false)
 
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
@@ -450,6 +451,7 @@ export function WebScannerDialog({
     setPages([])
     setFilter('color')
     setError('')
+    setFlash(false)
     setCameraReady(false)
     setCameraFailed(false)
     setVideoDim(null)
@@ -509,6 +511,10 @@ export function WebScannerDialog({
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
     hapticTap()
+    // Flash visual de confirmacao (funciona em qualquer aparelho, iPhone
+    // incluso, onde a vibracao nao existe).
+    setFlash(true)
+    window.setTimeout(() => setFlash(false), 130)
     void addPageFromCanvas(canvas)
   }
 
@@ -750,6 +756,10 @@ export function WebScannerDialog({
             ref={fileInputRef}
             type="file"
           />
+
+          {flash ? (
+            <div className="pointer-events-none absolute inset-0 z-40 bg-white" />
+          ) : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
