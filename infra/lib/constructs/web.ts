@@ -1,17 +1,17 @@
-import { Construct } from 'constructs';
-import * as s3 from 'aws-cdk-lib/aws-s3';
+import { Construct } from "constructs";
+import * as s3 from "aws-cdk-lib/aws-s3";
 import {
   BucketDeployment,
   CacheControl as DeploymentCacheControl,
   Source,
-} from 'aws-cdk-lib/aws-s3-deployment';
+} from "aws-cdk-lib/aws-s3-deployment";
 import {
   Duration,
   Fn,
   RemovalPolicy,
   aws_cloudfront,
   aws_cloudfront_origins,
-} from 'aws-cdk-lib';
+} from "aws-cdk-lib";
 import {
   AllowedMethods,
   CachePolicy,
@@ -21,11 +21,11 @@ import {
   FunctionEventType,
   OriginRequestPolicy,
   S3OriginAccessControl,
-} from 'aws-cdk-lib/aws-cloudfront';
-import path from 'path';
-import { getEnvName } from '../utils/getEnvName';
-// import { Certificate } from 'aws-cdk-lib/aws-certificatemanager';
-// import { env } from '../config/env';
+} from "aws-cdk-lib/aws-cloudfront";
+import path from "path";
+import { getEnvName } from "../utils/getEnvName";
+import { Certificate } from "aws-cdk-lib/aws-certificatemanager";
+import { env } from "../config/env";
 
 interface Props {
   apiUrl: string;
@@ -37,20 +37,23 @@ export class WebApp extends Construct {
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
 
-    const appPath = path.join(__dirname, '../../../web/dist');
-    const appAssetsPath = path.join(appPath, 'assets');
+    const appPath = path.join(__dirname, "../../../web/dist");
+    const appAssetsPath = path.join(appPath, "assets");
 
-    const webBucket = new s3.Bucket(this, 'WebAppBucket', {
-      bucketName: getEnvName('jurisflow-web-bucket'),
+    const webBucket = new s3.Bucket(this, "WebAppBucket", {
+      bucketName: getEnvName("jurisflow-web-bucket"),
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       autoDeleteObjects: true,
       removalPolicy: RemovalPolicy.DESTROY,
     });
 
-    const originAccessControl = new S3OriginAccessControl(this, 'OriginAccessControl');
+    const originAccessControl = new S3OriginAccessControl(
+      this,
+      "OriginAccessControl",
+    );
     const spaRewriteFunction = new aws_cloudfront.Function(
       this,
-      'SpaRewriteFunction',
+      "SpaRewriteFunction",
       {
         code: FunctionCode.fromInline(`
 function handler(event) {
@@ -72,26 +75,34 @@ function handler(event) {
       },
     );
 
-    const webOrigin = aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(
-      webBucket,
-      {
+    const webOrigin =
+      aws_cloudfront_origins.S3BucketOrigin.withOriginAccessControl(webBucket, {
         originAccessControl,
+      });
+    const apiOriginDomainName = Fn.select(2, Fn.split("/", props.apiUrl));
+    const apiOrigin = new aws_cloudfront_origins.HttpOrigin(
+      apiOriginDomainName,
+      {
+        protocolPolicy: aws_cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
       },
     );
-    const apiOriginDomainName = Fn.select(2, Fn.split('/', props.apiUrl));
-    const apiOrigin = new aws_cloudfront_origins.HttpOrigin(apiOriginDomainName, {
-      protocolPolicy: aws_cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-    });
 
-    // const certificate = Certificate.fromCertificateArn(
-    //   this,
-    //   'WebCertificate',
-    //   env.domainCertificateArn,
-    // );
+    const customDomain: Pick<DistributionProps, "domainNames" | "certificate"> =
+      env.domainCertificateArn
+        ? {
+            domainNames: env.webDomainNames,
+            certificate: Certificate.fromCertificateArn(
+              this,
+              "WebCertificate",
+              env.domainCertificateArn,
+            ),
+          }
+        : {};
 
     const defaultBehavior = {
       origin: webOrigin,
-      viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      viewerProtocolPolicy:
+        aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       cachePolicy: CachePolicy.CACHING_DISABLED,
       functionAssociations: [
         {
@@ -103,13 +114,15 @@ function handler(event) {
 
     const assetBehavior = {
       origin: webOrigin,
-      viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      viewerProtocolPolicy:
+        aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       cachePolicy: CachePolicy.CACHING_OPTIMIZED,
     };
 
     const apiBehavior = {
       origin: apiOrigin,
-      viewerProtocolPolicy: aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      viewerProtocolPolicy:
+        aws_cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       allowedMethods: AllowedMethods.ALLOW_ALL,
       cachedMethods: CachedMethods.CACHE_GET_HEAD_OPTIONS,
       cachePolicy: CachePolicy.CACHING_DISABLED,
@@ -117,32 +130,31 @@ function handler(event) {
     };
 
     const cloudFrontConfig: DistributionProps = {
-      // domainNames: env.webDomainNames,
-      // certificate,
-      defaultRootObject: 'index.html',
+      ...customDomain,
+      defaultRootObject: "index.html",
       defaultBehavior,
       additionalBehaviors: {
-        'assets/*': assetBehavior,
+        "assets/*": assetBehavior,
         api: apiBehavior,
-        'api/*': apiBehavior,
+        "api/*": apiBehavior,
       },
     };
 
     const cloudFrontDistribution = new aws_cloudfront.Distribution(
       this,
-      'CFDistribution',
+      "CFDistribution",
       cloudFrontConfig,
     );
 
-    new BucketDeployment(this, 'S3RootDeployment', {
+    new BucketDeployment(this, "S3RootDeployment", {
       sources: [
         Source.asset(appPath, {
-          exclude: ['assets/*'],
+          exclude: ["assets/*"],
         }),
       ],
       destinationBucket: webBucket,
       distribution: cloudFrontDistribution,
-      distributionPaths: ['/*'],
+      distributionPaths: ["/*"],
       cacheControl: [
         DeploymentCacheControl.noStore(),
         DeploymentCacheControl.noCache(),
@@ -153,12 +165,12 @@ function handler(event) {
       prune: false,
     });
 
-    new BucketDeployment(this, 'S3AssetsDeployment', {
+    new BucketDeployment(this, "S3AssetsDeployment", {
       sources: [Source.asset(appAssetsPath)],
       destinationBucket: webBucket,
-      destinationKeyPrefix: 'assets',
+      destinationKeyPrefix: "assets",
       distribution: cloudFrontDistribution,
-      distributionPaths: ['/assets/*'],
+      distributionPaths: ["/assets/*"],
       cacheControl: [
         DeploymentCacheControl.setPublic(),
         DeploymentCacheControl.immutable(),
