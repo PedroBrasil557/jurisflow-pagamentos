@@ -11,10 +11,48 @@ export type CornerPoints = {
 }
 
 type CvMat = { delete(): void; data32S: Int32Array; cols: number; rows: number }
+type CvMatVector = { delete(): void; size(): number; get(index: number): CvMat }
+type CvSize = { delete(): void }
 
 type OpenCvModule = {
   Mat: new () => CvMat
-  imread(source: HTMLCanvasElement | HTMLImageElement): CvMat
+  MatVector: new () => CvMatVector
+  Size: new (width: number, height: number) => CvSize
+  imread(source: ImageSource): CvMat
+  cvtColor(src: CvMat, dst: CvMat, code: number): void
+  GaussianBlur(
+    src: CvMat,
+    dst: CvMat,
+    ksize: CvSize,
+    sigmaX: number,
+    sigmaY?: number,
+    borderType?: number,
+  ): void
+  Canny(src: CvMat, dst: CvMat, threshold1: number, threshold2: number): void
+  getStructuringElement(shape: number, ksize: CvSize): CvMat
+  morphologyEx(src: CvMat, dst: CvMat, op: number, kernel: CvMat): void
+  findContours(
+    image: CvMat,
+    contours: CvMatVector,
+    hierarchy: CvMat,
+    mode: number,
+    method: number,
+  ): void
+  contourArea(contour: CvMat): number
+  arcLength(curve: CvMat, closed: boolean): number
+  approxPolyDP(
+    curve: CvMat,
+    approxCurve: CvMat,
+    epsilon: number,
+    closed: boolean,
+  ): void
+  isContourConvex(contour: CvMat): boolean
+  COLOR_RGBA2GRAY: number
+  MORPH_RECT: number
+  MORPH_CLOSE: number
+  RETR_EXTERNAL: number
+  CHAIN_APPROX_SIMPLE: number
+  BORDER_DEFAULT: number
 }
 
 type ImageSource = HTMLCanvasElement | HTMLImageElement
@@ -185,43 +223,139 @@ function isPlausibleQuad(
   return Math.min(...sides) >= Math.min(width, height) * 0.2
 }
 
+// Detector robusto: encontra o MAIOR quadrilatero convexo da imagem via
+// Canny + fechamento morfologico + approxPolyDP. Bem mais confiavel que o
+// "maior contorno por area" do jscanify em fundos texturizados (madeira,
+// sombras) ou com objetos competindo, onde aquele funde o documento com o
+// fundo. Recebe um Mat ja lido (nao o libera) e devolve 4 pontos crus.
+function detectDocumentQuad(cv: OpenCvModule, mat: CvMat): CornerPoints | null {
+  const gray = new cv.Mat()
+  const blur = new cv.Mat()
+  const edges = new cv.Mat()
+  const contours = new cv.MatVector()
+  const hierarchy = new cv.Mat()
+  let kernel: CvMat | null = null
+  let best: CornerPoints | null = null
+
+  try {
+    cv.cvtColor(mat, gray, cv.COLOR_RGBA2GRAY)
+    cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT)
+    cv.Canny(blur, edges, 60, 180)
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(7, 7))
+    cv.morphologyEx(edges, edges, cv.MORPH_CLOSE, kernel)
+    cv.findContours(
+      edges,
+      contours,
+      hierarchy,
+      cv.RETR_EXTERNAL,
+      cv.CHAIN_APPROX_SIMPLE,
+    )
+
+    const imageArea = mat.cols * mat.rows
+    let bestArea = 0
+
+    for (let i = 0; i < contours.size(); i++) {
+      // get(i) devolve uma copia propria do Mat; precisa ser liberada (o loop
+      // ao vivo roda continuamente, entao vazamento aqui cresceria rapido).
+      const contour = contours.get(i)
+
+      try {
+        const area = cv.contourArea(contour)
+
+        if (area < imageArea * 0.08 || area > imageArea * 0.99) {
+          continue
+        }
+
+        const peri = cv.arcLength(contour, true)
+        const approx = new cv.Mat()
+        cv.approxPolyDP(contour, approx, 0.02 * peri, true)
+
+        // Apenas quadrilateros convexos sao candidatos a documento. A ordem dos
+        // pontos vem arbitraria do contorno; orderCorners() normaliza depois.
+        if (
+          approx.rows === 4 &&
+          cv.isContourConvex(approx) &&
+          area > bestArea
+        ) {
+          bestArea = area
+          best = {
+            topLeftCorner: { x: approx.data32S[0], y: approx.data32S[1] },
+            topRightCorner: { x: approx.data32S[2], y: approx.data32S[3] },
+            bottomRightCorner: { x: approx.data32S[4], y: approx.data32S[5] },
+            bottomLeftCorner: { x: approx.data32S[6], y: approx.data32S[7] },
+          }
+        }
+
+        approx.delete()
+      } finally {
+        contour.delete()
+      }
+    }
+
+    return best
+  } finally {
+    gray.delete()
+    blur.delete()
+    edges.delete()
+    contours.delete()
+    hierarchy.delete()
+    kernel?.delete()
+  }
+}
+
 // Detecta automaticamente os 4 cantos do documento numa imagem/canvas.
-// Reordena e valida o resultado; devolve null quando a deteccao nao e confiavel.
+// Tenta primeiro o detector robusto (approxPolyDP); se falhar, recorre ao
+// jscanify. Reordena e valida; devolve null quando nada e confiavel.
 export function detectCorners(
   scanner: JscanifyInstance,
   source: ImageSource,
 ): CornerPoints | null {
-  if (!window.cv) {
+  const cv = window.cv
+  if (!cv) {
     return null
   }
 
-  const mat = window.cv.imread(source)
-  // findPaperContour devolve uma copia propria do contorno; precisa ser liberada.
-  let contour: CvMat | null = null
+  const mat = cv.imread(source)
 
   try {
-    contour = scanner.findPaperContour(mat)
+    // 1) Detector robusto (maior quadrilatero convexo).
+    try {
+      const quad = detectDocumentQuad(cv, mat)
+      if (quad) {
+        const ordered = orderCorners(quad)
+        if (isPlausibleQuad(ordered, mat.cols, mat.rows)) {
+          return ordered
+        }
+      }
+    } catch {
+      // Cai para o jscanify abaixo.
+    }
 
+    // 2) Fallback jscanify (findPaperContour devolve copia propria; liberar).
+    const contour = scanner.findPaperContour(mat)
     if (!contour) {
       return null
     }
 
-    const corners = scanner.getCornerPoints(contour)
+    try {
+      const corners = scanner.getCornerPoints(contour)
 
-    if (
-      !corners.topLeftCorner ||
-      !corners.topRightCorner ||
-      !corners.bottomLeftCorner ||
-      !corners.bottomRightCorner
-    ) {
-      return null
+      if (
+        !corners.topLeftCorner ||
+        !corners.topRightCorner ||
+        !corners.bottomLeftCorner ||
+        !corners.bottomRightCorner
+      ) {
+        return null
+      }
+
+      const ordered = orderCorners(corners as CornerPoints)
+
+      return isPlausibleQuad(ordered, mat.cols, mat.rows) ? ordered : null
+    } finally {
+      contour.delete()
     }
-
-    const ordered = orderCorners(corners as CornerPoints)
-
-    return isPlausibleQuad(ordered, mat.cols, mat.rows) ? ordered : null
   } finally {
-    contour?.delete()
     mat.delete()
   }
 }

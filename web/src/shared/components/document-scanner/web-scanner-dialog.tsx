@@ -7,8 +7,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { cn } from '#/lib/utils'
 import { enhanceWithFilter, type FilterMode } from './scan-enhance'
@@ -166,7 +166,9 @@ export function WebScannerDialog({
 
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
-  const [videoDim, setVideoDim] = useState<{ w: number; h: number } | null>(null)
+  const [videoDim, setVideoDim] = useState<{ w: number; h: number } | null>(
+    null,
+  )
   const [boxSize, setBoxSize] = useState<{ w: number; h: number } | null>(null)
   const [liveCorners, setLiveCorners] = useState<CornerPoints | null>(null)
 
@@ -929,6 +931,11 @@ function CameraScreen({
       {engineStatus === 'loading' ? (
         <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6rem)] text-center text-[11px] text-white/60">
           Carregando deteccao de bordas...
+        </p>
+      ) : null}
+      {engineStatus === 'error' ? (
+        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6rem)] text-center text-[11px] text-amber-300/90">
+          Deteccao de bordas indisponivel — ajuste os cantos manualmente.
         </p>
       ) : null}
     </>
