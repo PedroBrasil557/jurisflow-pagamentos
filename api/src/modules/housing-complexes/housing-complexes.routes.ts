@@ -12,6 +12,7 @@ import {
   paramsValidator,
   queryValidator,
 } from '../../shared/validation/validators'
+import { syncProcessesForHousingComplex } from '../processes/processes.checklist.service'
 import {
   deleteHousingComplexFile,
   listHousingComplexFiles,
@@ -139,6 +140,9 @@ export const housingComplexAdminRoutes = new Hono<AppBindings>()
           actor,
         })
 
+        // Reflete a mudanca na completude/status dos processos do conjunto.
+        await syncProcessesForHousingComplex({ housingComplexId, actor })
+
         return c.json(
           { message: 'Documento anexado ao conjunto.', file: result },
           201,
@@ -155,6 +159,9 @@ export const housingComplexAdminRoutes = new Hono<AppBindings>()
       try {
         const { housingComplexId, fileId } = c.req.valid('param')
         await deleteHousingComplexFile({ housingComplexId, fileId })
+
+        const actor = getAuthenticatedUser(c)
+        await syncProcessesForHousingComplex({ housingComplexId, actor })
 
         return c.json({ message: 'Documento removido do conjunto.' }, 200)
       } catch (error) {

@@ -64,6 +64,20 @@
       "when": 1780973314939,
       "tag": "0008_third_namor",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1780974342382,
+      "tag": "0009_dizzy_thunderball",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1780975170810,
+      "tag": "0010_wise_trish_tilby",
+      "breakpoints": true
     }
   ]
 }

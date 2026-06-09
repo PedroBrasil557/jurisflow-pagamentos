@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "housing_complex_file_current_unique_idx" ON "housing_complex_file" USING btree ("housing_complex_id","document_type_key") WHERE "housing_complex_file"."is_current";

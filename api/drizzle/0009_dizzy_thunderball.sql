@@ -1,0 +1,1 @@
+ALTER TABLE "app_settings" ADD COLUMN "scanbot_license_key" text;

@@ -326,7 +326,7 @@ export function ChecklistItemDialog({
               </p>
             ) : null}
           </div>
-        ) : (
+        ) : item.readOnly ? null : (
           <div className="rounded-2xl border border-border bg-card px-4 py-4 text-sm text-muted-foreground">
             Seu perfil permite visualizar este item, mas nao editar a
             documentacao.
@@ -334,31 +334,33 @@ export function ChecklistItemDialog({
         )}
       </div>
 
-      <div className="grid gap-3">
-        <Controller
-          control={control}
-          name="observation"
-          render={({ field }) => (
-            <FormTextArea
-              error={errors.observation?.message}
-              id={observationInputId}
-              label="Observações (max 300 caracteres)"
-              maxLength={300}
-              onBlur={field.onBlur}
-              onChange={(event) => {
-                field.onChange(event.target.value)
-              }}
-              placeholder="Adicione uma observação sobre este documento..."
-              ref={field.ref}
-              textareaClassName="min-h-36"
-              value={field.value}
-            />
-          )}
-        />
-        <p className="text-right text-xs text-muted-foreground">
-          {`${observation.length}/300`}
-        </p>
-      </div>
+      {item.readOnly ? null : (
+        <div className="grid gap-3">
+          <Controller
+            control={control}
+            name="observation"
+            render={({ field }) => (
+              <FormTextArea
+                error={errors.observation?.message}
+                id={observationInputId}
+                label="Observações (max 300 caracteres)"
+                maxLength={300}
+                onBlur={field.onBlur}
+                onChange={(event) => {
+                  field.onChange(event.target.value)
+                }}
+                placeholder="Adicione uma observação sobre este documento..."
+                ref={field.ref}
+                textareaClassName="min-h-36"
+                value={field.value}
+              />
+            )}
+          />
+          <p className="text-right text-xs text-muted-foreground">
+            {`${observation.length}/300`}
+          </p>
+        </div>
+      )}
 
       {errorMessage ? (
         <div className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -370,7 +372,7 @@ export function ChecklistItemDialog({
         <Button onClick={onClose} type="button" variant="ghost">
           Fechar
         </Button>
-        {canSubmit ? (
+        {canSubmit && !item.readOnly ? (
           <Button
             disabled={isSubmitting}
             onClick={() => void handleSubmit(handleFormSubmit)()}

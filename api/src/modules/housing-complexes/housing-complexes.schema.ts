@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import {
   boolean,
   index,
@@ -61,5 +62,9 @@ export const housingComplexFile = pgTable(
       table.documentTypeKey,
       table.isCurrent,
     ),
+    // Garante no maximo 1 arquivo corrente por (conjunto, tipo).
+    uniqueIndex('housing_complex_file_current_unique_idx')
+      .on(table.housingComplexId, table.documentTypeKey)
+      .where(sql`${table.isCurrent}`),
   ],
 )

@@ -28,6 +28,7 @@ import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
   documentDisplayNumberByKey,
+  documentLabelByKey,
   isHousingComplexDocument,
 } from './processes.documents'
 import { ProcessServiceError } from './processes.errors'
@@ -558,7 +559,13 @@ function buildChecklistResponse(input: {
     }
   })
 
-  const requiredItems = items.filter((item) => item.documentType.isRequired)
+  // Itens de conjunto sem conjunto vinculado nao contam como obrigatorios (nao ha
+  // como anexar) — ficam visiveis/pendentes com aviso, mas nao travam a completude.
+  const requiredItems = items.filter(
+    (item) =>
+      item.documentType.isRequired &&
+      !(item.scope === 'housing_complex' && !item.housingComplexLinked),
+  )
   const requiredCompleted = requiredItems.filter((item) =>
     getChecklistPresenceStatus({
       currentFileCount: item.currentFiles.length,
@@ -944,27 +951,17 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   return updatedProcess
 }
 
-export async function getProcessChecklist(
-  processId: string,
-  userId: string,
-  perms: ResolvedPermissions,
-) {
-  const { process: currentProcess, relationship } =
-    await getProcessContextOrThrow({
-      processId,
-      userId,
-      perms,
-    })
-  assertCanAccessChecklist(perms, relationship)
-
-  await ensureProcessChecklistItems(processId)
+// Monta o checklist do processo SEM checagem de acesso (uso interno: getProcessChecklist
+// adiciona o controle de acesso antes; o re-sync por conjunto chama direto).
+async function loadProcessChecklistData(currentProcess: ProcessRecord) {
+  await ensureProcessChecklistItems(currentProcess.id)
 
   const allConditionalKeys = new Set<string>(
     conditionalProcessDocumentTypes.map((d) => d.key),
   )
   const activeConditionalKeys = getConditionalDocumentKeys(currentProcess)
 
-  const allChecklistItems = await listChecklistItems(processId)
+  const allChecklistItems = await listChecklistItems(currentProcess.id)
 
   // Filter out conditional items that don't apply to this process
   const checklistItems = allChecklistItems.filter((item) => {
@@ -981,9 +978,7 @@ export async function getProcessChecklist(
     listCurrentChecklistFiles(checklistItems.map((item) => item.id)),
     housingComplexId
       ? getHousingComplexChecklistFiles(housingComplexId)
-      : Promise.resolve(
-          new Map<string, HousingComplexChecklistFile>(),
-        ),
+      : Promise.resolve(new Map<string, HousingComplexChecklistFile>()),
   ])
 
   return buildChecklistResponse({
@@ -992,6 +987,45 @@ export async function getProcessChecklist(
     housingComplexId,
     housingComplexFiles,
   })
+}
+
+export async function getProcessChecklist(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId,
+      userId,
+      perms,
+    })
+  assertCanAccessChecklist(perms, relationship)
+
+  return loadProcessChecklistData(currentProcess)
+}
+
+// Re-sincroniza o status de todos os processos de um conjunto. Chamado quando um
+// documento do conjunto e anexado/removido — a completude desses processos muda
+// sem que haja qualquer mutacao de checklist no proprio processo.
+export async function syncProcessesForHousingComplex(input: {
+  housingComplexId: string
+  actor: ProcessActor
+}) {
+  const processes = await db
+    .select({ id: process.id })
+    .from(process)
+    .where(eq(process.housingComplexId, input.housingComplexId))
+
+  for (const { id } of processes) {
+    const currentProcess = await getProcessRecordOrThrow(id)
+    const checklist = await loadProcessChecklistData(currentProcess)
+    await syncProcessStatusAfterChecklistChange({
+      processId: id,
+      checklist,
+      actor: input.actor,
+    })
+  }
 }
 
 export async function submitProcessChecklistItem(input: {
@@ -1038,15 +1072,13 @@ export async function submitProcessChecklistItem(input: {
     checklistItem.status === 'OK_SEM_ARQUIVO'
   const selectedFile = input.file ?? null
 
-  // Documentos do conjunto sao anexados no cadastro do conjunto (somente admin),
-  // nao no processo. Aqui sao somente leitura — bloqueia anexo/marcacao.
-  if (
-    isHousingComplexDocument(checklistItem.documentType.key) &&
-    (selectedFile || shouldMarkOkWithoutFile)
-  ) {
+  // Documentos do conjunto sao gerenciados no cadastro do conjunto (somente admin).
+  // No processo sao 100% somente leitura — bloqueia anexo, marcacao, desmarcacao
+  // e ate edicao de observacao.
+  if (isHousingComplexDocument(checklistItem.documentType.key)) {
     throw new ProcessServiceError(
       400,
-      'Este documento e anexado no cadastro do conjunto, nao no processo.',
+      'Este documento e gerenciado no cadastro do conjunto, nao no processo.',
     )
   }
 
@@ -1359,10 +1391,6 @@ export async function downloadAllChecklistFiles(
       asc(processDocumentFile.uploadedAt),
     )
 
-  if (files.length === 0) {
-    return { files: [] }
-  }
-
   const expiresInSeconds = 60 * 10
   const result = await Promise.all(
     files.map(async (file) => {
@@ -1388,6 +1416,26 @@ export async function downloadAllChecklistFiles(
       }
     }),
   )
+
+  // Inclui os documentos do conjunto (espelhados no checklist) no "baixar todos".
+  if (currentProcess.housingComplexId) {
+    const conjuntoFiles = await getHousingComplexChecklistFiles(
+      currentProcess.housingComplexId,
+    )
+    for (const [key, file] of conjuntoFiles) {
+      result.push({
+        id: file.id,
+        originalFileName: buildChecklistDownloadFileName({
+          documentNumber: documentDisplayNumberByKey.get(key) ?? null,
+          documentTypeLabel: documentLabelByKey.get(key) ?? key,
+          processCode: currentProcess.code,
+          processFullName: currentProcess.fullName,
+          originalFileName: file.originalFileName,
+        }),
+        downloadUrl: file.downloadUrl,
+      })
+    }
+  }
 
   return { files: result }
 }

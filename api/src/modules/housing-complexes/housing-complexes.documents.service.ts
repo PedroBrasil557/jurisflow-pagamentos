@@ -13,7 +13,7 @@ import { HousingComplexServiceError } from './housing-complexes.errors'
 import { housingComplex, housingComplexFile } from './housing-complexes.schema'
 
 const MAX_FILE_SIZE_IN_BYTES = 25 * 1024 * 1024
-const DOWNLOAD_URL_TTL_SECONDS = 60 * 10
+const DOWNLOAD_URL_TTL_SECONDS = 60 * 60
 
 type Actor = { id: string }
 
@@ -79,30 +79,39 @@ export async function uploadHousingComplexFile(input: {
   const bytes = new Uint8Array(await input.file.arrayBuffer())
   await uploadStorageObject({ body: bytes, bucketName, contentType: mimeType, objectKey })
 
-  // Mantem apenas 1 arquivo corrente por (conjunto, tipo).
-  await db
-    .update(housingComplexFile)
-    .set({ isCurrent: false, replacedAt: new Date() })
-    .where(
-      and(
-        eq(housingComplexFile.housingComplexId, input.housingComplexId),
-        eq(housingComplexFile.documentTypeKey, input.documentTypeKey),
-        eq(housingComplexFile.isCurrent, true),
-      ),
-    )
+  try {
+    // Substituicao do arquivo corrente atomica: marca o anterior como nao-corrente
+    // e insere o novo na mesma transacao (o indice unico parcial garante 1 corrente).
+    await db.transaction(async (tx) => {
+      await tx
+        .update(housingComplexFile)
+        .set({ isCurrent: false, replacedAt: new Date() })
+        .where(
+          and(
+            eq(housingComplexFile.housingComplexId, input.housingComplexId),
+            eq(housingComplexFile.documentTypeKey, input.documentTypeKey),
+            eq(housingComplexFile.isCurrent, true),
+          ),
+        )
 
-  await db.insert(housingComplexFile).values({
-    id: fileId,
-    housingComplexId: input.housingComplexId,
-    documentTypeKey: input.documentTypeKey,
-    bucketName,
-    objectKey,
-    originalFileName: input.file.name,
-    mimeType,
-    sizeInBytes: input.file.size,
-    isCurrent: true,
-    uploadedByUserId: input.actor.id,
-  })
+      await tx.insert(housingComplexFile).values({
+        id: fileId,
+        housingComplexId: input.housingComplexId,
+        documentTypeKey: input.documentTypeKey,
+        bucketName,
+        objectKey,
+        originalFileName: input.file.name,
+        mimeType,
+        sizeInBytes: input.file.size,
+        isCurrent: true,
+        uploadedByUserId: input.actor.id,
+      })
+    })
+  } catch (error) {
+    // Falhou o DB: remove o objeto recem-enviado para nao deixar orfao no storage.
+    await deleteStorageObject({ bucketName, objectKey }).catch(() => undefined)
+    throw error
+  }
 
   return { id: fileId, documentTypeKey: input.documentTypeKey }
 }
@@ -176,10 +185,12 @@ export async function deleteHousingComplexFile(input: {
     throw new HousingComplexServiceError(404, 'Arquivo nao encontrado.')
   }
 
+  // Apaga o objeto primeiro (S3 delete e idempotente). Se falhar, a linha
+  // permanece e a operacao pode ser repetida — evita orfao sem referencia.
   await deleteStorageObject({
     bucketName: fileRow.bucketName,
     objectKey: fileRow.objectKey,
-  }).catch(() => undefined)
+  })
 
   await db.delete(housingComplexFile).where(eq(housingComplexFile.id, fileRow.id))
 }

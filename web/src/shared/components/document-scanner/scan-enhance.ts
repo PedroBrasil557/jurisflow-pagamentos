@@ -28,6 +28,7 @@ const GRAY_CONTRAST = 1.28 // contraste um pouco maior no modo cinza
 const SATURATION = 1.35 // realce de cor (modo cor)
 const SHARPEN_AMOUNT = 0.8 // intensidade da nitidez
 const SHARPEN_RADIUS = 1 // raio do unsharp (px)
+const MAX_ILLUM_GAIN = 2.5 // teto do ganho (evita estourar bordas muito escuras)
 
 function clamp8(value: number): number {
   return value < 0 ? 0 : value > 255 ? 255 : value
@@ -214,7 +215,8 @@ function sauvolaThreshold(
         integral[y * stride + (x + 1)] + rowSum
     }
   }
-  const mean = new Uint8ClampedArray(n)
+  // Media local em ponto flutuante (arredondar para 8 bits distorce a variancia).
+  const mean = new Float32Array(n)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       mean[y * width + x] = windowSum(x, y) / windowArea(x, y)
@@ -308,10 +310,20 @@ export function enhanceWithFilter(
       const bgB = sampleGrid(grid.b, grid.cols, grid.rows, grid.cell, x, y)
 
       // Fator multiplicativo: levanta sombra (fundo escuro) sem estourar onde o
-      // fundo ja e claro. Preserva o conteudo colorido/claro (CNH/RG).
-      const fR = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgR < 1 ? 1 : bgR) - 1)
-      const fG = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgG < 1 ? 1 : bgG) - 1)
-      const fB = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgB < 1 ? 1 : bgB) - 1)
+      // fundo ja e claro. Preserva o conteudo colorido/claro (CNH/RG). O teto
+      // MAX_ILLUM_GAIN evita queimar regioes de fundo muito escuro (bordas).
+      const fR = Math.min(
+        MAX_ILLUM_GAIN,
+        1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgR < 1 ? 1 : bgR) - 1),
+      )
+      const fG = Math.min(
+        MAX_ILLUM_GAIN,
+        1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgG < 1 ? 1 : bgG) - 1),
+      )
+      const fB = Math.min(
+        MAX_ILLUM_GAIN,
+        1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgB < 1 ? 1 : bgB) - 1),
+      )
 
       let r = (data[idx] * fR - 128) * contrast + 128
       let g = (data[idx + 1] * fG - 128) * contrast + 128
