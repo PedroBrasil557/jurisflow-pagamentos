@@ -1,0 +1,39 @@
+# Exemplo de override para rodar um SEGUNDO stack (de outra worktree) sem colidir
+# com o stack principal. Uso:
+#
+#   1. Copie este arquivo para a SUA worktree como `compose.override.yml`.
+#   2. Defina um nome de projeto proprio antes do `up` (evita colisao de containers):
+#        PowerShell:  $env:COMPOSE_PROJECT_NAME = "jurisflow-scanner"
+#        Bash:        export COMPOSE_PROJECT_NAME=jurisflow-scanner
+#   3. `docker compose up -d`
+#
+# Portas remapeadas para a faixa 356x (o principal usa 355x/355x..3559):
+#   Web 3565 | API 3566 | DB 3567 | MinIO 3568 | MinIO Console 3569
+# Acesse o frontend desta worktree em http://localhost:3565
+#
+# Importante: o VITE_API_URL/proxy precisa apontar para a porta nova do web.
+services:
+  web:
+    ports:
+      - "3565:3555"
+    environment:
+      VITE_API_URL: "http://localhost:3565"
+
+  api:
+    ports:
+      - "3566:3556"
+    environment:
+      BETTER_AUTH_URL: "http://localhost:3565"
+      WEB_URL: "http://localhost:3565"
+      TRUSTED_ORIGINS: "http://localhost:3565,http://127.0.0.1:3565"
+
+  db:
+    ports:
+      - "3567:5432"
+
+  minio:
+    ports:
+      - "3568:9000"
+      - "3569:9001"
+    environment:
+      MINIO_CORS_ALLOW_ORIGIN: "http://localhost:3565,http://127.0.0.1:3565"
