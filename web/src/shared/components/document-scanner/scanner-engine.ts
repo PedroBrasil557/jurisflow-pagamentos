@@ -262,31 +262,36 @@ function detectDocumentQuad(cv: OpenCvModule, mat: CvMat): CornerPoints | null {
       try {
         const area = cv.contourArea(contour)
 
-        if (area < imageArea * 0.08 || area > imageArea * 0.99) {
+        // Mesmo piso de area do isPlausibleQuad (12%) para nao gastar
+        // approxPolyDP num quad que seria descartado depois.
+        if (area < imageArea * 0.12 || area > imageArea * 0.99) {
           continue
         }
 
         const peri = cv.arcLength(contour, true)
         const approx = new cv.Mat()
-        cv.approxPolyDP(contour, approx, 0.02 * peri, true)
 
-        // Apenas quadrilateros convexos sao candidatos a documento. A ordem dos
-        // pontos vem arbitraria do contorno; orderCorners() normaliza depois.
-        if (
-          approx.rows === 4 &&
-          cv.isContourConvex(approx) &&
-          area > bestArea
-        ) {
-          bestArea = area
-          best = {
-            topLeftCorner: { x: approx.data32S[0], y: approx.data32S[1] },
-            topRightCorner: { x: approx.data32S[2], y: approx.data32S[3] },
-            bottomRightCorner: { x: approx.data32S[4], y: approx.data32S[5] },
-            bottomLeftCorner: { x: approx.data32S[6], y: approx.data32S[7] },
+        try {
+          cv.approxPolyDP(contour, approx, 0.02 * peri, true)
+
+          // Apenas quadrilateros convexos sao candidatos a documento. A ordem
+          // dos pontos vem arbitraria; orderCorners() normaliza depois.
+          if (
+            approx.rows === 4 &&
+            cv.isContourConvex(approx) &&
+            area > bestArea
+          ) {
+            bestArea = area
+            best = {
+              topLeftCorner: { x: approx.data32S[0], y: approx.data32S[1] },
+              topRightCorner: { x: approx.data32S[2], y: approx.data32S[3] },
+              bottomRightCorner: { x: approx.data32S[4], y: approx.data32S[5] },
+              bottomLeftCorner: { x: approx.data32S[6], y: approx.data32S[7] },
+            }
           }
+        } finally {
+          approx.delete()
         }
-
-        approx.delete()
       } finally {
         contour.delete()
       }
@@ -306,10 +311,16 @@ function detectDocumentQuad(cv: OpenCvModule, mat: CvMat): CornerPoints | null {
 // Detecta automaticamente os 4 cantos do documento numa imagem/canvas.
 // Tenta primeiro o detector robusto (approxPolyDP); se falhar, recorre ao
 // jscanify. Reordena e valida; devolve null quando nada e confiavel.
+//
+// `fallback` controla o segundo motor (jscanify), que roda outro pipeline
+// Canny/contorno completo. No preview ao vivo (~4fps) passamos `false` para
+// nao executar dois pipelines por quadro — o proximo quadro tenta de novo.
 export function detectCorners(
   scanner: JscanifyInstance,
   source: ImageSource,
+  options: { fallback?: boolean } = {},
 ): CornerPoints | null {
+  const { fallback = true } = options
   const cv = window.cv
   if (!cv) {
     return null
@@ -329,6 +340,10 @@ export function detectCorners(
       }
     } catch {
       // Cai para o jscanify abaixo.
+    }
+
+    if (!fallback) {
+      return null
     }
 
     // 2) Fallback jscanify (findPaperContour devolve copia propria; liberar).
