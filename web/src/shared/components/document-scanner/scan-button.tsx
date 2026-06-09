@@ -18,9 +18,16 @@ const WebScannerDialog = lazy(() =>
 type ScanButtonProps = {
   onComplete: (file: File) => void
   disabled?: boolean
+  label?: string
+  className?: string
 }
 
-export function ScanButton({ onComplete, disabled }: ScanButtonProps) {
+export function ScanButton({
+  onComplete,
+  disabled,
+  label = 'Escanear documento',
+  className,
+}: ScanButtonProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const providerQuery = useQuery(scannerProviderQuery)
@@ -75,13 +82,14 @@ export function ScanButton({ onComplete, disabled }: ScanButtonProps) {
   return (
     <>
       <Button
+        className={className}
         disabled={disabled || busy}
         onClick={() => void handleClick()}
         type="button"
         variant="outline"
       >
         <ScanLine className="size-4" />
-        Escanear documento
+        {label}
       </Button>
 
       {open ? (

@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { Loader2, Plus, ScanLine, SlidersHorizontal } from 'lucide-react'
+import { Loader2, Plus, SlidersHorizontal } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Badge } from '#/components/ui/badge'
@@ -9,7 +9,6 @@ import { Card, CardContent } from '#/components/ui/card'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { PageHeader } from '@/shared/components/page-header'
 import { SearchInput } from '@/shared/components/search-input'
-import type { ProcessesSearch } from '../schemas/processes-search.schema'
 import {
   DataTable,
   type DataTableColumn,
@@ -19,19 +18,23 @@ import { downloadFile } from '@/shared/lib/download'
 import { ProcessActions } from '../components/process-actions'
 import { CancelProcessDialog } from '../components/process-cancel/cancel-process-dialog'
 import { ProcessFilterChips } from '../components/process-filters/process-filter-chips'
-import { ScanProcessDialog } from '../components/process-scan/scan-process-dialog'
 import {
-  type ProcessFiltersValue,
   ProcessFiltersSheet,
+  type ProcessFiltersValue,
 } from '../components/process-filters/process-filters-sheet'
 import { FinalizeProcessDialog } from '../components/process-finalize/finalize-process-dialog'
 import { ProcessHistoryDialog } from '../components/process-history/process-history-dialog'
 import { ProcessLastMovement } from '../components/process-last-movement'
 import { LegalProcessDialog } from '../components/process-legal/legal-process-dialog'
 import { ProcessMobileCard } from '../components/process-mobile-card'
+import { ScanProcessAction } from '../components/process-scan/scan-process-action'
 import { ProcessStatusBadge } from '../components/process-status-badge'
-import { canCreateProcess, canCreateProcessViaScan } from '../lib/process-access'
+import {
+  canCreateProcess,
+  canCreateProcessViaScan,
+} from '../lib/process-access'
 import { formatCpf } from '../process-form.utils'
+import type { ProcessesSearch } from '../schemas/processes-search.schema'
 import { housingComplexOptionsByIdsQuery } from '../services/housing-complexes.queries'
 import { processListOptions } from '../services/processes.queries'
 import {
@@ -127,7 +130,6 @@ export function ProcessesPage({
   const navigate = useNavigate()
   const [search, setSearch] = useState(currentSearch)
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const [scanOpen, setScanOpen] = useState(false)
   const [historyProcessId, setHistoryProcessId] = useState<string | null>(null)
   const [cancelTarget, setCancelTarget] = useState<ProcessListItem | null>(null)
   const [legalTarget, setLegalTarget] = useState<ProcessListItem | null>(null)
@@ -309,14 +311,7 @@ export function ProcessesPage({
         {canCreateProcess(permissions) ? (
           <div className="flex flex-col gap-2 sm:flex-row">
             {canCreateProcessViaScan(permissions) ? (
-              <Button
-                onClick={() => setScanOpen(true)}
-                type="button"
-                variant="outline"
-              >
-                <ScanLine className="size-4" />
-                Escanear documentos
-              </Button>
+              <ScanProcessAction />
             ) : null}
             <Link className="no-underline" preload={false} to="/processos/novo">
               <Button className="w-full sm:w-auto">
@@ -382,8 +377,6 @@ export function ProcessesPage({
           createdTo: currentCreatedTo,
         }}
       />
-
-      <ScanProcessDialog onClose={() => setScanOpen(false)} open={scanOpen} />
 
       <Card className="overflow-hidden">
         <CardContent className="overflow-x-auto px-0 sm:px-0">
