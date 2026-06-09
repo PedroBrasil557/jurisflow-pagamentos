@@ -309,11 +309,15 @@ export function ProcessesPage({
     <div className="grid gap-6">
       <PageHeader title="Processos">
         {canCreateProcess(permissions) ? (
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
             {canCreateProcessViaScan(permissions) ? (
               <ScanProcessAction />
             ) : null}
-            <Link className="no-underline" preload={false} to="/processos/novo">
+            <Link
+              className="block w-full no-underline sm:w-auto"
+              preload={false}
+              to="/processos/novo"
+            >
               <Button className="w-full sm:w-auto">
                 <Plus className="size-4" />
                 Criar processo
