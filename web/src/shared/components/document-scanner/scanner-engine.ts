@@ -180,7 +180,7 @@ function distance(a: Corner, b: Corner): number {
 }
 
 // Area do quadrilatero (formula de Gauss/shoelace) na ordem TL -> TR -> BR -> BL.
-function quadArea(corners: CornerPoints): number {
+export function quadArea(corners: CornerPoints): number {
   const points = [
     corners.topLeftCorner,
     corners.topRightCorner,

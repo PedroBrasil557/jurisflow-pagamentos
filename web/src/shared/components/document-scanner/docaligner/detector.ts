@@ -1,8 +1,8 @@
 import {
   type CornerDetector,
   type CornerPoints,
-  isPlausibleQuad,
   orderCorners,
+  quadArea,
 } from '../scanner-engine'
 import { preprocess } from './preprocess'
 
@@ -14,16 +14,6 @@ type WorkerOut =
 export type DocAlignerDetector = CornerDetector & {
   warmup(): Promise<void>
   dispose(): void
-}
-
-// Log throttled (~1x/s) do resultado da deteccao ao vivo, para diagnostico.
-let lastDebugAt = 0
-function debugLive(outcome: string) {
-  const now = Date.now()
-  if (now - lastDebugAt > 1000) {
-    lastDebugAt = now
-    console.info('[docaligner] live:', outcome)
-  }
 }
 
 // Detector DocAligner: pre-processa o frame na thread principal (canvas) e
@@ -79,16 +69,17 @@ export function createDocAlignerDetector(): DocAlignerDetector {
           )
         })
         if (!raw) {
-          debugLive('sem cantos (heatmap fraco)')
           return null
         }
+        // Confiamos nos cantos do modelo (so o documento gera heatmap forte). So
+        // descartamos deteccao degenerada/minuscula — NAO aplicamos o limite
+        // superior do isPlausibleQuad: o documento PODE preencher o quadro
+        // (cantos nas bordas ou levemente alem) e a estimativa segue valida.
         const ordered = orderCorners(raw)
-        if (isPlausibleQuad(ordered, sourceWidth, sourceHeight)) {
-          debugLive('OK')
-          return ordered
-        }
-        debugLive('rejeitado por isPlausibleQuad')
-        return null
+        const imageArea = sourceWidth * sourceHeight
+        return imageArea > 0 && quadArea(ordered) >= imageArea * 0.05
+          ? ordered
+          : null
       } catch {
         return null
       }

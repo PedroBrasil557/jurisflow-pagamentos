@@ -32,7 +32,6 @@ export function useDocAlignerDetector(enabled: boolean): {
           detector.dispose()
           return
         }
-        console.info('[docaligner] IA pronta (detecção por worker).')
         detectorRef.current = detector
         setStatus('ready')
       })
