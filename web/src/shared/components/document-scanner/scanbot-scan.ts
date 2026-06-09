@@ -1,7 +1,11 @@
-import ScanbotSDK from 'scanbot-web-sdk'
+// Entrypoint "ui": inclui os componentes da RTU UI (ui2). O entrypoint padrao
+// ('scanbot-web-sdk') e o core SEM UI e faz ScanbotSDK.UI.* falhar com
+// "UI components are not included in Scanbot.min.js".
+import ScanbotSDK from 'scanbot-web-sdk/ui'
 import { buildScanFileName } from './scan-to-pdf'
 
-// Os assets WASM sao servidos por vite-plugin-static-copy (ver vite.config.ts).
+// Os assets WASM sao copiados por scripts/copy-scanbot-assets.mjs (roda antes de
+// dev/build) para public/vendor/document-scanner, servidos em /vendor/document-scanner/.
 const ENGINE_PATH = '/vendor/document-scanner/'
 
 let initPromise: Promise<void> | null = null
