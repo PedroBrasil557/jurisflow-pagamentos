@@ -314,7 +314,7 @@ export function ProcessesPage({
               <ScanProcessAction />
             ) : null}
             <Link
-              className="block w-full no-underline sm:w-auto"
+              className="hidden no-underline sm:block sm:w-auto"
               preload={false}
               to="/processos/novo"
             >
