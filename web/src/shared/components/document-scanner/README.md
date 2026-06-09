@@ -4,86 +4,60 @@ Captura de documentos por câmera com detecção de borda, ajuste de cantos,
 correção de perspectiva e realce ("cara de escaneado"), gerando um **PDF
 multipágina** que entra no fluxo de upload existente (checklist e lote).
 
+> Apenas web. Não há app nativo/Capacitor — o Scanbot Web SDK roda no próprio
+> navegador, inclusive no iPhone.
+
 ## Arquitetura
 
-O componente `<ScanButton>` escolhe o motor em tempo de execução:
+O serviço é escolhido em **Configurações → Scanner** (admin) e exposto ao
+cliente pela API. O `<ScanButton>` lê essa escolha (`scannerProviderQuery`) em
+tempo de execução:
 
-- **App nativo** (`Capacitor.isNativePlatform()` verdadeiro): usa o scanner nativo
-  do sistema via `@capgo/capacitor-document-scanner` — **VisionKit no iOS** e ML Kit
-  no Android. Ver [native-scan.ts](./native-scan.ts).
-- **Navegador com Scanbot** (`VITE_SCANBOT_LICENSE_KEY` definida): usa o **Scanbot Web
-  SDK** — qualidade CamScanner (captura automática, ajuste de cantos, perspectiva,
-  remoção de sombra) rodando no próprio navegador, **inclusive no iPhone**, sem app
-  nativo. Ver [scanbot-scan.ts](./scanbot-scan.ts).
-- **Navegador sem Scanbot** (fallback): usa **jscanify + OpenCV.js** com ajuste manual
-  dos 4 cantos. Ver [web-scanner-dialog.tsx](./web-scanner-dialog.tsx). Também é o
-  fallback automático se a licença do Scanbot falhar.
+- **`scanbot`**: usa o **Scanbot Web SDK** (RTU UI ui2) — qualidade CamScanner
+  (captura automática, ajuste de cantos, perspectiva, remoção de sombra) no
+  navegador, inclusive no iPhone. Ver [scanbot-scan.ts](./scanbot-scan.ts).
+  Requer license. **Falha dura** (sem license / SDK não inicia) cai no scanner
+  web **com aviso** (toast com o motivo) — digitalizar nunca fica 100% quebrado.
+- **`web`** (padrão): usa **jscanify + OpenCV.js** com ajuste manual dos 4
+  cantos e filtros. Ver [web-scanner-dialog.tsx](./web-scanner-dialog.tsx).
 
-Todos produzem um `File` PDF e entregam por `onComplete(file)`. O backend não muda
-(aceita PDF/qualquer mime até 25 MB).
+Ambos produzem um `File` PDF e entregam por `onComplete(file)`. O backend não
+muda (aceita PDF/qualquer mime até 25 MB).
 
 ### Arquivos
-- `scan-button.tsx` — botão público; seleciona o motor (lazy import de cada engine).
-- `native-scan.ts` — dispara o scanner nativo (VisionKit/ML Kit).
-- `scanbot-scan.ts` — scanner via Scanbot Web SDK no navegador (init + RTU UI + PDF).
-- `web-scanner-dialog.tsx` — scanner fallback no navegador (jscanify, cantos, filtros).
+- `scan-button.tsx` — botão público; lê o provider e seleciona o motor (lazy import).
+- `scanbot-license.ts` — queries da license e do provider (Configurações via API).
+- `scanbot-scan.ts` — scanner via Scanbot Web SDK (import `scanbot-web-sdk/ui`, init + RTU UI + PDF).
+- `web-scanner-dialog.tsx` — scanner web (jscanify): câmera, cantos, filtros, revisão.
 - `scanner-engine.ts` — carrega OpenCV.js + jscanify sob demanda; detecção de cantos.
+- `scan-enhance.ts` — realce ("cara de escaneado"): iluminação, Sauvola, unsharp.
 - `scan-to-pdf.ts` — monta o PDF multipágina (jspdf). Coberto por testes.
 
-## Setup do Scanbot Web SDK (recomendado para navegador, inclui iPhone)
+## License do Scanbot
 
-1. Crie `web/.env.local` (não versionado) com a sua chave do scanbot.io:
-   ```
-   VITE_SCANBOT_LICENSE_KEY=SUA_CHAVE_AQUI
-   ```
-   A chave é **travada por domínio** — gere uma para o domínio onde o app roda
-   (para dev local com HTTPS/ngrok, use um domínio estático no painel do Scanbot).
-2. Os assets WASM são servidos automaticamente em `/vendor/document-scanner/` por
-   `vite-plugin-static-copy` (ver [vite.config.ts](../../../../vite.config.ts)) —
-   nada para commitar.
-3. No Docker, após instalar deps rode `docker compose exec web bun install` e
-   reinicie o serviço web. A `.env.local` é lida pelo Vite via bind mount.
-4. Requisitos: **HTTPS** (obrigatório para câmera em mobile; `localhost` ok no dev).
-   Sem a chave, o scanner cai automaticamente no jscanify.
+A license efetiva no cliente segue esta ordem:
+
+1. A salva em **Configurações → Scanner** (banco, via API) — tem prioridade.
+2. Fallback de build: `VITE_SCANBOT_LICENSE_KEY` em `web/.env.local` (não versionado).
+
+A chave é **travada por domínio** — gere uma para o domínio onde o app roda
+(para dev local com HTTPS/ngrok, use um domínio estático no painel do Scanbot).
+Sem license, o `<ScanButton>` usa o scanner web.
+
+### Assets WASM
+Os binários do Scanbot (~24 MB) são copiados para
+`web/public/vendor/document-scanner/` por
+[scripts/copy-scanbot-assets.mjs](../../../../scripts/copy-scanbot-assets.mjs),
+que roda automaticamente antes de `dev` e `build` (ver `package.json`). Ficam
+fora do git via `.gitignore`. No Docker, após instalar deps rode
+`docker compose exec web bun install` e reinicie o serviço web.
 
 ### Vendoring do OpenCV.js
-`OpenCV.js` (~8 MB) e `jscanify.js` ficam em `web/public/vendor/` e são carregados
-**sob demanda** (somente ao abrir o scanner no navegador), nunca no bundle inicial.
-
-## Setup do app nativo iOS (VisionKit)
-
-Pré-requisitos: **macOS + Xcode** (ou Mac na nuvem: Codemagic / Ionic Appflow /
-runner macOS no GitHub Actions) e conta **Apple Developer (US$99/ano)**.
-
-```bash
-cd web
-# 1. Adicionar a plataforma iOS (gera web/ios). Rodar num Mac.
-CAPACITOR_SERVER_URL=https://app.seudominio.com bunx cap add ios
-CAPACITOR_SERVER_URL=https://app.seudominio.com bunx cap sync ios
-
-# 2. Abrir no Xcode
-bunx cap open ios
-```
-
-No `ios/App/App/Info.plist`, adicionar a permissão de câmera:
-
-```xml
-<key>NSCameraUsageDescription</key>
-<string>Usamos a câmera para escanear documentos e anexá-los ao processo.</string>
-```
-
-### Distribuição Ad Hoc (até 100 dispositivos/ano)
-1. Cadastrar os UDIDs dos iPhones no portal Apple Developer.
-2. Criar um perfil de provisionamento **Ad Hoc** com esses UDIDs.
-3. No Xcode, *Archive* → *Distribute App* → *Ad Hoc* → exportar o `.ipa`.
-4. Publicar `.ipa` + `manifest.plist` em **HTTPS** e instalar via link
-   `itms-services://?action=download-manifest&url=https://.../manifest.plist`
-   (ou usar um serviço como TestApp.io).
-5. O perfil Ad Hoc expira em ~12 meses — refazer o build e redistribuir.
+`OpenCV.js` (~8 MB) e `jscanify.js` ficam em `web/public/vendor/` e são
+carregados **sob demanda** (somente ao abrir o scanner web), nunca no bundle
+inicial.
 
 ## Pontos de atenção
-- **Sessão/cookie no WebView:** o login (better-auth) usa cookie de sessão; validar
-  que persiste no WKWebView ao carregar via `server.url`. Testar cedo.
-- **HTTPS em tudo** (sem mixed content) ao carregar a URL remota no app.
-- O navegador (jscanify) tem qualidade inferior ao VisionKit; o ajuste manual de
+- **HTTPS** é obrigatório para usar a câmera em mobile (`localhost` ok no dev).
+- O scanner web (jscanify) tem qualidade inferior ao Scanbot; o ajuste manual de
   cantos cobre os casos em que a detecção automática falha.

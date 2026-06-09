@@ -116,16 +116,14 @@ export function HousingComplexDocumentsSection({
 
   const busy = uploadMutation.isPending || deleteMutation.isPending
 
+  // O erro e tratado pelo MutationCache.onError global (toast unico). Aqui so
+  // tratamos o sucesso; o catch evita unhandled rejection sem duplicar o toast.
   async function handleUpload(documentTypeKey: string, file: File) {
     try {
       await uploadMutation.mutateAsync({ documentTypeKey, file })
       toast.success('Documento anexado ao conjunto.')
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : 'Nao foi possivel anexar o documento.',
-      )
+    } catch {
+      // toast de erro ja exibido pelo handler global de mutations
     }
   }
 
@@ -133,12 +131,8 @@ export function HousingComplexDocumentsSection({
     try {
       await deleteMutation.mutateAsync(fileId)
       toast.success('Documento removido do conjunto.')
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : 'Nao foi possivel remover o documento.',
-      )
+    } catch {
+      // toast de erro ja exibido pelo handler global de mutations
     }
   }
 

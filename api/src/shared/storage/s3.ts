@@ -174,6 +174,21 @@ export async function deleteStorageObject(input: {
   )
 }
 
+// Monta o Content-Disposition de download. Inclui o filename* (RFC 5987) para
+// nomes com acentos/UTF-8 (ex.: "João.zip"), com um fallback ASCII em filename.
+// Remove CR/LF para nao permitir injecao de header.
+function buildAttachmentDisposition(fileName: string): string {
+  const clean = fileName.replace(/[\r\n"]/g, '')
+  const asciiFallback = clean.replace(/[^\x20-\x7E]/g, '_')
+  // encodeURIComponent deixa ' ( ) * sem encodar, mas eles nao sao validos no
+  // ext-value do RFC 5987 — encoda-os tambem para nomes com apostrofo etc.
+  const encoded = encodeURIComponent(clean).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encoded}`
+}
+
 export async function createStorageObjectDownloadUrl(input: {
   bucketName: StorageBucketName
   expiresInSeconds?: number
@@ -187,7 +202,7 @@ export async function createStorageObjectDownloadUrl(input: {
       Bucket: input.bucketName,
       Key: input.objectKey,
       ResponseContentDisposition: input.downloadFileName
-        ? `attachment; filename="${input.downloadFileName.replace(/"/g, '')}"`
+        ? buildAttachmentDisposition(input.downloadFileName)
         : undefined,
     }),
     {

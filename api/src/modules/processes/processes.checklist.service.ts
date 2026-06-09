@@ -547,7 +547,15 @@ function buildChecklistResponse(input: {
 
     return {
       id: checklistItem.id,
-      status: checklistItem.status,
+      // Itens do conjunto sao read-only e seu processDocument.status nunca e
+      // atualizado (o arquivo vive em housingComplexFile). Deriva o status pela
+      // presenca do arquivo espelhado, para o badge nao ficar "Pendente" eterno.
+      status:
+        scope === 'housing_complex'
+          ? currentFiles.length > 0
+            ? 'ANEXADO'
+            : 'PENDENTE'
+          : checklistItem.status,
       observation: checklistItem.observation,
       scope,
       readOnly: scope === 'housing_complex',
