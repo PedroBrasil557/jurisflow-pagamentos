@@ -12,6 +12,7 @@ import {
 } from '../schemas/admin-housing-complex-form.schema'
 import { useUpdateHousingComplex } from '../services/admin-housing-complexes.mutations'
 import type { HousingComplexListItem } from '../services/admin-housing-complexes.service'
+import { HousingComplexDocumentsSection } from './housing-complex-documents-section'
 
 type EditHousingComplexDialogProps = {
   housingComplex: HousingComplexListItem
@@ -147,6 +148,8 @@ export function EditHousingComplexDialog({
           </Button>
         </div>
       </form>
+
+      <HousingComplexDocumentsSection housingComplexId={housingComplex.id} />
     </AppDialog>
   )
 }
