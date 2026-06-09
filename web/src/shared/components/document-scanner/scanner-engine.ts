@@ -64,7 +64,19 @@ type OpenCvModule = {
   INTER_AREA: number
 }
 
-type ImageSource = HTMLCanvasElement | HTMLImageElement
+export type ImageSource = HTMLCanvasElement | HTMLImageElement
+
+// Contrato comum dos motores de deteccao de cantos. O motor OpenCV/jscanify e o
+// motor DocAligner (IA) implementam isto; o WebScannerDialog injeta um deles.
+// E assincrono porque a inferencia ONNX retorna Promise (o OpenCV resolve na
+// hora). Devolve os 4 cantos ja ordenados/validados, ou null se nada confiavel.
+export type DetectOptions = { fallback?: boolean }
+export interface CornerDetector {
+  detect(
+    source: ImageSource,
+    options?: DetectOptions,
+  ): Promise<CornerPoints | null>
+}
 
 export type JscanifyInstance = {
   highlightPaper(
@@ -189,7 +201,7 @@ function quadArea(corners: CornerPoints): number {
 // Reordena 4 pontos quaisquer em TL, TR, BR, BL de forma robusta: o canto
 // superior-esquerdo tem a menor soma (x+y) e o inferior-direito a maior; o
 // superior-direito tem o menor (y-x) e o inferior-esquerdo o maior.
-function orderCorners(corners: CornerPoints): CornerPoints {
+export function orderCorners(corners: CornerPoints): CornerPoints {
   const points = [
     corners.topLeftCorner,
     corners.topRightCorner,
@@ -225,7 +237,7 @@ const MAX_DETECT_DIM = 640
 // Descarta deteccoes improvaveis: contorno minusculo (ruido), o frame inteiro
 // (sem documento real) ou lados degenerados — nesses casos e melhor usar os
 // cantos padrao do que aplicar um recorte/perspectiva torto.
-function isPlausibleQuad(
+export function isPlausibleQuad(
   corners: CornerPoints,
   width: number,
   height: number,

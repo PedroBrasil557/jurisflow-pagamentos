@@ -5,8 +5,8 @@ import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent } from '#/components/ui/card'
 import { Label } from '#/components/ui/label'
-import { cn } from '#/lib/utils'
 import { Textarea } from '#/components/ui/textarea'
+import { cn } from '#/lib/utils'
 import { PageHeader } from '@/shared/components/page-header'
 import { PasswordInput } from '@/shared/components/password-input'
 import { SettingsLayout } from '@/shared/components/settings-layout'
@@ -141,7 +141,7 @@ function KeyCard({
   )
 }
 
-type ScannerProvider = 'scanbot' | 'web'
+type ScannerProvider = 'scanbot' | 'web' | 'docaligner'
 
 function ScannerProviderSelect({
   provider,
@@ -159,6 +159,12 @@ function ScannerProviderSelect({
       value: 'scanbot' as const,
       label: 'Scanbot',
       description: 'Qualidade CamScanner. Requer a license configurada abaixo.',
+    },
+    {
+      value: 'docaligner' as const,
+      label: 'DocAligner (IA)',
+      description:
+        'Deteccao de bordas por IA, open-source. Sem license, roda no navegador.',
     },
     {
       value: 'web' as const,
@@ -180,7 +186,7 @@ function ScannerProviderSelect({
           </p>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-3">
           {options.map((option) => (
             <button
               className={cn(
@@ -305,24 +311,24 @@ export function SettingsPage() {
               scanbotConfigured={status?.scanbot?.configured ?? false}
             />
             <KeyCard
-            description="License key do Scanbot Web SDK, usada no scanner de documentos (qualidade CamScanner, inclusive no iPhone). Sem ela, o scanner usa o modo alternativo (jscanify) com ajuste manual de bordas."
-            helpText="Cole a chave inteira (varias linhas). E travada por dominio; sem ela o scanner cai no modo alternativo."
-            isBusy={saveScanbot.isPending || clearScanbot.isPending}
-            isLoading={statusQuery.isLoading}
-            isSaving={saveScanbot.isPending}
-            multiline
-            onClear={() =>
-              runMutation(
-                clearScanbot.mutateAsync(),
-                'Nao foi possivel remover a license.',
-              )
-            }
-            onSave={(value) =>
-              runMutation(
-                saveScanbot.mutateAsync(value),
-                'Nao foi possivel salvar a license.',
-              )
-            }
+              description="License key do Scanbot Web SDK, usada no scanner de documentos (qualidade CamScanner, inclusive no iPhone). Sem ela, o scanner usa o modo alternativo (jscanify) com ajuste manual de bordas."
+              helpText="Cole a chave inteira (varias linhas). E travada por dominio; sem ela o scanner cai no modo alternativo."
+              isBusy={saveScanbot.isPending || clearScanbot.isPending}
+              isLoading={statusQuery.isLoading}
+              isSaving={saveScanbot.isPending}
+              multiline
+              onClear={() =>
+                runMutation(
+                  clearScanbot.mutateAsync(),
+                  'Nao foi possivel remover a license.',
+                )
+              }
+              onSave={(value) =>
+                runMutation(
+                  saveScanbot.mutateAsync(value),
+                  'Nao foi possivel salvar a license.',
+                )
+              }
               placeholder="Cole aqui a license key do Scanbot..."
               status={status?.scanbot}
               title="License key do Scanbot"

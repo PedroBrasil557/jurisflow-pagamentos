@@ -26,12 +26,14 @@ export function ScanButton({ onComplete, disabled }: ScanButtonProps) {
   const providerQuery = useQuery(scannerProviderQuery)
   const licenseQuery = useQuery(scanbotLicenseQuery)
 
-  async function handleClick() {
-    // Servico escolhido no painel de Configuracoes (Scanbot ou Scanner web).
-    const provider = providerQuery.data ?? 'web'
+  // Servico escolhido no painel de Configuracoes ('scanbot' | 'web' |
+  // 'docaligner').
+  const provider = providerQuery.data ?? 'web'
 
-    // Scanner web (jscanify): motor base, sem licenca, sem fallback adicional.
-    if (provider === 'web') {
+  async function handleClick() {
+    // Scanner web (jscanify) e DocAligner (IA) usam o mesmo dialogo no
+    // navegador; sem licenca. O DocAligner liga a deteccao por IA via `useMl`.
+    if (provider === 'web' || provider === 'docaligner') {
       setOpen(true)
       return
     }
@@ -91,6 +93,7 @@ export function ScanButton({ onComplete, disabled }: ScanButtonProps) {
               onComplete(file)
             }}
             open={open}
+            useMl={provider === 'docaligner'}
           />
         </Suspense>
       ) : null}
