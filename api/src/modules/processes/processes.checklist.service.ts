@@ -7,9 +7,14 @@ import {
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
+import { createStorageObjectsZip } from '../../shared/storage/zip'
 import type { AppBindings } from '../../shared/types/app'
 import { buildChecklistDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
+import {
+  getHousingComplexChecklistFiles,
+  type HousingComplexChecklistFile,
+} from '../housing-complexes/housing-complexes.documents.service'
 import {
   assertCanAccessChecklist,
   assertCanAccessDocumentation,
@@ -20,10 +25,6 @@ import {
   getProcessContextOrThrow,
   getProcessRecordOrThrow,
 } from './processes.access'
-import {
-  getHousingComplexChecklistFiles,
-  type HousingComplexChecklistFile,
-} from '../housing-complexes/housing-complexes.documents.service'
 import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
@@ -1438,4 +1439,91 @@ export async function downloadAllChecklistFiles(
   }
 
   return { files: result }
+}
+
+// Monta um ZIP unico com todos os documentos do checklist (processo + conjunto).
+// Evita o "baixar todos" via N downloads — o navegador bloqueia downloads
+// programaticos em sequencia e as URLs assinadas sao cross-origin em producao.
+export async function downloadAllChecklistFilesZip(
+  processId: string,
+  userId: string,
+  perms: ResolvedPermissions,
+) {
+  const { relationship } = await getProcessContextOrThrow({
+    processId,
+    userId,
+    perms,
+  })
+  assertCanAccessChecklist(perms, relationship)
+
+  const currentProcess = await getProcessRecordOrThrow(processId)
+
+  const files = await db
+    .select({
+      bucketName: processDocumentFile.bucketName,
+      objectKey: processDocumentFile.objectKey,
+      originalFileName: processDocumentFile.originalFileName,
+      documentTypeKey: processDocumentType.key,
+      documentTypeLabel: processDocumentType.label,
+    })
+    .from(processDocumentFile)
+    .innerJoin(
+      processDocument,
+      eq(processDocumentFile.processDocumentId, processDocument.id),
+    )
+    .innerJoin(
+      processDocumentType,
+      eq(processDocument.documentTypeId, processDocumentType.id),
+    )
+    .where(
+      and(
+        eq(processDocument.processId, processId),
+        eq(processDocumentFile.isCurrent, true),
+      ),
+    )
+    .orderBy(
+      asc(processDocumentType.sortOrder),
+      asc(processDocumentFile.uploadedAt),
+    )
+
+  const entries = files.map((file) => ({
+    bucketName: file.bucketName,
+    objectKey: file.objectKey,
+    fileName: buildChecklistDownloadFileName({
+      documentNumber:
+        documentDisplayNumberByKey.get(file.documentTypeKey) ?? null,
+      documentTypeLabel: file.documentTypeLabel,
+      processCode: currentProcess.code,
+      processFullName: currentProcess.fullName,
+      originalFileName: file.originalFileName,
+    }),
+  }))
+
+  // Documentos do conjunto (espelhados no checklist).
+  if (currentProcess.housingComplexId) {
+    const conjuntoFiles = await getHousingComplexChecklistFiles(
+      currentProcess.housingComplexId,
+    )
+    for (const [key, file] of conjuntoFiles) {
+      entries.push({
+        bucketName: file.bucketName,
+        objectKey: file.objectKey,
+        fileName: buildChecklistDownloadFileName({
+          documentNumber: documentDisplayNumberByKey.get(key) ?? null,
+          documentTypeLabel: documentLabelByKey.get(key) ?? key,
+          processCode: currentProcess.code,
+          processFullName: currentProcess.fullName,
+          originalFileName: file.originalFileName,
+        }),
+      })
+    }
+  }
+
+  const bytes = await createStorageObjectsZip(entries)
+  const zipFileName = `documentos-${currentProcess.code}.zip`.replace(
+    /\s+/g,
+    '-',
+  )
+
+  return { bytes, fileName: zipFileName, fileCount: entries.length }
 }

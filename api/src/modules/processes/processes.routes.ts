@@ -20,6 +20,7 @@ import {
 import {
   deleteBatchFile,
   downloadAllBatchFiles,
+  downloadAllBatchFilesZip,
   getBatchFileDownload,
   listBatchFiles,
   maxBatchFileSizeInBytes,
@@ -30,6 +31,7 @@ import {
 import {
   deleteChecklistFile,
   downloadAllChecklistFiles,
+  downloadAllChecklistFilesZip,
   getProcessChecklist,
   getProcessChecklistFileDownload,
   submitProcessChecklistItem,
@@ -535,6 +537,52 @@ export const processRoutes = new Hono<AppBindings>()
         )
 
         return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .get(
+    '/:processId/checklist/download-all.zip',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { bytes, fileName } = await downloadAllChecklistFilesZip(
+          c.req.valid('param').processId,
+          currentUser.id,
+          perms,
+        )
+
+        return new Response(bytes, {
+          status: 200,
+          headers: {
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          },
+        })
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .get(
+    '/:processId/batch/download-all.zip',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { bytes, fileName } = await downloadAllBatchFilesZip(
+          c.req.valid('param').processId,
+          currentUser.id,
+          perms,
+        )
+
+        return new Response(bytes, {
+          status: 200,
+          headers: {
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+          },
+        })
       } catch (error) {
         return handleServiceError(c, error)
       }
