@@ -35,7 +35,7 @@ export function ScanProcessAction() {
   return (
     <>
       <ScanButton
-        className="w-full sm:w-auto"
+        className="h-12 w-full sm:h-9 sm:w-auto"
         disabled={scanMutation.isPending}
         label="Escanear documentos"
         onComplete={handleScanComplete}
