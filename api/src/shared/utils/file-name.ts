@@ -9,16 +9,16 @@ function getFileExtension(fileName: string): string {
 }
 
 export function buildChecklistDownloadFileName(input: {
-  documentTypeSortOrder: number
+  documentNumber: string | null
   documentTypeLabel: string
   processCode: string
   processFullName: string
   originalFileName: string
 }): string {
-  const sortPrefix = String(input.documentTypeSortOrder).padStart(2, '0')
+  const prefix = input.documentNumber ? `${input.documentNumber}. ` : ''
   const ext = getFileExtension(input.originalFileName)
 
-  return `${sortPrefix}. ${input.documentTypeLabel} - ${input.processCode} - ${input.processFullName}${ext}`
+  return `${prefix}${input.documentTypeLabel} - ${input.processCode} - ${input.processFullName}${ext}`
 }
 
 export function buildBatchDownloadFileName(input: {

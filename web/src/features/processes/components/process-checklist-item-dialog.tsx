@@ -89,10 +89,9 @@ export function ChecklistItemDialog({
   }
 
   const currentItem = item
-  const sortOrderLabel = String(currentItem.documentType.sortOrder).padStart(
-    2,
-    '0',
-  )
+  const numberPrefix = currentItem.documentType.number
+    ? `${currentItem.documentType.number}. `
+    : ''
 
   async function handleDownload(fileId: string) {
     try {
@@ -137,7 +136,7 @@ export function ChecklistItemDialog({
       maxWidth="3xl"
       onClose={onClose}
       open={true}
-      title={`${sortOrderLabel}. ${item.documentType.label}`}
+      title={`${numberPrefix}${item.documentType.label}`}
       variant="info"
     >
       <div className="grid gap-4 rounded-[1.75rem] border border-dashed border-border bg-muted/35 p-5">
