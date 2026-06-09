@@ -1487,18 +1487,24 @@ export async function downloadAllChecklistFilesZip(
       asc(processDocumentFile.uploadedAt),
     )
 
-  const entries = files.map((file) => ({
-    bucketName: file.bucketName,
-    objectKey: file.objectKey,
-    fileName: buildChecklistDownloadFileName({
-      documentNumber:
-        documentDisplayNumberByKey.get(file.documentTypeKey) ?? null,
-      documentTypeLabel: file.documentTypeLabel,
-      processCode: currentProcess.code,
-      processFullName: currentProcess.fullName,
-      originalFileName: file.originalFileName,
-    }),
-  }))
+  // O contrato de honorarios advocaticios e interno do escritorio — nao faz
+  // parte do pacote de documentos do processo, entao fica de fora do ZIP.
+  const entries = files
+    .filter(
+      (file) => file.documentTypeKey !== 'contrato_honorarios_advocaticios',
+    )
+    .map((file) => ({
+      bucketName: file.bucketName,
+      objectKey: file.objectKey,
+      fileName: buildChecklistDownloadFileName({
+        documentNumber:
+          documentDisplayNumberByKey.get(file.documentTypeKey) ?? null,
+        documentTypeLabel: file.documentTypeLabel,
+        processCode: currentProcess.code,
+        processFullName: currentProcess.fullName,
+        originalFileName: file.originalFileName,
+      }),
+    }))
 
   // Documentos do conjunto (espelhados no checklist).
   if (currentProcess.housingComplexId) {
@@ -1521,10 +1527,9 @@ export async function downloadAllChecklistFilesZip(
   }
 
   const bytes = await createStorageObjectsZip(entries)
-  const zipFileName = `documentos-${currentProcess.code}.zip`.replace(
-    /\s+/g,
-    '-',
-  )
+  // Nome do arquivo = nome do titular do processo (cai para o codigo se vazio).
+  const holderName = (currentProcess.fullName ?? '').trim() || currentProcess.code
+  const zipFileName = `${holderName}.zip`
 
   // Sobe o ZIP no storage e devolve URL assinada: o download vai do S3 direto ao
   // navegador, sem passar pela API (evita o limite de payload do gateway que
@@ -1534,7 +1539,7 @@ export async function downloadAllChecklistFilesZip(
   // A key unica tambem evita corrida entre downloads simultaneos do processo.
   const objectKey = buildStorageObjectKey([
     'tmp-zips',
-    `${crypto.randomUUID()}-${zipFileName}`,
+    `${crypto.randomUUID()}-${zipFileName.replace(/\s+/g, '-')}`,
   ])
   await uploadStorageObject({
     body: new Uint8Array(bytes),
