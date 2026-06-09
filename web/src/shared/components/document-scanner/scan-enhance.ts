@@ -166,16 +166,46 @@ function sampleGrid(
   return top + (bottom - top) * fy
 }
 
-// Limiar adaptivo (Bradley/Wellner) via imagem integral: media local por janela.
-function adaptiveThreshold(
+// Limiar adaptivo de Sauvola: T(x,y) = m * (1 + k*(s/R - 1)), com media (m) e
+// desvio-padrao (s) locais por janela. Lida melhor com iluminacao irregular e
+// fundo nao-uniforme do que so-media (Bradley). Usa imagens integrais; reaproveita
+// o mesmo buffer para soma e soma-dos-quadrados (memoria estavel em fotos grandes).
+const SAUVOLA_K = 0.2
+const SAUVOLA_R = 128
+
+function sauvolaThreshold(
   gray: Uint8ClampedArray,
   width: number,
   height: number,
 ): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(gray.length)
+  const n = width * height
+  const out = new Uint8ClampedArray(n)
   const stride = width + 1
   const integral = new Float64Array(stride * (height + 1))
+  const radius = Math.max(10, Math.floor(Math.min(width, height) / 50))
 
+  const windowArea = (x: number, y: number): number => {
+    const x1 = Math.max(0, x - radius)
+    const y1 = Math.max(0, y - radius)
+    const x2 = Math.min(width - 1, x + radius)
+    const y2 = Math.min(height - 1, y + radius)
+    return (x2 - x1 + 1) * (y2 - y1 + 1)
+  }
+
+  const windowSum = (x: number, y: number): number => {
+    const x1 = Math.max(0, x - radius)
+    const y1 = Math.max(0, y - radius)
+    const x2 = Math.min(width - 1, x + radius)
+    const y2 = Math.min(height - 1, y + radius)
+    return (
+      integral[(y2 + 1) * stride + (x2 + 1)] -
+      integral[y1 * stride + (x2 + 1)] -
+      integral[(y2 + 1) * stride + x1] +
+      integral[y1 * stride + x1]
+    )
+  }
+
+  // 1) integral das somas -> media local (guardada em 8 bits para economizar).
   for (let y = 0; y < height; y++) {
     let rowSum = 0
     for (let x = 0; x < width; x++) {
@@ -184,24 +214,33 @@ function adaptiveThreshold(
         integral[y * stride + (x + 1)] + rowSum
     }
   }
+  const mean = new Uint8ClampedArray(n)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      mean[y * width + x] = windowSum(x, y) / windowArea(x, y)
+    }
+  }
 
-  const radius = Math.max(8, Math.floor(Math.min(width, height) / 30))
-  const t = 0.15
+  // 2) integral das somas dos quadrados (reusa o buffer) -> variancia -> desvio.
+  integral.fill(0)
+  for (let y = 0; y < height; y++) {
+    let rowSum = 0
+    for (let x = 0; x < width; x++) {
+      const v = gray[y * width + x]
+      rowSum += v * v
+      integral[(y + 1) * stride + (x + 1)] =
+        integral[y * stride + (x + 1)] + rowSum
+    }
+  }
 
   for (let y = 0; y < height; y++) {
-    const y1 = Math.max(0, y - radius)
-    const y2 = Math.min(height - 1, y + radius)
     for (let x = 0; x < width; x++) {
-      const x1 = Math.max(0, x - radius)
-      const x2 = Math.min(width - 1, x + radius)
-      const area = (x2 - x1 + 1) * (y2 - y1 + 1)
-      const sum =
-        integral[(y2 + 1) * stride + (x2 + 1)] -
-        integral[y1 * stride + (x2 + 1)] -
-        integral[(y2 + 1) * stride + x1] +
-        integral[y1 * stride + x1]
-      const mean = sum / area
-      out[y * width + x] = gray[y * width + x] < mean * (1 - t) ? 0 : 255
+      const idx = y * width + x
+      const m = mean[idx]
+      const variance = windowSum(x, y) / windowArea(x, y) - m * m
+      const std = variance > 0 ? Math.sqrt(variance) : 0
+      const threshold = m * (1 + SAUVOLA_K * (std / SAUVOLA_R - 1))
+      out[idx] = gray[idx] < threshold ? 0 : 255
     }
   }
 
@@ -247,7 +286,7 @@ export function enhanceWithFilter(
     for (let i = 0, j = 0; i < data.length; i += 4, j++) {
       gray[j] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
     }
-    const bw = adaptiveThreshold(gray, width, height)
+    const bw = sauvolaThreshold(gray, width, height)
     for (let i = 0, j = 0; i < data.length; i += 4, j++) {
       data[i] = bw[j]
       data[i + 1] = bw[j]
