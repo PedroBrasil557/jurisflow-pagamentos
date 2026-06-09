@@ -193,7 +193,6 @@ export function WebScannerDialog({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const cameraBoxRef = useRef<HTMLDivElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const pageIdRef = useRef(0)
 
@@ -239,7 +238,6 @@ export function WebScannerDialog({
   // depois de ir as paginas e voltar).
   const boxObserverRef = useRef<ResizeObserver | null>(null)
   const measureCameraBox = useCallback((node: HTMLDivElement | null) => {
-    cameraBoxRef.current = node
     boxObserverRef.current?.disconnect()
     boxObserverRef.current = null
     if (!node) {
