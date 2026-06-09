@@ -14,6 +14,11 @@ const config = defineConfig(({ mode }) => {
   const usePolling = env.VITE_USE_POLLING === 'true'
 
   return {
+    // Workers como ES module: o worker do DocAligner importa o onnxruntime-web
+    // (code-splitting), incompativel com o formato 'iife' padrao do build.
+    worker: {
+      format: 'es' as const,
+    },
     server: {
       fs: {
         allow: ['..'],
