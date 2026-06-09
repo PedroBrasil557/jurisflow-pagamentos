@@ -16,12 +16,16 @@ export type FilterMode = 'color' | 'gray' | 'bw'
 const BACKGROUND_CELLS = 96
 const GRID_BLUR_RADIUS = 2
 
-// Niveis aplicados sobre a razao pixel/fundo (papel ~ 1.0).
-const WHITE_POINT = 0.88 // razao >= isto -> branco puro
-const BLACK_POINT = 0.15 // razao <= isto -> preto puro
-const GAMMA = 1.1 // > 1 escurece os meios-tons (texto mais firme)
+// Realce SUAVE: achata a iluminacao de forma multiplicativa (preserva o conteudo
+// e NAO forca branco). Crucial para documentos coloridos/claros como CNH/RG, que
+// a normalizacao agressiva "lavava". Texto preto-no-branco continua limpo via
+// contraste; binarizacao forte fica so no modo preto e branco.
+const PAPER_TARGET = 235 // alvo de brilho do fundo (nao e branco puro)
+const ILLUM_STRENGTH = 0.55 // quanto a iluminacao e achatada (0..1)
+const COLOR_CONTRAST = 1.12 // contraste leve no modo cor (fiel)
+const GRAY_CONTRAST = 1.28 // contraste um pouco maior no modo cinza
 
-const SATURATION = 1.45 // realce de cor (modo cor)
+const SATURATION = 1.35 // realce de cor (modo cor)
 const SHARPEN_AMOUNT = 0.8 // intensidade da nitidez
 const SHARPEN_RADIUS = 1 // raio do unsharp (px)
 
@@ -162,17 +166,6 @@ function sampleGrid(
   return top + (bottom - top) * fy
 }
 
-// Razao pixel/fundo -> niveis (ponto preto/branco) -> gama -> 0..255.
-function applyLevels(pixel: number, background: number): number {
-  const ratio = pixel / (background < 1 ? 1 : background)
-  let t = ratio > WHITE_POINT ? WHITE_POINT : ratio
-  t = (t - BLACK_POINT) / (WHITE_POINT - BLACK_POINT)
-  if (t < 0) {
-    t = 0
-  }
-  return clamp8(t ** GAMMA * 255)
-}
-
 // Limiar adaptivo (Bradley/Wellner) via imagem integral: media local por janela.
 function adaptiveThreshold(
   gray: Uint8ClampedArray,
@@ -266,6 +259,7 @@ export function enhanceWithFilter(
 
   const grid = estimatePaperGrid(data, width, height)
   const isGray = mode === 'gray'
+  const contrast = isGray ? GRAY_CONTRAST : COLOR_CONTRAST
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -274,9 +268,15 @@ export function enhanceWithFilter(
       const bgG = sampleGrid(grid.g, grid.cols, grid.rows, grid.cell, x, y)
       const bgB = sampleGrid(grid.b, grid.cols, grid.rows, grid.cell, x, y)
 
-      let r = applyLevels(data[idx], bgR)
-      let g = applyLevels(data[idx + 1], bgG)
-      let b = applyLevels(data[idx + 2], bgB)
+      // Fator multiplicativo: levanta sombra (fundo escuro) sem estourar onde o
+      // fundo ja e claro. Preserva o conteudo colorido/claro (CNH/RG).
+      const fR = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgR < 1 ? 1 : bgR) - 1)
+      const fG = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgG < 1 ? 1 : bgG) - 1)
+      const fB = 1 + ILLUM_STRENGTH * (PAPER_TARGET / (bgB < 1 ? 1 : bgB) - 1)
+
+      let r = (data[idx] * fR - 128) * contrast + 128
+      let g = (data[idx + 1] * fG - 128) * contrast + 128
+      let b = (data[idx + 2] * fB - 128) * contrast + 128
 
       if (isGray) {
         const lum = r * 0.299 + g * 0.587 + b * 0.114
@@ -285,14 +285,14 @@ export function enhanceWithFilter(
         b = lum
       } else {
         const lum = r * 0.299 + g * 0.587 + b * 0.114
-        r = clamp8(lum + (r - lum) * SATURATION)
-        g = clamp8(lum + (g - lum) * SATURATION)
-        b = clamp8(lum + (b - lum) * SATURATION)
+        r = lum + (r - lum) * SATURATION
+        g = lum + (g - lum) * SATURATION
+        b = lum + (b - lum) * SATURATION
       }
 
-      data[idx] = r
-      data[idx + 1] = g
-      data[idx + 2] = b
+      data[idx] = clamp8(r)
+      data[idx + 1] = clamp8(g)
+      data[idx + 2] = clamp8(b)
     }
   }
 
