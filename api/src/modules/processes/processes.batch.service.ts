@@ -881,11 +881,10 @@ export async function downloadAllBatchFilesZip(
   // Sobe o ZIP no storage e devolve URL assinada (download direto do S3, fora da
   // API) — evita o "Request Entity Too Large" do gateway em ZIPs grandes.
   const bucketName = storageBuckets.processDocuments
+  // Artefato efemero: key unica num prefixo dedicado (expira por lifecycle).
   const objectKey = buildStorageObjectKey([
-    'processes',
-    processId,
-    'zips',
-    zipFileName,
+    'tmp-zips',
+    `${crypto.randomUUID()}-${zipFileName}`,
   ])
   await uploadStorageObject({
     body: new Uint8Array(bytes),

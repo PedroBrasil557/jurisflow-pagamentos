@@ -1530,11 +1530,11 @@ export async function downloadAllChecklistFilesZip(
   // navegador, sem passar pela API (evita o limite de payload do gateway que
   // causava "Request Entity Too Large" em ZIPs grandes).
   const bucketName = storageBuckets.processDocuments
+  // Artefato efemero: key unica num prefixo dedicado (expira por lifecycle).
+  // A key unica tambem evita corrida entre downloads simultaneos do processo.
   const objectKey = buildStorageObjectKey([
-    'processes',
-    processId,
-    'zips',
-    zipFileName,
+    'tmp-zips',
+    `${crypto.randomUUID()}-${zipFileName}`,
   ])
   await uploadStorageObject({
     body: new Uint8Array(bytes),
