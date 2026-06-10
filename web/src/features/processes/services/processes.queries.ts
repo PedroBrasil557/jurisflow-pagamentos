@@ -41,6 +41,12 @@ export function processDetailOptions(processId: string) {
         draft: mapProcessToDraft(result.process),
       }
     },
+    // Enquanto a analise do contrato Caixa estiver rodando, repete a consulta
+    // para acompanhar processing -> done/review/error sem recarregar a pagina.
+    refetchInterval: (query) =>
+      query.state.data?.process.caixaAnalysisStatus === 'processing'
+        ? 2500
+        : false,
   })
 }
 

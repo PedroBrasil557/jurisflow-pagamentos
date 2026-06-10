@@ -18,6 +18,7 @@ import { useSession } from '@/features/auth/hooks/use-session'
 import { ConfirmDialog } from '@/shared/components/confirm-dialog'
 import { PageHeader } from '@/shared/components/page-header'
 import { downloadFile } from '@/shared/lib/download'
+import { CaixaOwnerCard } from '../components/caixa-owner-card'
 import { BatchSection } from '../components/process-batch-section'
 import { ChecklistItemCard } from '../components/process-checklist-item-card'
 import { ChecklistItemDialog } from '../components/process-checklist-item-dialog'
@@ -429,6 +430,15 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
             </Link>
           ) : null}
         </PageHeader>
+
+        {process.caixaAnalysisStatus !== 'idle' ? (
+          <CaixaOwnerCard
+            ownerType={process.ownerType}
+            ownerTypeSource={process.ownerTypeSource}
+            processId={processId}
+            status={process.caixaAnalysisStatus}
+          />
+        ) : null}
 
         <Tabs defaultValue={defaultTab}>
           <TabsList>
