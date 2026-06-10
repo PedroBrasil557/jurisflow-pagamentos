@@ -5,6 +5,10 @@ import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { useImportDocument } from '../../services/processes.mutations'
 
+// Limite por arquivo (alinhado ao backend). Como o upload e pre-assinado (direto
+// no S3), nao ha o teto de 10MB do API Gateway.
+const MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024
+
 // Acao "Importar documentos": abre um seletor de arquivo (PDF), cria o processo
 // via ingestao durável/assincrona (mesma do scan) e navega para o editor, onde o
 // usuario acompanha o processamento (banner da Fase 1) e revisa/salva.
@@ -22,6 +26,13 @@ export function ImportProcessAction() {
     }
     if (files.some((file) => file.type.toLowerCase() !== 'application/pdf')) {
       toast.error('Envie apenas arquivos PDF.')
+      return
+    }
+    const tooBig = files.find((file) => file.size > MAX_IMPORT_FILE_BYTES)
+    if (tooBig) {
+      toast.error(
+        `"${tooBig.name}" excede 25 MB. Reduza a qualidade do scan ou divida o documento.`,
+      )
       return
     }
 
