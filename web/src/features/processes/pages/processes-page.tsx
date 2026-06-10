@@ -25,6 +25,7 @@ import {
 import { FinalizeProcessDialog } from '../components/process-finalize/finalize-process-dialog'
 import { ProcessHistoryDialog } from '../components/process-history/process-history-dialog'
 import { ImportProcessAction } from '../components/process-import/import-process-action'
+import { ProcessIngestionBadge } from '../components/process-ingestion-badge'
 import { ProcessLastMovement } from '../components/process-last-movement'
 import { LegalProcessDialog } from '../components/process-legal/legal-process-dialog'
 import { ProcessMobileCard } from '../components/process-mobile-card'
@@ -68,6 +69,7 @@ const processTableColumns: readonly DataTableColumn<ProcessListItem>[] = [
         <Badge variant="secondary" className="w-fit ">
           {formatCpf(process.cpf)}
         </Badge>
+        <ProcessIngestionBadge status={process.ingestionStatus} />
       </div>
     ),
   },

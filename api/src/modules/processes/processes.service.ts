@@ -438,7 +438,7 @@ export async function listProcesses(
     ),
   ]
 
-  const [attorneys, historyEntries] = await Promise.all([
+  const [attorneys, historyEntries, batchStatuses] = await Promise.all([
     assignedAttorneyIds.length > 0
       ? db
           .select({
@@ -462,9 +462,28 @@ export async function listProcesses(
       .innerJoin(user, eq(processHistory.actorUserId, user.id))
       .where(inArray(processHistory.processId, processIds))
       .orderBy(desc(processHistory.createdAt)),
+    // Estado da ingestao de documentos por processo (lote): para o badge da
+    // lista — "processando" tem prioridade sobre "falhou".
+    db
+      .select({
+        processId: processBatchFile.processId,
+        hasProcessing: sql<boolean>`bool_or(${processBatchFile.splitStatus} = 'processing')`,
+        hasError: sql<boolean>`bool_or(${processBatchFile.splitStatus} = 'error')`,
+      })
+      .from(processBatchFile)
+      .where(inArray(processBatchFile.processId, processIds))
+      .groupBy(processBatchFile.processId),
   ])
 
   const attorneysById = new Map(attorneys.map((item) => [item.id, item.name]))
+  const ingestionByProcessId = new Map<string, 'processing' | 'error'>()
+  for (const row of batchStatuses) {
+    if (row.hasProcessing) {
+      ingestionByProcessId.set(row.processId, 'processing')
+    } else if (row.hasError) {
+      ingestionByProcessId.set(row.processId, 'error')
+    }
+  }
   const latestHistoryByProcessId = new Map<string, ProcessListHistoryRecord>()
 
   for (const historyEntry of historyEntries) {
@@ -492,6 +511,7 @@ export async function listProcesses(
         housingComplex: item.housingComplex,
         district: item.district,
         relationship,
+        ingestionStatus: ingestionByProcessId.get(item.id) ?? null,
         legalProcess: {
           label: getLegalProcessLabel(item),
           attorneyName: assignedAttorneyName,
