@@ -1,0 +1,14 @@
+# Imagem oficial do Playwright (Node + Chromium + libs do sistema ja inclusos).
+# A versao casa com a do pacote "playwright" no package.json.
+FROM mcr.microsoft.com/playwright:v1.60.0-jammy
+
+WORKDIR /workspace/worker
+
+# O Chromium ja vem na imagem — nao baixar de novo durante o install.
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+COPY package.json ./
+RUN npm install
+
+# CMD roda o loop do worker (node --import tsx src/index.ts via script "start").
+CMD ["npm", "run", "start"]

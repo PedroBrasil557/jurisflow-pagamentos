@@ -40,6 +40,7 @@ services:
       S3_PROCESS_DOCUMENTS_BUCKET: "process-documents"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-opus-4-8}"
+      INTERNAL_API_TOKEN: "dev-internal-token-change-me"
     volumes:
       - ./:/workspace
       - api_node_modules:/workspace/api/node_modules
@@ -99,8 +100,27 @@ services:
         /usr/bin/mc anonymous set none local/process-documents
     restart: "no"
 
+  # Worker RPA: consulta o termo de quitacao no portal da Caixa (Playwright
+  # headless) e reporta o resultado a API pelos endpoints internos.
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.dev
+    working_dir: /workspace/worker
+    environment:
+      API_URL: "http://api:3556"
+      INTERNAL_API_TOKEN: "dev-internal-token-change-me"
+      POLL_MS: "5000"
+    volumes:
+      - ./worker:/workspace/worker
+      - worker_node_modules:/workspace/worker/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   web_node_modules:
   api_node_modules:
+  worker_node_modules:
   postgres_data:
   minio_data:
