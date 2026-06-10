@@ -3,6 +3,7 @@ import type { ProcessFormValues } from '../process-form.types'
 import {
   createProcessViaScanRequest,
   importDocumentRequest,
+  reprocessImportRequest,
 } from './extraction.service'
 import { processKeys } from './processes.queries'
 import {
@@ -54,6 +55,19 @@ export function useImportDocument() {
     mutationFn: (files: File[]) => importDocumentRequest(files),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+    },
+  })
+}
+
+export function useReprocessImport(processId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => reprocessImportRequest(processId),
+    // Re-dispara a ingestao (202). Reinicia a consulta do lote para o polling
+    // acompanhar processing -> done/error.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.batch(processId) })
     },
   })
 }

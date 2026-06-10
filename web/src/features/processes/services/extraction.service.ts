@@ -8,6 +8,8 @@ const importBundleClientRoute =
   apiClient.api.processes[':processId']['import-bundle']
 const scanClientRoute = apiClient.api.processes.scan
 const importClientRoute = apiClient.api.processes.import
+const reprocessImportClientRoute =
+  apiClient.api.processes[':processId']['reprocess-import']
 
 export type CreateProcessViaScanResponse = InferResponseType<
   typeof scanClientRoute.$post,
@@ -70,6 +72,26 @@ export async function importDocumentRequest(
   }
 
   return (await response.json()) as ImportDocumentResponse
+}
+
+// Reprocessa a ingestao dos documentos que falharam (continuidade): re-roda a
+// extracao/anexo do PDF que ja esta no lote. Retorna 202; o front acompanha via
+// splitStatus (polling).
+export async function reprocessImportRequest(processId: string) {
+  const response = await reprocessImportClientRoute.$post({
+    param: { processId },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel reprocessar os documentos.',
+      ),
+    )
+  }
+
+  return response.json()
 }
 
 export type ExtractDocumentsResponse = InferResponseType<

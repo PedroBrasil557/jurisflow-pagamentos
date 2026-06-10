@@ -772,6 +772,64 @@ export async function startMultiDocumentIngestion(input: {
   return { batchFileIds: fileRecords.map((record) => record.id) }
 }
 
+// Reprocessa a ingestao dos arquivos que FALHARAM (splitStatus='error') de um
+// processo — re-roda a ingestao COMPLETA (extrai + aplica campos + split) a
+// partir do PDF JÁ no lote, SEM re-upload. Continuidade quando a IA falha.
+export async function reprocessFailedIngestion(input: {
+  processId: string
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}): Promise<{ count: number }> {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  assertCanAccessBatch(input.perms, relationship)
+  assertCanAccessDocumentation(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'uploadChecklist')
+  assertChecklistUploadAllowed(currentProcess.status)
+
+  const errorFiles = await db
+    .select()
+    .from(processBatchFile)
+    .where(
+      and(
+        eq(processBatchFile.processId, input.processId),
+        eq(processBatchFile.splitStatus, 'error'),
+      ),
+    )
+
+  if (errorFiles.length === 0) {
+    throw new ProcessServiceError(
+      400,
+      'Nao ha documentos com falha para reprocessar.',
+    )
+  }
+
+  // Re-roda SEQUENCIALMENTE os que conseguir reivindicar (claim atomico).
+  void (async () => {
+    for (const fileRecord of errorFiles) {
+      if (await claimSplitProcessing(fileRecord.id)) {
+        await runScanIngestion({
+          processId: input.processId,
+          fileRecord,
+          actor: input.actor,
+          perms: input.perms,
+        })
+      }
+    }
+  })().catch((error) => {
+    console.error('Falha no reprocessamento da ingestao', {
+      processId: input.processId,
+      error: String(error),
+    })
+  })
+
+  return { count: errorFiles.length }
+}
+
 export async function getBatchFileDownload(input: {
   processId: string
   fileId: string

@@ -4,7 +4,7 @@ import {
   useQueryClient,
 } from '@tanstack/react-query'
 import { Link, useBlocker, useNavigate } from '@tanstack/react-router'
-import { ArrowLeft, Loader2, Sparkles, User } from 'lucide-react'
+import { ArrowLeft, Loader2, RefreshCw, Sparkles, User } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type SubmitHandler, useWatch } from 'react-hook-form'
@@ -52,6 +52,7 @@ import { importBundleRequest } from '../services/extraction.service'
 import { housingComplexOptionsInfiniteQuery } from '../services/housing-complexes.queries'
 import {
   useCreateProcess,
+  useReprocessImport,
   useUpdateProcess,
 } from '../services/processes.mutations'
 import {
@@ -147,6 +148,21 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
 
   const createMutation = useCreateProcess()
   const updateMutation = useUpdateProcess(processId ?? '')
+  const reprocessMutation = useReprocessImport(processId ?? '')
+
+  async function handleReprocessImport() {
+    try {
+      await reprocessMutation.mutateAsync()
+      toast.success('Reprocessando os documentos...')
+      reprocessMutation.reset()
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Nao foi possivel reprocessar os documentos.',
+      )
+    }
+  }
 
   const {
     control,
@@ -518,12 +534,29 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
           </div>
         </div>
       ) : ingestErrorFile ? (
-        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-          Nao foi possivel ler os documentos automaticamente
-          {ingestErrorFile.splitMessage
-            ? `: ${ingestErrorFile.splitMessage}`
-            : '.'}{' '}
-          Voce pode preencher os campos e anexar os documentos manualmente.
+        <div className="mb-6 flex flex-col gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 sm:flex-row sm:items-center sm:justify-between dark:text-amber-400">
+          <span>
+            Nao foi possivel ler os documentos automaticamente
+            {ingestErrorFile.splitMessage
+              ? `: ${ingestErrorFile.splitMessage}`
+              : '.'}{' '}
+            Tente novamente ou preencha e anexe manualmente.
+          </span>
+          <Button
+            className="shrink-0"
+            disabled={reprocessMutation.isPending}
+            onClick={handleReprocessImport}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            {reprocessMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4" />
+            )}
+            Reprocessar
+          </Button>
         </div>
       ) : null}
 

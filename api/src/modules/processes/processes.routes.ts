@@ -35,6 +35,7 @@ import {
   getBatchFileDownload,
   listBatchFiles,
   maxBatchFileSizeInBytes,
+  reprocessFailedIngestion,
   startBatchFileSplit,
   startMultiDocumentIngestion,
   startScanIngestion,
@@ -287,6 +288,26 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
+  // Reprocessa a ingestao dos documentos que falharam (continuidade quando a IA
+  // falha) — re-roda a extracao/anexo do PDF que ja esta no lote.
+  .post(
+    '/:processId/reprocess-import',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { processId } = c.req.valid('param')
+        const result = await reprocessFailedIngestion({
+          processId,
+          actor: currentUser,
+          perms,
+        })
+        return c.json(result, 202)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .post(
     '/:processId/import-bundle',
     uploadBodyLimit(MAX_FILE_SIZE_IN_BYTES),
