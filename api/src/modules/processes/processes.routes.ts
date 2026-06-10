@@ -22,6 +22,7 @@ import {
   getAiAnalysis,
   listAiAnalyses,
 } from '../ai-analysis/ai-analysis.service'
+import { requestQuitacaoRecheck } from '../caixa-quitacao/caixa-quitacao.service'
 import {
   assertCan,
   resolveUserPermissions,
@@ -838,6 +839,22 @@ export const processRoutes = new Hono<AppBindings>()
           processId,
           triggeredByUserId: currentUser.id,
         })
+        return c.json(result, 202)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // Reconsulta a quitacao na Caixa sob demanda (re-enfileira para o worker).
+  .post(
+    '/:processId/caixa-quitacao/reconsultar',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { processId } = c.req.valid('param')
+        await getProcessById(processId, currentUser.id, perms)
+        const result = await requestQuitacaoRecheck(processId)
         return c.json(result, 202)
       } catch (error) {
         return handleServiceError(c, error)

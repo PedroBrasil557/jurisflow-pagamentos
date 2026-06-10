@@ -1,8 +1,20 @@
-import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from 'drizzle-orm'
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { deleteStorageObject } from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
 import { user } from '../auth/auth.schema'
+import { enqueueQuitacaoCheck } from '../caixa-quitacao/caixa-quitacao.service'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import {
   assertCan,
@@ -630,6 +642,9 @@ export async function createProcess(
 
   await ensureProcessChecklistItems(processId)
 
+  // Dispara a consulta automatica de quitacao na Caixa (worker RPA).
+  await enqueueQuitacaoCheck(processId, createdProcess.cpf)
+
   return createdProcess
 }
 
@@ -689,7 +704,10 @@ export async function createDraftProcess(
 
     await ensureProcessChecklistItems(processId)
   } catch (error) {
-    await db.delete(process).where(eq(process.id, processId)).catch(() => {})
+    await db
+      .delete(process)
+      .where(eq(process.id, processId))
+      .catch(() => {})
     throw error
   }
 

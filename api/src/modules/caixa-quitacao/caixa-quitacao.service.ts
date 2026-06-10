@@ -1,10 +1,57 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
+import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
 import { attachSystemChecklistFile } from '../processes/processes.checklist.service'
 import { process } from '../processes/processes.schema'
 
 const QUITACAO_DOC_KEY = 'declaracao_quitacao'
+
+// Enfileira a consulta de quitacao SE o CPF for valido e a consulta ainda nao
+// foi iniciada (status 'idle'). Idempotente — chamada na criacao do processo e
+// apos a extracao do scan preencher o CPF; nao re-enfileira o que ja rodou.
+export async function enqueueQuitacaoCheck(
+  processId: string,
+  cpf: string,
+): Promise<void> {
+  if (!isValidCpf(normalizeCpf(cpf))) {
+    return
+  }
+  await db
+    .update(process)
+    .set({ caixaQuitacaoStatus: 'pending', caixaQuitacaoAttempts: 0 })
+    .where(
+      and(eq(process.id, processId), eq(process.caixaQuitacaoStatus, 'idle')),
+    )
+}
+
+// Reconsulta sob demanda (usuario): re-enfileira independentemente do status.
+export async function requestQuitacaoRecheck(
+  processId: string,
+): Promise<{ status: 'pending' }> {
+  const [proc] = await db
+    .select({ cpf: process.cpf })
+    .from(process)
+    .where(eq(process.id, processId))
+    .limit(1)
+
+  if (!proc) {
+    throw new ServiceError(404, 'Processo nao encontrado.')
+  }
+  if (!isValidCpf(normalizeCpf(proc.cpf))) {
+    throw new ServiceError(
+      400,
+      'Processo sem CPF valido para consultar a quitacao.',
+    )
+  }
+
+  await db
+    .update(process)
+    .set({ caixaQuitacaoStatus: 'pending', caixaQuitacaoAttempts: 0 })
+    .where(eq(process.id, processId))
+
+  return { status: 'pending' }
+}
 
 export type QuitacaoJob = { processId: string; cpf: string } | null
 
