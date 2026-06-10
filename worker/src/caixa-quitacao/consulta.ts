@@ -49,6 +49,18 @@ export async function consultarQuitacao(
   page: Page,
   cpf: string,
 ): Promise<ConsultaQuitacaoOutcome> {
+  // D9: valida o CPF antes de consultar — o claim confia no cpf do banco, que
+  // pode ter sido editado para algo invalido apos o enqueue. Nao submeter lixo
+  // (poderia retornar dados de outro contrato).
+  const digits = cpf.replace(/\D/g, '')
+  if (digits.length !== 11 || /^(\d)\1{10}$/.test(digits)) {
+    return {
+      result: 'erro',
+      message: `CPF invalido para consulta (${digits.length} digito(s)).`,
+      pdf: null,
+    }
+  }
+
   await page.goto(CONSULTA_URL, {
     waitUntil: 'domcontentloaded',
     timeout: 90_000,
@@ -57,9 +69,20 @@ export async function consultarQuitacao(
     .waitForLoadState('networkidle', { timeout: 30_000 })
     .catch(() => {})
 
+  // D11: sentinela — se o campo CPF nao existe, a pagina nao e a esperada (site
+  // alterado ou em manutencao). Falha com mensagem clara, nao um timeout opaco.
+  if ((await page.locator(SELECTORS.cpf).count()) === 0) {
+    return {
+      result: 'erro',
+      message:
+        'Pagina inesperada da Caixa (estrutura alterada ou em manutencao): campo CPF nao encontrado.',
+      pdf: null,
+    }
+  }
+
   const cpfInput = page.locator(SELECTORS.cpf)
   await cpfInput.fill('')
-  await cpfInput.pressSequentially(cpf.replace(/\D/g, ''), { delay: 50 })
+  await cpfInput.pressSequentially(digits, { delay: 50 })
 
   await page.locator(SELECTORS.consultar).click({ timeout: 15_000 })
   await page

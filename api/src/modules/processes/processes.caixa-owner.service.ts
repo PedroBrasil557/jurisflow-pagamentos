@@ -45,14 +45,19 @@ export function isCaixaOwnerDocKey(key: string): boolean {
 async function claimCaixaAnalysis(processId: string): Promise<boolean> {
   const claimed = await db
     .update(process)
-    .set({ caixaAnalysisStatus: 'processing' })
+    .set({
+      caixaAnalysisStatus: 'processing',
+      caixaAnalysisStartedAt: sql`now()`,
+    })
     .where(
       and(
         eq(process.id, processId),
         or(
           ne(process.caixaAnalysisStatus, 'processing'),
+          // Staleness pelo heartbeat (setado so aqui), NAO por updated_at — que
+          // qualquer edicao do processo tocaria, mascarando um job orfao.
           lt(
-            process.updatedAt,
+            process.caixaAnalysisStartedAt,
             sql`now() - interval '${sql.raw(String(CAIXA_STALE_MINUTES))} minutes'`,
           ),
         ),

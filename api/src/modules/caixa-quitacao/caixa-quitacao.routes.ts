@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { type Context, Hono, type Next } from 'hono'
 import { env } from '../../shared/config/env'
 import { handleServiceError } from '../../shared/middleware/error-handler'
@@ -9,12 +10,22 @@ import {
   recordQuitacaoResult,
 } from './caixa-quitacao.service'
 
+// Comparacao de tempo constante (evita timing oracle byte-a-byte no token).
+function tokensMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length) {
+    return false
+  }
+  return timingSafeEqual(a, b)
+}
+
 // Endpoints internos (worker RPA) — autenticados por token de servico, NAO por
 // sessao de usuario. Montados sob /api/internal/caixa-quitacao.
 function requireInternalToken() {
   return async (c: Context<AppBindings>, next: Next) => {
     const token = c.req.header('x-internal-token')
-    if (!token || token !== env.internalApiToken) {
+    if (!token || !tokensMatch(token, env.internalApiToken)) {
       return c.json({ message: 'Nao autorizado.' }, 401)
     }
     await next()

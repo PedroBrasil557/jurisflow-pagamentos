@@ -26,8 +26,10 @@ export type CaixaOwnerResult = {
 
 // Decisao DETERMINISTICA (codigo, nunca o LLM). Precisao sobre recall:
 // 1) CPF e o sinal primario — exige ambos validos (checksum) e iguais.
-// 2) Nome so e usado como fallback QUANDO o comprador nao tem CPF valido no doc
-//    (CPF diferente = pessoa diferente, mesmo com nome igual: pai/filho).
+// 2) Nome so e usado como fallback QUANDO o comprador NAO TRAZ CPF no doc.
+//    Se o doc traz um CPF (mesmo mascarado/parcial, ex.: "111.444.***-**" — comum
+//    por LGPD), NAO casar por nome: o CPF e um sinal de identidade conflitante
+//    que invalida o match por homonimo (dois "Jose da Silva" distintos) => review.
 // 3) Varios compradores (casal): basta UM bater para ser titular.
 // 4) Nenhum match identico => 'review'.
 export function compareCaixaOwner(
@@ -35,11 +37,19 @@ export function compareCaixaOwner(
   titular: CaixaTitular,
 ): CaixaOwnerResult {
   const titularCpf = normalizeCpf(titular.cpf)
-  const titularCpfValid = isValidCpf(titularCpf)
+  // isValidCpf recebe o valor CRU (nao o normalizeCpf, que faz slice(0,11)): um
+  // CPF com digitos a mais precisa ser rejeitado, nao truncado para 11 e aceito.
+  const titularCpfValid = isValidCpf(titular.cpf)
   const titularName = normalizeName(titular.fullName)
 
   const buyerHasValidCpf = (buyer: CaixaBuyer): boolean =>
-    !!buyer.cpf && isValidCpf(normalizeCpf(buyer.cpf))
+    !!buyer.cpf && isValidCpf(buyer.cpf)
+
+  // Sem NENHUM digito de CPF no doc (null/''/so pontuacao) — unico caso em que o
+  // fallback por nome e seguro. Um CPF presente porem invalido NAO conta como
+  // "sem CPF".
+  const buyerHasNoCpf = (buyer: CaixaBuyer): boolean =>
+    !buyer.cpf || normalizeCpf(buyer.cpf).length === 0
 
   // 1) CPF identico (primario).
   if (titularCpfValid) {
@@ -53,13 +63,10 @@ export function compareCaixaOwner(
     }
   }
 
-  // 2) Nome identico (fallback) — so para compradores SEM CPF valido no doc.
+  // 2) Nome identico (fallback) — so para compradores que NAO trazem CPF no doc.
   if (titularName) {
     for (const buyer of compradores) {
-      if (
-        !buyerHasValidCpf(buyer) &&
-        normalizeName(buyer.nome) === titularName
-      ) {
+      if (buyerHasNoCpf(buyer) && normalizeName(buyer.nome) === titularName) {
         return { result: 'titular', matchedBy: 'name' }
       }
     }

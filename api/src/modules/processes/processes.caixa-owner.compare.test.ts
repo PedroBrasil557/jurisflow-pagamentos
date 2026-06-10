@@ -62,12 +62,31 @@ describe('compareCaixaOwner', () => {
     expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
   })
 
-  test('CPF do comprador invalido => cai no nome (e bate)', () => {
+  // D5: um CPF presente porem invalido/mascarado e um sinal de identidade
+  // conflitante -> NAO cai no nome (evita falso match por homonimo).
+  test('CPF mascarado (LGPD) + nome igual => review, nao cai no nome (D5)', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Jose da Silva', cpf: '111.444.***-**' })],
+      titular,
+    )
+    expect(r).toEqual({ result: 'review', matchedBy: 'none' })
+  })
+
+  test('CPF invalido (zeros) + nome igual => review, nao cai no nome (D5)', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Jose da Silva', cpf: '000.000.000-00' })],
       titular,
     )
-    expect(r).toEqual({ result: 'titular', matchedBy: 'name' })
+    expect(r).toEqual({ result: 'review', matchedBy: 'none' })
+  })
+
+  // D6: CPF com digitos a mais (ex.: colado a um telefone) nao casa por truncagem.
+  test('CPF do titular com digitos extras => nao casa por CPF nem nome (D6)', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Jose da Silva', cpf: `${CPF_TITULAR} 99887766` })],
+      titular,
+    )
+    expect(r).toEqual({ result: 'review', matchedBy: 'none' })
   })
 
   test('lista vazia => review', () => {

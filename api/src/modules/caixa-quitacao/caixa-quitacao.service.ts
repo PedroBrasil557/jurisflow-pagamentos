@@ -68,15 +68,19 @@ export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
     .update(process)
     .set({
       caixaQuitacaoStatus: 'processing',
+      caixaQuitacaoStartedAt: sql`now()`,
       caixaQuitacaoAttempts: sql`${process.caixaQuitacaoAttempts} + 1`,
     })
     .where(
+      // Staleness por caixa_quitacao_started_at (heartbeat do claim), NAO por
+      // updated_at — que e tocado por qualquer edicao do processo e mascararia
+      // um job orfao (job vivo nunca expira / orfao nunca expira).
       sql`${process.id} = (
         SELECT id FROM ${process}
         WHERE caixa_quitacao_status = 'pending'
            OR (caixa_quitacao_status = 'processing'
-               AND updated_at < now() - interval '${sql.raw(String(STALE_MINUTES))} minutes')
-        ORDER BY caixa_quitacao_attempts ASC, updated_at ASC
+               AND caixa_quitacao_started_at < now() - interval '${sql.raw(String(STALE_MINUTES))} minutes')
+        ORDER BY caixa_quitacao_attempts ASC, caixa_quitacao_started_at ASC NULLS FIRST
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )`,
@@ -102,13 +106,27 @@ export async function recordQuitacaoResult(
   input: QuitacaoResultInput,
 ): Promise<{ status: string }> {
   const [proc] = await db
-    .select({ attempts: process.caixaQuitacaoAttempts })
+    .select({
+      status: process.caixaQuitacaoStatus,
+      attempts: process.caixaQuitacaoAttempts,
+    })
     .from(process)
     .where(eq(process.id, input.processId))
     .limit(1)
 
   if (!proc) {
     throw new ServiceError(404, 'Processo nao encontrado.')
+  }
+
+  // Correlaciona o resultado com o claim: so aceita /result para um processo que
+  // esta REALMENTE sendo consultado ('processing' — estado em que so o claim do
+  // worker poe o processo). Bloqueia /result forjado/replay para um processId
+  // arbitrario (que injetaria uma declaracao falsa via attachSystemChecklistFile).
+  if (proc.status !== 'processing') {
+    throw new ServiceError(
+      409,
+      'Nenhuma consulta de quitacao em andamento para este processo.',
+    )
   }
 
   let result: QuitacaoResultInput['result'] = input.result
@@ -143,14 +161,27 @@ export async function recordQuitacaoResult(
     nextStatus = 'pending'
   }
 
-  await db
+  // Transicao atomica guardada por status='processing': um /result fora de ordem
+  // ou repetido (apos o processo ja ter saido de 'processing') nao sobrescreve o
+  // estado vivo.
+  const updated = await db
     .update(process)
     .set({
       caixaQuitacaoStatus: nextStatus,
       caixaQuitacaoMessage: message.slice(0, 1000),
       caixaQuitacaoCheckedAt: new Date(),
     })
-    .where(eq(process.id, input.processId))
+    .where(
+      and(
+        eq(process.id, input.processId),
+        eq(process.caixaQuitacaoStatus, 'processing'),
+      ),
+    )
+    .returning({ id: process.id })
+
+  if (updated.length === 0) {
+    return { status: 'ignored' }
+  }
 
   return { status: nextStatus }
 }

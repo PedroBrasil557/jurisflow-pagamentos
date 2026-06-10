@@ -31,26 +31,28 @@ if (orphaned.rowCount && orphaned.rowCount > 0) {
   console.log(`Reset ${orphaned.rowCount} desmembramento(s) orfao(s).`)
 }
 
-// Mesma logica para a analise do contrato Caixa, mas SO para 'processing'
-// obsoleto (> 10 min): em prod ha mais de uma instancia da API, e um boot
-// (rolling deploy) nao pode resetar para 'error' um job que outra instancia
-// acabou de iniciar. Jobs recem-orfaos sao recuperados pelo claim stale-aware.
+// Analise do contrato Caixa, SO para 'processing' obsoleto (heartbeat
+// caixa_analysis_started_at > 10 min): em prod ha mais de uma instancia da API,
+// e um boot (rolling deploy) nao pode resetar para 'error' um job que outra
+// instancia acabou de iniciar. (O claim ja e stale-aware; o sweeper apenas
+// antecipa a recuperacao para a UI.)
 const orphanedCaixa = await pool.query(
   `UPDATE process
    SET caixa_analysis_status = 'error'
    WHERE caixa_analysis_status = 'processing'
-     AND updated_at < now() - interval '10 minutes'`,
+     AND caixa_analysis_started_at < now() - interval '10 minutes'`,
 )
 if (orphanedCaixa.rowCount && orphanedCaixa.rowCount > 0) {
   console.log(`Reset ${orphanedCaixa.rowCount} analise(s) Caixa orfa(s).`)
 }
 
-// Consulta de quitacao (worker RPA): 'processing' restante no boot foi
-// interrompido -> volta para 'pending' para ser reprocessado pelo worker.
+// Consulta de quitacao (worker RPA): 'processing' OBSOLETO (> 10 min) volta para
+// 'pending' para ser reprocessado. Staleness pelo heartbeat, nao por updated_at.
 const orphanedQuitacao = await pool.query(
   `UPDATE process
    SET caixa_quitacao_status = 'pending'
-   WHERE caixa_quitacao_status = 'processing'`,
+   WHERE caixa_quitacao_status = 'processing'
+     AND caixa_quitacao_started_at < now() - interval '10 minutes'`,
 )
 if (orphanedQuitacao.rowCount && orphanedQuitacao.rowCount > 0) {
   console.log(`Reset ${orphanedQuitacao.rowCount} consulta(s) de quitacao orfa(s).`)

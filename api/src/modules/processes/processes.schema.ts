@@ -65,6 +65,9 @@ export const process = pgTable(
     caixaAnalysisStatus: text('caixa_analysis_status')
       .default('idle')
       .notNull(),
+    // Heartbeat do job de analise: setado SO no claim. Base do staleness (NAO usar
+    // updated_at, que e tocado por qualquer edicao do processo).
+    caixaAnalysisStartedAt: timestamp('caixa_analysis_started_at'),
     // Consulta automatica do termo de quitacao no portal da Caixa (worker RPA):
     // idle | pending | processing | quitado | nao_encontrado | erro.
     caixaQuitacaoStatus: text('caixa_quitacao_status')
@@ -72,6 +75,8 @@ export const process = pgTable(
       .notNull(),
     caixaQuitacaoMessage: text('caixa_quitacao_message'),
     caixaQuitacaoCheckedAt: timestamp('caixa_quitacao_checked_at'),
+    // Heartbeat do job de quitacao: setado SO no claim. Base do staleness.
+    caixaQuitacaoStartedAt: timestamp('caixa_quitacao_started_at'),
     caixaQuitacaoAttempts: integer('caixa_quitacao_attempts')
       .default(0)
       .notNull(),
