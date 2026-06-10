@@ -835,6 +835,9 @@ export const processRoutes = new Hono<AppBindings>()
         const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const { processId } = c.req.valid('param')
         await getProcessById(processId, currentUser.id, perms)
+        // Acao com custo (IA): exige a permissao de gerir documentacao, nao so
+        // visibilidade do processo.
+        assertCan(perms, 'uploadChecklist')
         const result = await startCaixaOwnerAnalysis({
           processId,
           triggeredByUserId: currentUser.id,
@@ -854,6 +857,8 @@ export const processRoutes = new Hono<AppBindings>()
         const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const { processId } = c.req.valid('param')
         await getProcessById(processId, currentUser.id, perms)
+        // Aciona o worker RPA (custo): exige permissao de gerir documentacao.
+        assertCan(perms, 'uploadChecklist')
         const result = await requestQuitacaoRecheck(processId)
         return c.json(result, 202)
       } catch (error) {

@@ -8,10 +8,20 @@ export function useReanalyzeCaixaOwner(processId: string) {
 
   return useMutation({
     mutationFn: () => reanalyzeCaixaOwnerRequest(processId),
-    // A analise roda em background (202). Invalida o detail (que tem o
-    // caixaAnalysisStatus, com polling enquanto 'processing') e a lista de
-    // evidencias.
+    // A analise roda em background (202). Atualiza o detail de forma otimista
+    // para 'processing' (assim o polling inicia de imediato, sem flicker) e
+    // invalida o detail + a lista de evidencias para buscar a verdade.
     onSuccess: () => {
+      queryClient.setQueryData(processKeys.detail(processId), (old) => {
+        if (!old || typeof old !== 'object' || !('process' in old)) {
+          return old
+        }
+        const data = old as { process: Record<string, unknown> }
+        return {
+          ...data,
+          process: { ...data.process, caixaAnalysisStatus: 'processing' },
+        }
+      })
       queryClient.invalidateQueries({ queryKey: processKeys.detail(processId) })
       queryClient.invalidateQueries({
         queryKey: caixaOwnerKeys.analyses(processId),

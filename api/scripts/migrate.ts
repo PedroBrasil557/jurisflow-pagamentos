@@ -31,12 +31,15 @@ if (orphaned.rowCount && orphaned.rowCount > 0) {
   console.log(`Reset ${orphaned.rowCount} desmembramento(s) orfao(s).`)
 }
 
-// Mesma logica para a analise do contrato Caixa: 'processing' restante no boot
-// foi interrompido por restart/crash. Sem isso o processo ficaria travado.
+// Mesma logica para a analise do contrato Caixa, mas SO para 'processing'
+// obsoleto (> 10 min): em prod ha mais de uma instancia da API, e um boot
+// (rolling deploy) nao pode resetar para 'error' um job que outra instancia
+// acabou de iniciar. Jobs recem-orfaos sao recuperados pelo claim stale-aware.
 const orphanedCaixa = await pool.query(
   `UPDATE process
    SET caixa_analysis_status = 'error'
-   WHERE caixa_analysis_status = 'processing'`,
+   WHERE caixa_analysis_status = 'processing'
+     AND updated_at < now() - interval '10 minutes'`,
 )
 if (orphanedCaixa.rowCount && orphanedCaixa.rowCount > 0) {
   console.log(`Reset ${orphanedCaixa.rowCount} analise(s) Caixa orfa(s).`)

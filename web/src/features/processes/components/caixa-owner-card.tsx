@@ -42,7 +42,12 @@ export function CaixaOwnerCard({
   const reanalyze = useReanalyzeCaixaOwner(processId)
   const [evidenceOpen, setEvidenceOpen] = useState(false)
 
-  const meta = statusMeta[status] ?? statusMeta.review
+  // Status desconhecido (ex.: enum novo no backend ainda nao mapeado): nao
+  // renderiza feedback enganoso — esconde o card em vez de cair em "Revisar".
+  const meta = statusMeta[status]
+  if (!meta) {
+    return null
+  }
   const busy = status === 'processing' || reanalyze.isPending
 
   return (

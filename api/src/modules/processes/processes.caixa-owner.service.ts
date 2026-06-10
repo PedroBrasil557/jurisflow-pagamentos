@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne } from 'drizzle-orm'
+import { and, eq, gt, inArray, lt, ne, or, sql } from 'drizzle-orm'
 import { env } from '../../shared/config/env'
 import { db } from '../../shared/db'
 import { getStorageObjectBytes } from '../../shared/storage/s3'
@@ -30,13 +30,18 @@ const CAIXA_DOC_KEYS = [
 // Usuario tecnico (seedado na migracao) — ator das acoes automaticas.
 const SYSTEM_ACTOR_ID = 'jurisflow-bot'
 const PROMPT_VERSION = 'caixa_owner@2'
+// Apos isso, um 'processing' e considerado orfao (crash/restart) e pode ser
+// re-reivindicado — mesmo padrao da consulta de quitacao.
+const CAIXA_STALE_MINUTES = 10
 
 export function isCaixaOwnerDocKey(key: string): boolean {
   return (CAIXA_DOC_KEYS as readonly string[]).includes(key)
 }
 
-// Reivindica o job atomicamente: so um por vez. Orfaos ('processing' apos
-// restart/crash) sao resetados no boot (scripts/migrate.ts).
+// Reivindica o job atomicamente: so um por vez. Reivindica se NAO esta
+// 'processing' OU se o 'processing' esta obsoleto (> CAIXA_STALE_MINUTES) — um
+// job orfao (crash/restart) e assim recuperavel sem depender so do boot, e um
+// job vivo (updated_at recente) nao e reivindicado em duplicidade.
 async function claimCaixaAnalysis(processId: string): Promise<boolean> {
   const claimed = await db
     .update(process)
@@ -44,7 +49,13 @@ async function claimCaixaAnalysis(processId: string): Promise<boolean> {
     .where(
       and(
         eq(process.id, processId),
-        ne(process.caixaAnalysisStatus, 'processing'),
+        or(
+          ne(process.caixaAnalysisStatus, 'processing'),
+          lt(
+            process.updatedAt,
+            sql`now() - interval '${sql.raw(String(CAIXA_STALE_MINUTES))} minutes'`,
+          ),
+        ),
       ),
     )
     .returning({ id: process.id })
@@ -111,11 +122,12 @@ type DocExtraction = {
 // Executa a analise (detached). Le os termos do S3, extrai (IA), compara
 // (deterministico) e grava evidencia + (se aplicavel) ownerType + historico +
 // status, tudo numa transacao. Nunca lanca para fora.
-async function runCaixaOwnerAnalysis(input: {
+async function runCaixaOwnerAnalysisOnce(input: {
   processId: string
   triggeredByUserId: string | null
+  startedAt: number
 }): Promise<void> {
-  const startedAt = Date.now()
+  const startedAt = input.startedAt
   const triggerSource: 'system' | 'user' = input.triggeredByUserId
     ? 'user'
     : 'system'
@@ -326,6 +338,58 @@ async function runCaixaOwnerAnalysis(input: {
     })
     await setCaixaStatus(input.processId, 'error')
   }
+}
+
+// Coalescing: re-dispara a analise UMA vez se um termo da Caixa foi anexado
+// DURANTE a execucao (um gatilho concorrente teria retornado 'busy' e sido
+// descartado, deixando o novo termo sem analise). Converge: cada re-disparo
+// avanca o startedAt, entao o termo recem-anexado nao satisfaz mais a condicao.
+async function rerunIfNewerTermo(
+  input: { processId: string; triggeredByUserId: string | null },
+  startedAt: number,
+): Promise<void> {
+  try {
+    const newer = await db
+      .select({ id: processDocumentFile.id })
+      .from(processDocumentFile)
+      .innerJoin(
+        processDocument,
+        eq(processDocumentFile.processDocumentId, processDocument.id),
+      )
+      .innerJoin(
+        processDocumentType,
+        eq(processDocument.documentTypeId, processDocumentType.id),
+      )
+      .where(
+        and(
+          eq(processDocument.processId, input.processId),
+          eq(processDocumentFile.isCurrent, true),
+          inArray(processDocumentType.key, [...CAIXA_DOC_KEYS]),
+          gt(processDocumentFile.uploadedAt, new Date(startedAt)),
+        ),
+      )
+      .limit(1)
+
+    if (newer.length > 0) {
+      await startCaixaOwnerAnalysis(input)
+    }
+  } catch (error) {
+    console.error('Falha ao checar re-analise por novo termo', {
+      processId: input.processId,
+      error,
+    })
+  }
+}
+
+// Executa a analise e, ao terminar, re-dispara se um termo novo chegou durante a
+// execucao (ver rerunIfNewerTermo).
+async function runCaixaOwnerAnalysis(input: {
+  processId: string
+  triggeredByUserId: string | null
+}): Promise<void> {
+  const startedAt = Date.now()
+  await runCaixaOwnerAnalysisOnce({ ...input, startedAt })
+  await rerunIfNewerTermo(input, startedAt)
 }
 
 // Ponto de entrada: reivindica e dispara a analise em background (apos a
