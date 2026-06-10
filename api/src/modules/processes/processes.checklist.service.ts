@@ -27,6 +27,10 @@ import {
   getProcessRecordOrThrow,
 } from './processes.access'
 import {
+  isCaixaOwnerDocKey,
+  startCaixaOwnerAnalysis,
+} from './processes.caixa-owner.service'
+import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
   documentDisplayNumberByKey,
@@ -1168,6 +1172,15 @@ export async function submitProcessChecklistItem(input: {
     checklist,
   })
 
+  // Gatilho automatico: ao anexar/substituir um termo da Caixa, dispara a
+  // analise do titular do contrato em background (nao bloqueia a resposta).
+  if (didUploadFile && isCaixaOwnerDocKey(checklistItem.documentType.key)) {
+    void startCaixaOwnerAnalysis({
+      processId: input.processId,
+      triggeredByUserId: input.actor.id,
+    })
+  }
+
   return {
     ...checklist,
     message: getChecklistSubmitSuccessMessage({
@@ -1536,7 +1549,8 @@ export async function downloadAllChecklistFilesZip(
 
   const bytes = await createStorageObjectsZip(entries)
   // Nome do arquivo = nome do titular do processo (cai para o codigo se vazio).
-  const holderName = (currentProcess.fullName ?? '').trim() || currentProcess.code
+  const holderName =
+    (currentProcess.fullName ?? '').trim() || currentProcess.code
   const zipFileName = `${holderName}.zip`
 
   // Sobe o ZIP no storage e devolve URL assinada: o download vai do S3 direto ao
