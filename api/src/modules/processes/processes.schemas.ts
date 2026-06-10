@@ -67,9 +67,9 @@ const processPayloadShape = {
   nationality: requiredUppercaseText('Informe a nacionalidade.', 80),
   maritalStatus: z.enum(maritalStatusValues),
   profession: optionalUppercaseText(120),
-  ownerType: z.enum(ownerTypeValues).refine((value) => value !== '', {
-    message: 'Selecione o tipo de proprietario.',
-  }),
+  // Opcional: a analise do contrato Caixa pode preencher depois (ou o usuario
+  // define manualmente ao editar).
+  ownerType: z.enum(ownerTypeValues),
   cpf: processCpfSchema,
   rg: requiredUppercaseText('Informe o RG.', 40),
   cadunico: z.enum(binaryChoiceValues),
@@ -262,21 +262,33 @@ export const listProcessesQuerySchema = z.object({
   statuses: z
     .preprocess(
       (value) =>
-        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+        value === undefined
+          ? undefined
+          : Array.isArray(value)
+            ? value
+            : [value],
       z.array(z.enum(processStatuses)),
     )
     .optional(),
   ownerTypes: z
     .preprocess(
       (value) =>
-        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+        value === undefined
+          ? undefined
+          : Array.isArray(value)
+            ? value
+            : [value],
       z.array(z.enum(['titular_contrato_caixa', 'nao_titular_contrato_caixa'])),
     )
     .optional(),
   housingComplexIds: z
     .preprocess(
       (value) =>
-        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+        value === undefined
+          ? undefined
+          : Array.isArray(value)
+            ? value
+            : [value],
       z.array(z.string().trim().min(1)),
     )
     .optional(),

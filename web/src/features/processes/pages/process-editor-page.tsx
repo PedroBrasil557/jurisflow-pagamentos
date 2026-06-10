@@ -501,7 +501,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
               label="Proprietario (tipo)"
               onChange={handleSelectChange('ownerType')}
               options={ownerTypeOptions}
-              required
               value={values.ownerType}
             />
           </ProcessFormSection>
