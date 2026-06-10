@@ -721,59 +721,6 @@ export async function startScanIngestion(input: {
   return { batchFileId: fileRecord.id }
 }
 
-// Ingestao de MULTIPLOS documentos no mesmo processo: guarda todos no lote e
-// processa SEQUENCIALMENTE (um por vez) em background. Sequencial de proposito:
-// evita corrida no preenchimento dos campos do rascunho e nas transicoes de
-// status quando varios arquivos chegam juntos (G1 da revisao de arquitetura).
-export async function startMultiDocumentIngestion(input: {
-  processId: string
-  files: File[]
-  actor: ProcessActor
-  perms: ResolvedPermissions
-}): Promise<{ batchFileIds: string[] }> {
-  // Valida TODOS antes de guardar qualquer um (sem upload parcial).
-  for (const file of input.files) {
-    assertBatchFile(file)
-    if (file.type.toLowerCase() !== 'application/pdf') {
-      throw new ProcessServiceError(
-        415,
-        'Apenas arquivos PDF podem ser processados.',
-      )
-    }
-  }
-
-  const fileRecords: Array<typeof processBatchFile.$inferSelect> = []
-  for (const file of input.files) {
-    fileRecords.push(
-      await storeIngestionFile({
-        processId: input.processId,
-        file,
-        actor: input.actor,
-      }),
-    )
-  }
-
-  // Coordenador SEQUENCIAL (detached): um arquivo por vez. runScanIngestion nunca
-  // lanca (grava o desfecho em splitStatus), entao a fila nao para por uma falha.
-  void (async () => {
-    for (const fileRecord of fileRecords) {
-      await runScanIngestion({
-        processId: input.processId,
-        fileRecord,
-        actor: input.actor,
-        perms: input.perms,
-      })
-    }
-  })().catch((error) => {
-    console.error('Falha no coordenador de ingestao multi-arquivo', {
-      processId: input.processId,
-      error: String(error),
-    })
-  })
-
-  return { batchFileIds: fileRecords.map((record) => record.id) }
-}
-
 // Reprocessa a ingestao dos arquivos que FALHARAM (splitStatus='error') de um
 // processo — re-roda a ingestao COMPLETA (extrai + aplica campos + split) a
 // partir do PDF JÁ no lote, SEM re-upload. Continuidade quando a IA falha.

@@ -39,7 +39,6 @@ import {
   presignDocumentUploads,
   reprocessFailedIngestion,
   startBatchFileSplit,
-  startMultiDocumentIngestion,
   startScanIngestion,
   uploadBatchFiles,
 } from './processes.batch.service'
@@ -149,38 +148,6 @@ async function createProcessFromDocument(
   }
 }
 
-// Versao multi-arquivo (importar): cria o rascunho e dispara a ingestao
-// SEQUENCIAL de todos os PDFs. Rollback do rascunho se a ingestao nao iniciar.
-async function createProcessFromDocuments(
-  c: Context<AppBindings>,
-  files: File[],
-) {
-  const { currentUser, perms } = await getCurrentUserWithPermissions(c)
-  assertCan(perms, 'create')
-  assertCan(perms, 'uploadChecklist')
-
-  logEvent('import.start', {
-    requestId: c.get('requestId'),
-    userId: currentUser.id,
-    fileCount: files.length,
-    totalBytes: files.reduce((sum, file) => sum + file.size, 0),
-  })
-
-  const draft = await createDraftProcess(currentUser, perms)
-  try {
-    const { batchFileIds } = await startMultiDocumentIngestion({
-      processId: draft.id,
-      files,
-      actor: currentUser,
-      perms,
-    })
-    return c.json({ processId: draft.id, batchFileIds }, 202)
-  } catch (error) {
-    await deleteProcess(draft.id)
-    throw error
-  }
-}
-
 export const processRoutes = new Hono<AppBindings>()
   .use('*', requireAuth())
   .get('/', queryValidator(listProcessesQuerySchema), async (c) => {
@@ -230,34 +197,9 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
-  // Importar documentos: cria um processo a partir de um PDF enviado (upload) e
-  // dispara a MESMA ingestao durável do scan. O front navega para o detalhe e
-  // acompanha o progresso via splitStatus (polling).
-  .post('/import', uploadBodyLimit(maxBatchFileSizeInBytes), async (c) => {
-    const formData = await c.req.raw.formData()
-    const files: File[] = []
-    for (const entry of formData.getAll('file')) {
-      if (entry instanceof File) {
-        files.push(entry)
-      }
-    }
-
-    if (files.length === 0) {
-      return c.json(
-        { message: 'Informe ao menos um arquivo PDF para importar.' },
-        400,
-      )
-    }
-
-    try {
-      return await createProcessFromDocuments(c, files)
-    } catch (error) {
-      return handleServiceError(c, error)
-    }
-  })
-  // Import via upload PRE-ASSINADO S3 (arquivos grandes, > 10MB): cria o rascunho
-  // e devolve URLs assinadas. O browser sobe os PDFs DIRETO no S3 (sem passar
-  // pela API), depois chama /import/complete.
+  // Importar documentos via upload PRE-ASSINADO S3: cria o rascunho e devolve
+  // URLs assinadas. O browser sobe os PDFs DIRETO no S3 (sem passar pela API —
+  // contorna o teto de 10MB do API Gateway), depois chama /import/complete.
   .post(
     '/import/presign',
     jsonValidator(presignImportBodySchema),

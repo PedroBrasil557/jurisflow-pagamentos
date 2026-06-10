@@ -27,7 +27,13 @@ export class Storage extends Construct {
       cors: [
         {
           allowedOrigins: env.webDomainNames.map((d) => `https://${d}`),
-          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+          // GET/HEAD: download (URL assinada). PUT: upload pre-assinado do import
+          // (o browser sobe os PDFs DIRETO no S3, sem passar pela API).
+          allowedMethods: [
+            s3.HttpMethods.GET,
+            s3.HttpMethods.HEAD,
+            s3.HttpMethods.PUT,
+          ],
           allowedHeaders: ['*'],
           exposedHeaders: ['Content-Disposition'],
           maxAge: 3600,
