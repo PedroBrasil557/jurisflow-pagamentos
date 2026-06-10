@@ -36,6 +36,15 @@ export type ProcessHistoryChangedFields = Record<
   { before: unknown; after: unknown }
 >
 
+// Contexto estruturado de um evento de historico (generico). Ex.: link para a
+// evidencia de IA (aiAnalysisId) + o que a decisao automatica mudou.
+export type ProcessHistoryMetadata = {
+  aiAnalysisId?: string
+  fromOwnerType?: string
+  toOwnerType?: string
+  matchedBy?: 'cpf' | 'name' | 'none'
+}
+
 export const process = pgTable(
   'process',
   {
@@ -48,6 +57,14 @@ export const process = pgTable(
     maritalStatus: text('marital_status').notNull(),
     profession: text('profession').notNull(),
     ownerType: text('owner_type').notNull(),
+    // Origem do ownerType: 'human' (definido na mao) | 'system' (auto-aplicado
+    // pela analise do contrato Caixa). Habilita human-lock + proveniencia.
+    ownerTypeSource: text('owner_type_source').default('human').notNull(),
+    // Estado operacional (NAO evidencia) da analise do contrato Caixa:
+    // idle | processing | done | review | error. Reset no boot se 'processing'.
+    caixaAnalysisStatus: text('caixa_analysis_status')
+      .default('idle')
+      .notNull(),
     cpf: text('cpf').notNull(),
     rg: text('rg').notNull(),
     cadunico: text('cadunico').notNull(),
@@ -149,6 +166,7 @@ export const processHistory = pgTable(
       'changed_fields',
     ).$type<ProcessHistoryChangedFields | null>(),
     notes: text('notes'),
+    metadata: jsonb('metadata').$type<ProcessHistoryMetadata | null>(),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [

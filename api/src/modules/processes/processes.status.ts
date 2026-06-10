@@ -29,6 +29,8 @@ export const processHistoryEventTypes = [
   'BATCH_DELETED',
   'DOCUMENTATION_ASSIGNEE_SET',
   'DOCUMENTATION_ASSIGNEE_REMOVED',
+  'CAIXA_OWNER_AUTO_SET',
+  'CAIXA_OWNER_REVIEW_REQUIRED',
 ] as const
 
 export type ProcessHistoryEventType = (typeof processHistoryEventTypes)[number]
