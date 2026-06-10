@@ -101,6 +101,7 @@ jobs:
           ENVIRONMENT: dev
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET_DEV }}
           DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN_DEV }}
 
       - name: Deploy to Production
         if: github.ref == 'refs/heads/main'
@@ -110,3 +111,4 @@ jobs:
           ENVIRONMENT: prod
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET_PROD }}
           DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}
+          INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN_PROD }}
