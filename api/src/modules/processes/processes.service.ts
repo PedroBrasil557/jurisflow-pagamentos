@@ -1,8 +1,20 @@
-import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from 'drizzle-orm'
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  lt,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { deleteStorageObject } from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
 import { user } from '../auth/auth.schema'
+import { enqueueQuitacaoCheck } from '../caixa-quitacao/caixa-quitacao.service'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import {
   assertCan,
@@ -426,7 +438,7 @@ export async function listProcesses(
     ),
   ]
 
-  const [attorneys, historyEntries] = await Promise.all([
+  const [attorneys, historyEntries, batchStatuses] = await Promise.all([
     assignedAttorneyIds.length > 0
       ? db
           .select({
@@ -450,9 +462,28 @@ export async function listProcesses(
       .innerJoin(user, eq(processHistory.actorUserId, user.id))
       .where(inArray(processHistory.processId, processIds))
       .orderBy(desc(processHistory.createdAt)),
+    // Estado da ingestao de documentos por processo (lote): para o badge da
+    // lista — "processando" tem prioridade sobre "falhou".
+    db
+      .select({
+        processId: processBatchFile.processId,
+        hasProcessing: sql<boolean>`bool_or(${processBatchFile.splitStatus} = 'processing')`,
+        hasError: sql<boolean>`bool_or(${processBatchFile.splitStatus} = 'error')`,
+      })
+      .from(processBatchFile)
+      .where(inArray(processBatchFile.processId, processIds))
+      .groupBy(processBatchFile.processId),
   ])
 
   const attorneysById = new Map(attorneys.map((item) => [item.id, item.name]))
+  const ingestionByProcessId = new Map<string, 'processing' | 'error'>()
+  for (const row of batchStatuses) {
+    if (row.hasProcessing) {
+      ingestionByProcessId.set(row.processId, 'processing')
+    } else if (row.hasError) {
+      ingestionByProcessId.set(row.processId, 'error')
+    }
+  }
   const latestHistoryByProcessId = new Map<string, ProcessListHistoryRecord>()
 
   for (const historyEntry of historyEntries) {
@@ -480,6 +511,7 @@ export async function listProcesses(
         housingComplex: item.housingComplex,
         district: item.district,
         relationship,
+        ingestionStatus: ingestionByProcessId.get(item.id) ?? null,
         legalProcess: {
           label: getLegalProcessLabel(item),
           attorneyName: assignedAttorneyName,
@@ -630,6 +662,9 @@ export async function createProcess(
 
   await ensureProcessChecklistItems(processId)
 
+  // Dispara a consulta automatica de quitacao na Caixa (worker RPA).
+  await enqueueQuitacaoCheck(processId, createdProcess.cpf)
+
   return createdProcess
 }
 
@@ -689,7 +724,10 @@ export async function createDraftProcess(
 
     await ensureProcessChecklistItems(processId)
   } catch (error) {
-    await db.delete(process).where(eq(process.id, processId)).catch(() => {})
+    await db
+      .delete(process)
+      .where(eq(process.id, processId))
+      .catch(() => {})
     throw error
   }
 
@@ -766,6 +804,10 @@ export async function updateProcess(
       ...mergedValues,
       ...normalizedWitnessValues,
       housingComplexId,
+      // Edicao manual do ownerType marca a fonte como 'human' — assim a analise
+      // automatica (caixa-owner) respeita o human-lock e nao sobrescreve a
+      // escolha do usuario numa reanalise posterior.
+      ...(changedFields.ownerType ? { ownerTypeSource: 'human' } : {}),
     })
     .where(eq(process.id, processId))
     .returning()

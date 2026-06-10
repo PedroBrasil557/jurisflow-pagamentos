@@ -1,11 +1,13 @@
 import type { InferResponseType } from 'hono/client'
 import { apiClient } from '@/shared/services/api-client'
 import { getErrorMessage } from '@/shared/services/api-error'
+import { reportClientError } from '@/shared/services/telemetry'
 
-const extractDocumentsClientRoute = apiClient.api.processes['extract-documents']
-const importBundleClientRoute =
-  apiClient.api.processes[':processId']['import-bundle']
 const scanClientRoute = apiClient.api.processes.scan
+const presignImportRoute = apiClient.api.processes.import.presign
+const completeImportRoute = apiClient.api.processes.import.complete
+const reprocessImportClientRoute =
+  apiClient.api.processes[':processId']['reprocess-import']
 
 export type CreateProcessViaScanResponse = InferResponseType<
   typeof scanClientRoute.$post,
@@ -39,73 +41,100 @@ export async function createProcessViaScanRequest(
   return (await response.json()) as CreateProcessViaScanResponse
 }
 
-export type ExtractDocumentsResponse = InferResponseType<
-  typeof extractDocumentsClientRoute.$post,
+type PresignImportResponse = InferResponseType<
+  typeof presignImportRoute.$post,
   200
 >
 
-export type ExtractedField = ExtractDocumentsResponse['fields'][number]
-export type ExtractedDocument = ExtractDocumentsResponse['documents'][number]
-
-// Envia o PDF unico (com todos os documentos) para extracao + classificacao via IA.
-// Stateless: o backend nao grava nada — o arquivo segue em memoria no cliente.
-export async function extractDocumentsRequest(
-  file: File,
-): Promise<ExtractDocumentsResponse> {
-  const formData = new FormData()
-  formData.append('files', file)
-
-  const url = extractDocumentsClientRoute.$url()
-
-  const response = await fetch(url, {
-    method: 'POST',
-    body: formData,
-    credentials: 'include',
+// Importar documentos via upload PRE-ASSINADO S3: o browser sobe os PDFs DIRETO
+// no S3 (sem o teto de 10MB do API Gateway). Fluxo: 1) presign (cria o rascunho
+// + URLs assinadas) -> 2) PUT cada arquivo no S3 -> 3) complete (registra +
+// dispara a ingestao). Retorna { processId }; o front navega para o editor.
+export async function importDocumentRequest(
+  files: File[],
+): Promise<{ processId: string }> {
+  // 1) presign
+  const presignRes = await presignImportRoute.$post({
+    json: {
+      files: files.map((file) => ({
+        fileName: file.name,
+        contentType: 'application/pdf',
+        size: file.size,
+      })),
+    },
   })
-
-  if (!response.ok) {
+  if (!presignRes.ok) {
     throw new Error(
-      await getErrorMessage(
-        response,
-        'Nao foi possivel extrair os dados do documento.',
-      ),
+      await getErrorMessage(presignRes, 'Nao foi possivel iniciar o import.'),
+    )
+  }
+  const { processId, uploads } =
+    (await presignRes.json()) as PresignImportResponse
+
+  // 2) PUT cada arquivo DIRETO no S3 (browser -> S3), em paralelo.
+  try {
+    await Promise.all(
+      uploads.map(async (upload, index) => {
+        const putRes = await fetch(upload.uploadUrl, {
+          method: 'PUT',
+          body: files[index],
+          headers: { 'Content-Type': 'application/pdf' },
+        })
+        if (!putRes.ok) {
+          throw new Error(
+            `Falha ao enviar "${files[index].name}" (${putRes.status}).`,
+          )
+        }
+      }),
+    )
+  } catch (error) {
+    reportClientError('import_s3_put_error', {
+      processId,
+      fileCount: files.length,
+      errorName: error instanceof Error ? error.name : 'unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    })
+    throw new Error(
+      'Falha de rede ao enviar os documentos (a conexao caiu ou foi bloqueada). Tente novamente.',
     )
   }
 
-  return (await response.json()) as ExtractDocumentsResponse
+  // 3) complete -> registra os arquivos no lote e dispara a ingestao.
+  const completeRes = await completeImportRoute.$post({
+    json: {
+      processId,
+      files: uploads.map((upload, index) => ({
+        fileId: upload.fileId,
+        objectKey: upload.objectKey,
+        fileName: files[index].name,
+      })),
+    },
+  })
+  if (!completeRes.ok) {
+    throw new Error(
+      await getErrorMessage(completeRes, 'Nao foi possivel concluir o import.'),
+    )
+  }
+
+  return { processId }
 }
 
-// Desmembra o PDF no backend e anexa cada parte ao checklist do processo.
-export async function importBundleRequest(input: {
-  processId: string
-  file: File
-  documents: ExtractedDocument[]
-}) {
-  const formData = new FormData()
-  formData.append('file', input.file)
-  formData.append('documents', JSON.stringify(input.documents))
-
-  const url = importBundleClientRoute.$url({
-    param: { processId: input.processId },
-  })
-
-  const response = await fetch(url, {
-    method: 'POST',
-    body: formData,
-    credentials: 'include',
+// Reprocessa a ingestao dos documentos que falharam (continuidade): re-roda a
+// extracao/anexo do PDF que ja esta no lote. Retorna 202; o front acompanha via
+// splitStatus (polling).
+export async function reprocessImportRequest(processId: string) {
+  const response = await reprocessImportClientRoute.$post({
+    param: { processId },
   })
 
   if (!response.ok) {
     throw new Error(
       await getErrorMessage(
         response,
-        'Nao foi possivel anexar os documentos ao checklist.',
+        'Nao foi possivel reprocessar os documentos.',
       ),
     )
   }
 
-  return (await response.json()) as InferResponseType<
-    typeof importBundleClientRoute.$post,
-    200
-  >
+  return response.json()
 }

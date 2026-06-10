@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ServiceError } from '../../shared/errors/service-error'
+import { logErrorEvent, logEvent } from '../../shared/observability/log'
 import type { AppBindings } from '../../shared/types/app'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
 import {
@@ -35,8 +36,20 @@ export async function importDocumentBundle(input: {
   documents: ExtractedDocument[]
   actor: ProcessActor
   perms: ResolvedPermissions
+  requestId?: string
 }) {
   const { processId, file, documents, actor, perms } = input
+  const requestId = input.requestId ?? '-'
+  const startedAt = performance.now()
+
+  logEvent('import_bundle.start', {
+    requestId,
+    processId,
+    userId: actor.id,
+    fileName: file.name,
+    fileSizeBytes: file.size,
+    docCount: documents.length,
+  })
 
   if (file.type.toLowerCase() !== 'application/pdf') {
     throw new ServiceError(415, 'Envie um arquivo PDF.')
@@ -59,7 +72,14 @@ export async function importDocumentBundle(input: {
   )
 
   const pdfBytes = new Uint8Array(await file.arrayBuffer())
+  const splitStartedAt = performance.now()
   const splits = await splitPdfByDocuments(pdfBytes, documents)
+  logEvent('import_bundle.split', {
+    requestId,
+    processId,
+    splitCount: splits.length,
+    ms: Math.round(performance.now() - splitStartedAt),
+  })
 
   const attached: Array<{ documentTypeKey: string; pageCount: number }> = []
   const skipped: Array<{ documentTypeKey: string; reason: string }> = []
@@ -70,6 +90,13 @@ export async function importDocumentBundle(input: {
     if (!processDocumentId) {
       skipped.push({
         documentTypeKey: split.documentTypeKey,
+        reason: 'item de checklist nao encontrado',
+      })
+      logEvent('import_bundle.attach', {
+        requestId,
+        processId,
+        documentTypeKey: split.documentTypeKey,
+        ok: false,
         reason: 'item de checklist nao encontrado',
       })
       continue
@@ -83,6 +110,7 @@ export async function importDocumentBundle(input: {
     )
 
     // Falha de um anexo nao deve abortar os demais: registra em `skipped`.
+    const uploadStartedAt = performance.now()
     try {
       await uploadProcessChecklistFile({
         processId,
@@ -96,6 +124,13 @@ export async function importDocumentBundle(input: {
         documentTypeKey: split.documentTypeKey,
         pageCount: split.pageCount,
       })
+      logEvent('import_bundle.attach', {
+        requestId,
+        processId,
+        documentTypeKey: split.documentTypeKey,
+        ok: true,
+        ms: Math.round(performance.now() - uploadStartedAt),
+      })
     } catch (error) {
       skipped.push({
         documentTypeKey: split.documentTypeKey,
@@ -104,8 +139,24 @@ export async function importDocumentBundle(input: {
             ? error.message
             : 'falha ao anexar o documento',
       })
+      logErrorEvent('import_bundle.attach_failed', {
+        requestId,
+        processId,
+        documentTypeKey: split.documentTypeKey,
+        ms: Math.round(performance.now() - uploadStartedAt),
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      })
     }
   }
+
+  logEvent('import_bundle.done', {
+    requestId,
+    processId,
+    attached: attached.length,
+    skipped: skipped.length,
+    totalMs: Math.round(performance.now() - startedAt),
+  })
 
   const baseMessage =
     attached.length > 0

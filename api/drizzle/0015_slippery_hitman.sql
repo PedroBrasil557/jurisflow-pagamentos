@@ -1,0 +1,1 @@
+ALTER TABLE "app_settings" ADD COLUMN "caixa_owner_auto_apply" boolean DEFAULT false NOT NULL;

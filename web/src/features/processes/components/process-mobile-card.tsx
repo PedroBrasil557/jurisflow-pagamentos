@@ -4,6 +4,7 @@ import { formatCpf } from '../process-form.utils'
 import type { ProcessListItem } from '../services/processes.service'
 import { ProcessActions } from './process-actions'
 import { ProcessLastMovement } from './process-last-movement'
+import { ProcessIngestionBadge } from './process-ingestion-badge'
 import { ProcessStatusBadge } from './process-status-badge'
 
 export function ProcessMobileCard({
@@ -32,6 +33,7 @@ export function ProcessMobileCard({
             <Badge variant="secondary" className="">
               {formatCpf(process.cpf)}
             </Badge>
+            <ProcessIngestionBadge status={process.ingestionStatus} />
           </div>
         </div>
 

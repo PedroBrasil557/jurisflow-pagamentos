@@ -5,6 +5,7 @@ import { Api } from './constructs/api';
 import { Database } from './constructs/database';
 import { Vpc } from './constructs/vpc';
 import { Storage } from './constructs/storage';
+import { Worker } from './constructs/worker';
 
 export class JurisflowAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -22,6 +23,11 @@ export class JurisflowAppStack extends cdk.Stack {
       databaseUrl,
       vpc,
       documentsBucket,
+    });
+
+    new Worker(this, 'Worker', {
+      vpc,
+      apiUrl,
     });
 
     const { webAppUrl } = new WebApp(this, 'WebApp', { apiUrl });

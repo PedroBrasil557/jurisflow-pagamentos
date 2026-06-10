@@ -62,9 +62,9 @@ export const processFormSchema = z
     nationality: requiredText('Informe a nacionalidade.', 80),
     maritalStatus: z.enum(maritalStatusValues),
     profession: optionalText(120),
-    ownerType: z.enum(ownerTypeValues).refine((value) => value !== '', {
-      message: 'Selecione o tipo de proprietario.',
-    }),
+    // Opcional: a analise do contrato Caixa pode preencher depois (ou o usuario
+    // define manualmente ao editar).
+    ownerType: z.enum(ownerTypeValues),
     cpf: cpfSchema,
     rg: requiredText('Informe o RG.', 40),
     cadunico: z.enum(binaryChoiceValues),

@@ -23,11 +23,26 @@ export class Storage extends Construct {
           prefix: 'tmp-zips/',
           expiration: Duration.days(1),
         },
+        // Staging do import pre-assinado: o complete copia para o local
+        // definitivo. O que sobra aqui sao uploads abandonados (presign sem
+        // complete) ou o staging pos-sucesso — expira-os para nao virarem lixo
+        // permanente que ninguem ve nem apaga.
+        {
+          id: 'expire-import-staging',
+          prefix: 'imports/staging/',
+          expiration: Duration.days(1),
+        },
       ],
       cors: [
         {
           allowedOrigins: env.webDomainNames.map((d) => `https://${d}`),
-          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+          // GET/HEAD: download (URL assinada). PUT: upload pre-assinado do import
+          // (o browser sobe os PDFs DIRETO no S3, sem passar pela API).
+          allowedMethods: [
+            s3.HttpMethods.GET,
+            s3.HttpMethods.HEAD,
+            s3.HttpMethods.PUT,
+          ],
           allowedHeaders: ['*'],
           exposedHeaders: ['Content-Disposition'],
           maxAge: 3600,

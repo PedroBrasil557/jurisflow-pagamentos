@@ -41,6 +41,16 @@ export function processDetailOptions(processId: string) {
         draft: mapProcessToDraft(result.process),
       }
     },
+    // Enquanto a analise do contrato Caixa OU a consulta de quitacao estiverem
+    // em andamento, repete a consulta para acompanhar o avanco sem recarregar.
+    refetchInterval: (query) => {
+      const p = query.state.data?.process
+      const running =
+        p?.caixaAnalysisStatus === 'processing' ||
+        p?.caixaQuitacaoStatus === 'pending' ||
+        p?.caixaQuitacaoStatus === 'processing'
+      return running ? 2500 : false
+    },
   })
 }
 

@@ -67,9 +67,9 @@ const processPayloadShape = {
   nationality: requiredUppercaseText('Informe a nacionalidade.', 80),
   maritalStatus: z.enum(maritalStatusValues),
   profession: optionalUppercaseText(120),
-  ownerType: z.enum(ownerTypeValues).refine((value) => value !== '', {
-    message: 'Selecione o tipo de proprietario.',
-  }),
+  // Opcional: a analise do contrato Caixa pode preencher depois (ou o usuario
+  // define manualmente ao editar).
+  ownerType: z.enum(ownerTypeValues),
   cpf: processCpfSchema,
   rg: requiredUppercaseText('Informe o RG.', 40),
   cadunico: z.enum(binaryChoiceValues),
@@ -262,21 +262,33 @@ export const listProcessesQuerySchema = z.object({
   statuses: z
     .preprocess(
       (value) =>
-        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+        value === undefined
+          ? undefined
+          : Array.isArray(value)
+            ? value
+            : [value],
       z.array(z.enum(processStatuses)),
     )
     .optional(),
   ownerTypes: z
     .preprocess(
       (value) =>
-        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+        value === undefined
+          ? undefined
+          : Array.isArray(value)
+            ? value
+            : [value],
       z.array(z.enum(['titular_contrato_caixa', 'nao_titular_contrato_caixa'])),
     )
     .optional(),
   housingComplexIds: z
     .preprocess(
       (value) =>
-        value === undefined ? undefined : Array.isArray(value) ? value : [value],
+        value === undefined
+          ? undefined
+          : Array.isArray(value)
+            ? value
+            : [value],
       z.array(z.string().trim().min(1)),
     )
     .optional(),
@@ -392,3 +404,34 @@ export type SetDocumentationAssigneePayload = z.output<
 export function normalizeProcessPayload(input: unknown) {
   return createProcessPayloadSchema.parse(input)
 }
+
+// Import via upload pre-assinado S3 (browser sobe direto no S3, sem passar pela
+// API — contorna o teto de 10MB do API Gateway).
+const IMPORT_MAX_FILES = 20
+
+export const presignImportBodySchema = z.object({
+  files: z
+    .array(
+      z.object({
+        fileName: z.string().min(1).max(255),
+        contentType: z.string().min(1).max(128),
+        size: z.number().int().positive(),
+      }),
+    )
+    .min(1)
+    .max(IMPORT_MAX_FILES),
+})
+
+export const completeImportBodySchema = z.object({
+  processId: z.string().min(1),
+  files: z
+    .array(
+      z.object({
+        fileId: z.string().min(1),
+        objectKey: z.string().min(1).max(1024),
+        fileName: z.string().min(1).max(255),
+      }),
+    )
+    .min(1)
+    .max(IMPORT_MAX_FILES),
+})

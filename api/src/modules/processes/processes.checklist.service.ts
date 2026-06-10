@@ -27,6 +27,10 @@ import {
   getProcessRecordOrThrow,
 } from './processes.access'
 import {
+  isCaixaOwnerDocKey,
+  startCaixaOwnerAnalysis,
+} from './processes.caixa-owner.service'
+import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
   documentDisplayNumberByKey,
@@ -64,12 +68,14 @@ const checklistUploadAllowedStatuses = [
   'DOCUMENTACAO_PRONTA',
 ] as const satisfies readonly ProcessStatus[]
 
+function isChecklistUploadAllowed(currentStatus: ProcessStatus): boolean {
+  return checklistUploadAllowedStatuses.includes(
+    currentStatus as (typeof checklistUploadAllowedStatuses)[number],
+  )
+}
+
 export function assertChecklistUploadAllowed(currentStatus: ProcessStatus) {
-  if (
-    checklistUploadAllowedStatuses.includes(
-      currentStatus as (typeof checklistUploadAllowedStatuses)[number],
-    )
-  ) {
+  if (isChecklistUploadAllowed(currentStatus)) {
     return
   }
 
@@ -871,6 +877,84 @@ async function attachChecklistFile(input: {
   }
 }
 
+// Anexo em CONTEXTO DE SISTEMA (sem permissao de usuario): usado pelo worker de
+// consulta de quitacao para anexar o PDF baixado da Caixa ao slot do checklist.
+// Reusa o core attachChecklistFile (ator = usuario tecnico jurisflow-bot) e
+// dispara a mesma cadeia do anexo manual (analise do titular para termos Caixa).
+// NAO sincroniza status do processo aqui — isso ocorre na proxima interacao do
+// usuario com o checklist (anexar um doc obrigatorio raramente completa tudo).
+export async function attachSystemChecklistFile(input: {
+  processId: string
+  documentTypeKey: string
+  file: File
+}): Promise<{ didUploadFile: boolean }> {
+  await ensureProcessChecklistItems(input.processId)
+
+  const [doc] = await db
+    .select({ id: processDocument.id })
+    .from(processDocument)
+    .innerJoin(
+      processDocumentType,
+      eq(processDocument.documentTypeId, processDocumentType.id),
+    )
+    .where(
+      and(
+        eq(processDocument.processId, input.processId),
+        eq(processDocumentType.key, input.documentTypeKey),
+      ),
+    )
+    .limit(1)
+
+  if (!doc) {
+    throw new ProcessServiceError(
+      404,
+      'Item do checklist nao encontrado para o documento.',
+    )
+  }
+
+  const checklistItem = await getChecklistItemOrThrow(input.processId, doc.id)
+
+  // Contexto de sistema: se o processo nao esta numa etapa que aceita anexos
+  // (EM_PROCESSO/FINALIZADO/CANCELADO), PULA silenciosamente — nao lanca (evita
+  // retry infinito do worker) e nao dispara a analise do titular.
+  if (!isChecklistUploadAllowed(checklistItem.processStatus)) {
+    console.warn(
+      `[caixa-quitacao] anexo de sistema ignorado: processo ${input.processId} em ${checklistItem.processStatus} nao aceita anexos`,
+    )
+    return { didUploadFile: false }
+  }
+
+  // Apenas o id e usado por attachChecklistFile (uploadedByUserId/actorUserId).
+  const actor = { id: 'jurisflow-bot' } as unknown as ProcessActor
+
+  let didUploadFile = false
+  await db.transaction(async (tx) => {
+    const result = await attachChecklistFile({
+      checklistItem,
+      file: input.file,
+      actor,
+      executor: tx,
+    })
+    didUploadFile = result.didUploadFile
+  })
+
+  if (didUploadFile && isCaixaOwnerDocKey(input.documentTypeKey)) {
+    // Fire-and-forget: nunca deixar a Promise rejeitar sem tratamento (o claim
+    // faz I/O no banco) — uma rejeicao nao capturada vira unhandledRejection.
+    startCaixaOwnerAnalysis({
+      processId: input.processId,
+      triggeredByUserId: null,
+    }).catch((error) => {
+      console.error(
+        '[caixa-owner] falha ao disparar analise (anexo de sistema):',
+        error,
+      )
+    })
+  }
+
+  return { didUploadFile }
+}
+
 export async function syncProcessStatusAfterChecklistChange(input: {
   actor: ProcessActor
   checklist: Awaited<ReturnType<typeof getProcessChecklist>>
@@ -1167,6 +1251,19 @@ export async function submitProcessChecklistItem(input: {
     actor: input.actor,
     checklist,
   })
+
+  // Gatilho automatico: ao anexar/substituir um termo da Caixa, dispara a
+  // analise do titular do contrato em background (nao bloqueia a resposta).
+  if (didUploadFile && isCaixaOwnerDocKey(checklistItem.documentType.key)) {
+    // Fire-and-forget protegido: rejeicao do claim/dispatch nao pode escapar
+    // como unhandledRejection (nao ha handler global).
+    startCaixaOwnerAnalysis({
+      processId: input.processId,
+      triggeredByUserId: input.actor.id,
+    }).catch((error) => {
+      console.error('[caixa-owner] falha ao disparar analise:', error)
+    })
+  }
 
   return {
     ...checklist,
@@ -1536,7 +1633,8 @@ export async function downloadAllChecklistFilesZip(
 
   const bytes = await createStorageObjectsZip(entries)
   // Nome do arquivo = nome do titular do processo (cai para o codigo se vazio).
-  const holderName = (currentProcess.fullName ?? '').trim() || currentProcess.code
+  const holderName =
+    (currentProcess.fullName ?? '').trim() || currentProcess.code
   const zipFileName = `${holderName}.zip`
 
   // Sobe o ZIP no storage e devolve URL assinada: o download vai do S3 direto ao

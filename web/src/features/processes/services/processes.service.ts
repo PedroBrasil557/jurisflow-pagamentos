@@ -225,7 +225,7 @@ function mapProcessToFormValues(
   return {
     fullName: currentProcess.fullName,
     birthDate: currentProcess.birthDate ?? '',
-    nationality: currentProcess.nationality,
+    nationality: currentProcess.nationality || 'Brasileira',
     maritalStatus:
       currentProcess.maritalStatus as ProcessFormValues['maritalStatus'],
     profession: currentProcess.profession,

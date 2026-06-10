@@ -1,6 +1,10 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { Link, useBlocker, useNavigate } from '@tanstack/react-router'
-import { ArrowLeft, Loader2, Sparkles, User } from 'lucide-react'
+import { ArrowLeft, Loader2, RefreshCw, User } from 'lucide-react'
 import type { ChangeEvent } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type SubmitHandler, useWatch } from 'react-hook-form'
@@ -22,10 +26,6 @@ import {
   ProcessTextField,
 } from '../components/process-form/process-form-field'
 import { ProcessFormSection } from '../components/process-form/process-form-section'
-import {
-  type ImportDocumentBundle,
-  ImportFromDocumentDialog,
-} from '../components/process-import/import-from-document-dialog'
 import { ProcessSaveSuccessDialog } from '../components/process-pdf/process-save-success-dialog'
 import { buildProcessRelationship, canEditProcess } from '../lib/process-access'
 import {
@@ -43,20 +43,21 @@ import type {
 } from '../process-form.types'
 import { formatCpf, formatWhatsapp, formatZipCode } from '../process-form.utils'
 import { processFormSchema } from '../schemas/process-form.schema'
-import type { ExtractedField } from '../services/extraction.service'
-import { importBundleRequest } from '../services/extraction.service'
 import { housingComplexOptionsInfiniteQuery } from '../services/housing-complexes.queries'
 import {
   useCreateProcess,
+  useReprocessImport,
   useUpdateProcess,
 } from '../services/processes.mutations'
-import { processDetailOptions } from '../services/processes.queries'
+import {
+  processBatchFilesOptions,
+  processDetailOptions,
+  processKeys,
+} from '../services/processes.queries'
 import {
   generateProcessPdfRequest,
   getProcessPdfModelsRequest,
 } from '../services/processes.service'
-
-const emptyImportedBundles: ImportDocumentBundle[] = []
 
 type ProcessFormShellProps = {
   mode: ProcessFormMode
@@ -90,6 +91,21 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     ...processDetailOptions(processId ?? ''),
     enabled: mode === 'edit' && !!processId,
   })
+  // Ingestao de documentos em andamento (importar/escanear): enquanto houver um
+  // arquivo do lote em 'processing', o form fica read-only e mostramos o
+  // progresso. Ao concluir, recarregamos o processo (campos auto-preenchidos) e
+  // o checklist (documentos anexados). A query ja faz polling enquanto processa.
+  const batchQ = useQuery({
+    ...processBatchFilesOptions(processId ?? ''),
+    enabled: mode === 'edit' && !!processId,
+  })
+  const batchFiles = batchQ.data?.files ?? []
+  const isIngesting = batchFiles.some(
+    (file) => file.splitStatus === 'processing',
+  )
+  const ingestErrorFile = batchFiles.find(
+    (file) => file.splitStatus === 'error',
+  )
 
   const allHousingComplexes = useMemo(
     () => hcQ.data?.pages.flatMap((p) => p.items) ?? [],
@@ -118,12 +134,24 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   const [successState, setSuccessState] =
     useState<ProcessSaveSuccessState | null>(null)
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
-  const importedBundlesRef =
-    useRef<ImportDocumentBundle[]>(emptyImportedBundles)
 
   const createMutation = useCreateProcess()
   const updateMutation = useUpdateProcess(processId ?? '')
+  const reprocessMutation = useReprocessImport(processId ?? '')
+
+  async function handleReprocessImport() {
+    try {
+      await reprocessMutation.mutateAsync()
+      toast.success('Reprocessando os documentos...')
+      reprocessMutation.reset()
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Nao foi possivel reprocessar os documentos.',
+      )
+    }
+  }
 
   const {
     control,
@@ -141,6 +169,25 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   useEffect(() => {
     reset(initialValues)
   }, [initialValues, reset])
+
+  const queryClient = useQueryClient()
+  // Ao concluir a ingestao (processing -> done/error), recarrega o processo
+  // (campos preenchidos) e o checklist (documentos anexados).
+  const wasIngestingRef = useRef(false)
+  useEffect(() => {
+    if (
+      wasIngestingRef.current &&
+      !isIngesting &&
+      mode === 'edit' &&
+      processId
+    ) {
+      queryClient.invalidateQueries({ queryKey: processKeys.detail(processId) })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.checklist(processId),
+      })
+    }
+    wasIngestingRef.current = isIngesting
+  }, [isIngesting, mode, processId, queryClient])
 
   const shouldBlock = isDirty && !isSubmitting && !successState
   useBlocker({
@@ -251,56 +298,12 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     }
   }
 
-  function handleImportApply(
-    fields: ExtractedField[],
-    bundles: ImportDocumentBundle[],
-  ) {
-    for (const field of fields) {
-      updateValue(field.key as keyof ProcessFormValues, field.value as never)
-    }
-
-    importedBundlesRef.current = bundles
-
-    toast.success(
-      bundles.length > 0
-        ? 'Dados aplicados. Os documentos serao separados e anexados ao checklist apos criar o processo.'
-        : 'Dados aplicados ao formulario.',
-    )
-  }
-
   const handleProcessSubmit: SubmitHandler<ProcessFormValues> = async (
     values,
   ) => {
     try {
       if (mode === 'create') {
         const result = await createMutation.mutateAsync(values)
-
-        const bundles = importedBundlesRef.current
-        importedBundlesRef.current = emptyImportedBundles
-
-        if (bundles.length > 0) {
-          // Anexa cada arquivo de forma independente: falha de um nao impede os outros.
-          const failed: string[] = []
-          for (const bundle of bundles) {
-            try {
-              await importBundleRequest({
-                processId: result.process.id,
-                file: bundle.file,
-                documents: bundle.documents,
-              })
-            } catch (error) {
-              failed.push(
-                error instanceof Error ? error.message : bundle.file.name,
-              )
-            }
-          }
-
-          if (failed.length > 0) {
-            toast.error(
-              `Processo criado, mas alguns documentos nao foram anexados: ${failed.join('; ')}. Anexe-os manualmente no checklist.`,
-            )
-          }
-        }
 
         setSuccessState({
           processId: result.process.id,
@@ -462,28 +465,42 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
         </div>
       ) : null}
 
-      {mode === 'create' && !isReadOnly ? (
-        <div className="mb-6 flex flex-col gap-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <Sparkles className="mt-0.5 size-5 shrink-0 text-blue-500" />
-            <div className="grid gap-0.5">
-              <span className="text-sm font-medium text-foreground">
-                Preencher a partir de documentos
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Envie RG/CNH e comprovante de endereco para preencher o cadastro
-                automaticamente com IA.
-              </span>
-            </div>
+      {isIngesting ? (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm">
+          <Loader2 className="size-5 shrink-0 animate-spin text-blue-500" />
+          <div className="grid gap-0.5">
+            <span className="font-medium text-foreground">
+              Lendo e organizando seus documentos&hellip;
+            </span>
+            <span className="text-muted-foreground text-xs">
+              Os campos e o checklist serao preenchidos automaticamente. Aguarde
+              um instante.
+            </span>
           </div>
+        </div>
+      ) : ingestErrorFile ? (
+        <div className="mb-6 flex flex-col gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 sm:flex-row sm:items-center sm:justify-between dark:text-amber-400">
+          <span>
+            Nao foi possivel ler os documentos automaticamente
+            {ingestErrorFile.splitMessage
+              ? `: ${ingestErrorFile.splitMessage}`
+              : '.'}{' '}
+            Tente novamente ou preencha e anexe manualmente.
+          </span>
           <Button
             className="shrink-0"
-            onClick={() => setIsImportDialogOpen(true)}
+            disabled={reprocessMutation.isPending}
+            onClick={handleReprocessImport}
+            size="sm"
             type="button"
             variant="outline"
           >
-            <Sparkles className="size-4" />
-            Importar de documentos
+            {reprocessMutation.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4" />
+            )}
+            Reprocessar
           </Button>
         </div>
       ) : null}
@@ -493,7 +510,7 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
         noValidate
         onSubmit={handleSubmit(handleProcessSubmit)}
       >
-        <fieldset className="contents" disabled={isReadOnly}>
+        <fieldset className="contents" disabled={isReadOnly || isIngesting}>
           <ProcessFormSection title="Tipo de proprietario">
             <ProcessSelectField
               {...register('ownerType')}
@@ -501,7 +518,6 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
               label="Proprietario (tipo)"
               onChange={handleSelectChange('ownerType')}
               options={ownerTypeOptions}
-              required
               value={values.ownerType}
             />
           </ProcessFormSection>
@@ -992,27 +1008,19 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
             <div className="mx-auto flex max-w-5xl items-center justify-between">
               <button
                 className="text-sm text-muted-foreground hover:text-foreground"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isIngesting}
                 onClick={handleReset}
                 type="button"
               >
                 Restaurar campos
               </button>
-              <Button disabled={isSubmitting} type="submit">
+              <Button disabled={isSubmitting || isIngesting} type="submit">
                 {isSubmitting ? 'Salvando...' : submitLabel}
               </Button>
             </div>
           </div>
         )}
       </form>
-
-      {mode === 'create' && !isReadOnly ? (
-        <ImportFromDocumentDialog
-          onApply={handleImportApply}
-          onClose={() => setIsImportDialogOpen(false)}
-          open={isImportDialogOpen}
-        />
-      ) : null}
 
       {successState ? (
         <ProcessSaveSuccessDialog

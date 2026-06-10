@@ -24,6 +24,8 @@ import {
 } from '../components/process-filters/process-filters-sheet'
 import { FinalizeProcessDialog } from '../components/process-finalize/finalize-process-dialog'
 import { ProcessHistoryDialog } from '../components/process-history/process-history-dialog'
+import { ImportProcessAction } from '../components/process-import/import-process-action'
+import { ProcessIngestionBadge } from '../components/process-ingestion-badge'
 import { ProcessLastMovement } from '../components/process-last-movement'
 import { LegalProcessDialog } from '../components/process-legal/legal-process-dialog'
 import { ProcessMobileCard } from '../components/process-mobile-card'
@@ -67,6 +69,7 @@ const processTableColumns: readonly DataTableColumn<ProcessListItem>[] = [
         <Badge variant="secondary" className="w-fit ">
           {formatCpf(process.cpf)}
         </Badge>
+        <ProcessIngestionBadge status={process.ingestionStatus} />
       </div>
     ),
   },
@@ -312,6 +315,9 @@ export function ProcessesPage({
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
             {canCreateProcessViaScan(permissions) ? (
               <ScanProcessAction />
+            ) : null}
+            {canCreateProcessViaScan(permissions) ? (
+              <ImportProcessAction />
             ) : null}
             <Link
               className="hidden no-underline sm:block sm:w-auto"

@@ -1,5 +1,8 @@
 import { db } from '../../shared/db'
-import type { ProcessHistoryChangedFields } from './processes.schema'
+import type {
+  ProcessHistoryChangedFields,
+  ProcessHistoryMetadata,
+} from './processes.schema'
 import { processHistory } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
@@ -14,6 +17,7 @@ export async function createProcessHistoryEntry(input: {
   toStatus?: ProcessStatus
   changedFields?: ProcessHistoryChangedFields | null
   notes?: string | null
+  metadata?: ProcessHistoryMetadata | null
   executor?: ProcessHistoryExecutor
 }) {
   const executor = input.executor ?? db
@@ -27,5 +31,6 @@ export async function createProcessHistoryEntry(input: {
     toStatus: input.toStatus ?? null,
     changedFields: input.changedFields ?? null,
     notes: input.notes ?? null,
+    metadata: input.metadata ?? null,
   })
 }

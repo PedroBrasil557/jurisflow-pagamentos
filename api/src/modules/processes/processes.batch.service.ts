@@ -2,11 +2,16 @@ import { and, asc, eq, lt, ne, or } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import {
+  buildImportStagingObjectKey,
   buildProcessBatchObjectKey,
   buildStorageObjectKey,
+  copyStorageObject,
   createStorageObjectDownloadUrl,
+  createStorageObjectUploadUrl,
   deleteStorageObject,
   getStorageObjectBytes,
+  headStorageObject,
+  readStorageObjectPrefix,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -15,6 +20,7 @@ import type { AppBindings } from '../../shared/types/app'
 import { normalizeCpf } from '../../shared/utils/cpf'
 import { buildBatchDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
+import { enqueueQuitacaoCheck } from '../caixa-quitacao/caixa-quitacao.service'
 import {
   assertCanAccessBatch,
   assertCanAccessDocumentation,
@@ -509,6 +515,8 @@ async function applyExtractedFieldsToDraft(
 
   const fullName = update.fullName ?? current.fullName
   const cpf = update.cpf ?? current.cpf
+  // Com o CPF extraido, dispara a consulta automatica de quitacao (worker RPA).
+  await enqueueQuitacaoCheck(processId, cpf)
   return { hasIdentity: Boolean(fullName) || Boolean(cpf) }
 }
 
@@ -627,12 +635,13 @@ async function runScanIngestion(input: {
 
 // Armazena o scan no lote (como fonte) e dispara a ingestao digitalizacao em background.
 // Gated por 'create' na rota. Retorna o id do arquivo p/ o front acompanhar.
-export async function startScanIngestion(input: {
+// Guarda UM arquivo no lote (S3 + processBatchFile 'processing'), pronto para a
+// ingestao. Nao dispara o trabalho — quem chama decide (single ou multi).
+async function storeIngestionFile(input: {
   processId: string
   file: File
   actor: ProcessActor
-  perms: ResolvedPermissions
-}) {
+}): Promise<typeof processBatchFile.$inferSelect> {
   assertBatchFile(input.file)
 
   if (input.file.type.toLowerCase() !== 'application/pdf') {
@@ -665,7 +674,6 @@ export async function startScanIngestion(input: {
     )
   }
 
-  let fileRecord: typeof processBatchFile.$inferSelect
   try {
     const [inserted] = await db
       .insert(processBatchFile)
@@ -682,7 +690,7 @@ export async function startScanIngestion(input: {
         splitUpdatedAt: new Date(),
       })
       .returning()
-    fileRecord = inserted
+    return inserted
   } catch (error) {
     try {
       await deleteStorageObject({ bucketName, objectKey })
@@ -691,6 +699,19 @@ export async function startScanIngestion(input: {
     }
     throw error
   }
+}
+
+export async function startScanIngestion(input: {
+  processId: string
+  file: File
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}) {
+  const fileRecord = await storeIngestionFile({
+    processId: input.processId,
+    file: input.file,
+    actor: input.actor,
+  })
 
   // Dispara sem await: o trabalho continua apos a resposta HTTP.
   void runScanIngestion({
@@ -701,6 +722,274 @@ export async function startScanIngestion(input: {
   })
 
   return { batchFileId: fileRecord.id }
+}
+
+// Reprocessa a ingestao dos arquivos que FALHARAM (splitStatus='error') de um
+// processo — re-roda a ingestao COMPLETA (extrai + aplica campos + split) a
+// partir do PDF JÁ no lote, SEM re-upload. Continuidade quando a IA falha.
+export async function reprocessFailedIngestion(input: {
+  processId: string
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}): Promise<{ count: number }> {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  assertCanAccessBatch(input.perms, relationship)
+  assertCanAccessDocumentation(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'uploadChecklist')
+  assertChecklistUploadAllowed(currentProcess.status)
+
+  const errorFiles = await db
+    .select()
+    .from(processBatchFile)
+    .where(
+      and(
+        eq(processBatchFile.processId, input.processId),
+        eq(processBatchFile.splitStatus, 'error'),
+      ),
+    )
+
+  if (errorFiles.length === 0) {
+    throw new ProcessServiceError(
+      400,
+      'Nao ha documentos com falha para reprocessar.',
+    )
+  }
+
+  // Re-roda SEQUENCIALMENTE os que conseguir reivindicar (claim atomico).
+  void (async () => {
+    for (const fileRecord of errorFiles) {
+      if (await claimSplitProcessing(fileRecord.id)) {
+        await runScanIngestion({
+          processId: input.processId,
+          fileRecord,
+          actor: input.actor,
+          perms: input.perms,
+        })
+      }
+    }
+  })().catch((error) => {
+    console.error('Falha no reprocessamento da ingestao', {
+      processId: input.processId,
+      error: String(error),
+    })
+  })
+
+  return { count: errorFiles.length }
+}
+
+const MAX_IMPORT_FILES = 20
+
+// Assinatura de arquivo PDF: "%PDF-".
+const PDF_MAGIC = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])
+
+function hasPdfSignature(bytes: Uint8Array): boolean {
+  if (bytes.length < PDF_MAGIC.length) {
+    return false
+  }
+  for (let i = 0; i < PDF_MAGIC.length; i++) {
+    if (bytes[i] !== PDF_MAGIC[i]) {
+      return false
+    }
+  }
+  return true
+}
+
+// Gera URLs pre-assinadas de UPLOAD: o browser sobe cada PDF DIRETO no S3 (sem
+// passar pela API — contorna o teto de 10MB do API Gateway). O upload vai para
+// uma area de STAGING com lifecycle (objetos abandonados expiram sozinhos); o
+// complete copia para o local definitivo. O tamanho e ASSINADO na URL (o S3
+// rejeita um corpo maior), e o tipo/conteudo sao validados no complete.
+export async function presignDocumentUploads(input: {
+  processId: string
+  files: Array<{ fileName: string; contentType: string; size: number }>
+}): Promise<{
+  uploads: Array<{ fileId: string; objectKey: string; uploadUrl: string }>
+}> {
+  if (input.files.length === 0) {
+    throw new ProcessServiceError(400, 'Informe ao menos um arquivo.')
+  }
+  if (input.files.length > MAX_IMPORT_FILES) {
+    throw new ProcessServiceError(
+      400,
+      `Maximo de ${MAX_IMPORT_FILES} arquivos por envio.`,
+    )
+  }
+
+  const uploads: Array<{
+    fileId: string
+    objectKey: string
+    uploadUrl: string
+  }> = []
+  for (const file of input.files) {
+    if (file.contentType.toLowerCase() !== 'application/pdf') {
+      throw new ProcessServiceError(415, `"${file.fileName}": envie um PDF.`)
+    }
+    if (file.size <= 0 || file.size > maxBatchFileSizeInBytes) {
+      throw new ProcessServiceError(
+        413,
+        `"${file.fileName}" excede o limite de 25 MB.`,
+      )
+    }
+
+    const fileId = crypto.randomUUID()
+    const objectKey = buildImportStagingObjectKey({
+      processId: input.processId,
+      fileId,
+      fileName: file.fileName,
+    })
+    const uploadUrl = await createStorageObjectUploadUrl({
+      bucketName: storageBuckets.processDocuments,
+      objectKey,
+      contentType: 'application/pdf',
+      // Trava o tamanho do PUT no valor declarado (<=25MB ja validado acima).
+      contentLength: file.size,
+    })
+    uploads.push({ fileId, objectKey, uploadUrl })
+  }
+
+  return { uploads }
+}
+
+// Conclui o import pre-assinado: valida (dono + chave exata do staging + objeto
+// existe + tamanho real + assinatura PDF), move do staging para o local
+// definitivo, registra no lote e dispara a ingestao SEQUENCIAL.
+export async function completeDocumentImport(input: {
+  processId: string
+  files: Array<{ fileId: string; objectKey: string; fileName: string }>
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}): Promise<{ batchFileIds: string[] }> {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  assertCanAccessBatch(input.perms, relationship)
+  assertCanAccessDocumentation(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'uploadChecklist')
+  assertChecklistUploadAllowed(currentProcess.status)
+
+  if (input.files.length === 0) {
+    throw new ProcessServiceError(400, 'Nenhum arquivo para concluir.')
+  }
+
+  const bucketName = storageBuckets.processDocuments
+  const fileRecords: Array<typeof processBatchFile.$inferSelect> = []
+  for (const file of input.files) {
+    // Seguranca: a chave precisa ser EXATAMENTE a que o presign geraria para
+    // este (processId, fileId, fileName) — nunca uma chave arbitraria, e o
+    // fileId fica amarrado ao objeto (nao apenas ao prefixo /batch/).
+    const stagingKey = buildImportStagingObjectKey({
+      processId: input.processId,
+      fileId: file.fileId,
+      fileName: file.fileName,
+    })
+    if (file.objectKey !== stagingKey) {
+      throw new ProcessServiceError(400, 'Chave de objeto invalida.')
+    }
+
+    const head = await headStorageObject({ bucketName, objectKey: stagingKey })
+    if (!head) {
+      throw new ProcessServiceError(
+        400,
+        `O upload de "${file.fileName}" nao foi encontrado (pode ja ter sido importado).`,
+      )
+    }
+    if (head.sizeInBytes > maxBatchFileSizeInBytes) {
+      await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+        () => {},
+      )
+      throw new ProcessServiceError(
+        413,
+        `"${file.fileName}" excede o limite de 25 MB.`,
+      )
+    }
+
+    // Confere a assinatura PDF (magic bytes) — a API nao viu o arquivo passar.
+    const prefix = await readStorageObjectPrefix({
+      bucketName,
+      objectKey: stagingKey,
+      length: PDF_MAGIC.length,
+    })
+    if (!hasPdfSignature(prefix)) {
+      await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+        () => {},
+      )
+      throw new ProcessServiceError(
+        415,
+        `"${file.fileName}" nao e um PDF valido.`,
+      )
+    }
+
+    // Move do staging para o local definitivo (copy server-side).
+    const batchKey = buildProcessBatchObjectKey({
+      processId: input.processId,
+      fileId: file.fileId,
+      fileName: file.fileName,
+    })
+    await copyStorageObject({
+      bucketName,
+      sourceObjectKey: stagingKey,
+      destinationObjectKey: batchKey,
+    })
+
+    // Insert protegido: replay/corrida (PK ou objectKey unico) vira 409 limpo,
+    // nao um 500. Em falha, desfaz a copia definitiva.
+    try {
+      const [inserted] = await db
+        .insert(processBatchFile)
+        .values({
+          id: file.fileId,
+          processId: input.processId,
+          bucketName,
+          objectKey: batchKey,
+          originalFileName: file.fileName,
+          mimeType: 'application/pdf',
+          sizeInBytes: head.sizeInBytes,
+          uploadedByUserId: input.actor.id,
+          splitStatus: 'processing',
+          splitUpdatedAt: new Date(),
+        })
+        .returning()
+      fileRecords.push(inserted)
+    } catch {
+      await deleteStorageObject({ bucketName, objectKey: batchKey }).catch(
+        () => {},
+      )
+      throw new ProcessServiceError(409, `"${file.fileName}" ja foi importado.`)
+    }
+
+    // Sucesso: remove o staging (a copia definitiva ja existe). Se falhar, o
+    // lifecycle do prefixo de staging limpa depois.
+    await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+      () => {},
+    )
+  }
+
+  // Coordenador SEQUENCIAL (detached) — mesma logica do multi-import.
+  void (async () => {
+    for (const fileRecord of fileRecords) {
+      await runScanIngestion({
+        processId: input.processId,
+        fileRecord,
+        actor: input.actor,
+        perms: input.perms,
+      })
+    }
+  })().catch((error) => {
+    console.error('Falha no coordenador de ingestao (import presigned)', {
+      processId: input.processId,
+      error: String(error),
+    })
+  })
+
+  return { batchFileIds: fileRecords.map((record) => record.id) }
 }
 
 export async function getBatchFileDownload(input: {

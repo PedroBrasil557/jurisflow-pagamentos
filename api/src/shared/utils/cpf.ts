@@ -28,7 +28,10 @@ function getCpfCheckDigit(baseDigits: string) {
 }
 
 export function isValidCpf(value: string) {
-  const cpf = normalizeCpf(value)
+  // Conta os digitos CRUS (sem o slice de normalizeCpf): um CPF valido tem
+  // EXATAMENTE 11 digitos. Sem isto, "111.444.777-35 99887766" (digitos a mais,
+  // ex.: CPF colado a um telefone pela IA) seria truncado para 11 e passaria.
+  const cpf = value.replace(/\D/g, '')
 
   if (cpf.length !== CPF_LENGTH) {
     return false

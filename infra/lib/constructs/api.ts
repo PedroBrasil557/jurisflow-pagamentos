@@ -137,6 +137,7 @@ export class Api extends Construct {
         S3_FORCE_PATH_STYLE: 'false',
         S3_PROCESS_DOCUMENTS_BUCKET: documentsBucket.bucketName,
         SLACK_BOT_TOKEN: env.slackBotToken,
+        INTERNAL_API_TOKEN: env.internalApiToken,
       },
       logging: LogDriver.awsLogs({
         streamPrefix: getEnvName('jurisflow-api'),
