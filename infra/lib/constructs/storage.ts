@@ -23,6 +23,15 @@ export class Storage extends Construct {
           prefix: 'tmp-zips/',
           expiration: Duration.days(1),
         },
+        // Staging do import pre-assinado: o complete copia para o local
+        // definitivo. O que sobra aqui sao uploads abandonados (presign sem
+        // complete) ou o staging pos-sucesso — expira-os para nao virarem lixo
+        // permanente que ninguem ve nem apaga.
+        {
+          id: 'expire-import-staging',
+          prefix: 'imports/staging/',
+          expiration: Duration.days(1),
+        },
       ],
       cors: [
         {

@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -73,6 +74,26 @@ export function buildProcessBatchObjectKey(input: {
     'processes',
     input.processId,
     'batch',
+    `${input.fileId}-${safeFileName}`,
+  ])
+}
+
+// Area de STAGING do import pre-assinado: o browser sobe aqui primeiro. O
+// complete copia para a chave definitiva (buildProcessBatchObjectKey) e apaga o
+// staging. Objetos abandonados (presign sem complete) expiram via lifecycle
+// (prefixo importStagingPrefix), entao nao viram lixo permanente no bucket.
+export const importStagingPrefix = 'imports/staging'
+
+export function buildImportStagingObjectKey(input: {
+  processId: string
+  fileId: string
+  fileName: string
+}) {
+  const safeFileName = normalizeFileName(input.fileName) || 'arquivo'
+
+  return buildStorageObjectKey([
+    importStagingPrefix,
+    input.processId,
     `${input.fileId}-${safeFileName}`,
   ])
 }
@@ -214,12 +235,15 @@ export async function createStorageObjectDownloadUrl(input: {
 
 // URL pre-assinada de UPLOAD (PUT): o browser sobe o arquivo DIRETO para o S3,
 // sem passar pela API (contorna o teto de 10MB do API Gateway). Assinada com o
-// client publico (endpoint que o browser alcanca). O contentType assinado deve
-// bater com o header Content-Type do PUT.
+// client publico (endpoint que o browser alcanca). O contentType e o
+// contentLength assinados sao OBRIGATORIOS no PUT: o S3 rejeita um corpo de
+// tamanho diferente do assinado — isso TRAVA o tamanho do upload (sem isso, um
+// presigned PUT aceita qualquer tamanho).
 export async function createStorageObjectUploadUrl(input: {
   bucketName: StorageBucketName
   objectKey: string
   contentType: string
+  contentLength: number
   expiresInSeconds?: number
 }): Promise<string> {
   return getSignedUrl(
@@ -228,11 +252,52 @@ export async function createStorageObjectUploadUrl(input: {
       Bucket: input.bucketName,
       Key: input.objectKey,
       ContentType: input.contentType,
+      ContentLength: input.contentLength,
     }),
     {
       expiresIn: input.expiresInSeconds ?? 60 * 10,
+      // Garante que Content-Length entra nos headers ASSINADOS (e nao vira
+      // unsigned/hoisted), para o S3 de fato exigir o tamanho exato.
+      signableHeaders: new Set(['content-length']),
     },
   )
+}
+
+// Copia um objeto dentro do mesmo bucket (server-side, sem trafego de dados).
+export async function copyStorageObject(input: {
+  bucketName: StorageBucketName
+  sourceObjectKey: string
+  destinationObjectKey: string
+}) {
+  await internalStorageClient.send(
+    new CopyObjectCommand({
+      Bucket: input.bucketName,
+      CopySource: `${input.bucketName}/${input.sourceObjectKey}`,
+      Key: input.destinationObjectKey,
+    }),
+  )
+}
+
+// Le apenas os PRIMEIROS bytes de um objeto (Range GET) — barato, usado para
+// conferir a assinatura de arquivo (magic bytes) sem baixar o arquivo todo.
+export async function readStorageObjectPrefix(input: {
+  bucketName: StorageBucketName
+  objectKey: string
+  length: number
+}): Promise<Uint8Array> {
+  const response = await internalStorageClient.send(
+    new GetObjectCommand({
+      Bucket: input.bucketName,
+      Key: input.objectKey,
+      Range: `bytes=0-${Math.max(0, input.length - 1)}`,
+    }),
+  )
+
+  if (!response.Body) {
+    throw new Error('Objeto de storage vazio ou inexistente.')
+  }
+
+  return response.Body.transformToByteArray()
 }
 
 // Confere se um objeto existe (e seu tamanho) — usado para validar um upload

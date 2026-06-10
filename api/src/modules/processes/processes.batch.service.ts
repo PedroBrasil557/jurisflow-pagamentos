@@ -2,13 +2,16 @@ import { and, asc, eq, lt, ne, or } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import {
+  buildImportStagingObjectKey,
   buildProcessBatchObjectKey,
   buildStorageObjectKey,
+  copyStorageObject,
   createStorageObjectDownloadUrl,
   createStorageObjectUploadUrl,
   deleteStorageObject,
   getStorageObjectBytes,
   headStorageObject,
+  readStorageObjectPrefix,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -781,10 +784,26 @@ export async function reprocessFailedIngestion(input: {
 
 const MAX_IMPORT_FILES = 20
 
+// Assinatura de arquivo PDF: "%PDF-".
+const PDF_MAGIC = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])
+
+function hasPdfSignature(bytes: Uint8Array): boolean {
+  if (bytes.length < PDF_MAGIC.length) {
+    return false
+  }
+  for (let i = 0; i < PDF_MAGIC.length; i++) {
+    if (bytes[i] !== PDF_MAGIC[i]) {
+      return false
+    }
+  }
+  return true
+}
+
 // Gera URLs pre-assinadas de UPLOAD: o browser sobe cada PDF DIRETO no S3 (sem
-// passar pela API — contorna o teto de 10MB do API Gateway). Como a API nao ve
-// mais o arquivo passar, o tipo/tamanho sao validados aqui (presign) e de novo
-// no complete (HEAD do objeto real).
+// passar pela API — contorna o teto de 10MB do API Gateway). O upload vai para
+// uma area de STAGING com lifecycle (objetos abandonados expiram sozinhos); o
+// complete copia para o local definitivo. O tamanho e ASSINADO na URL (o S3
+// rejeita um corpo maior), e o tipo/conteudo sao validados no complete.
 export async function presignDocumentUploads(input: {
   processId: string
   files: Array<{ fileName: string; contentType: string; size: number }>
@@ -818,7 +837,7 @@ export async function presignDocumentUploads(input: {
     }
 
     const fileId = crypto.randomUUID()
-    const objectKey = buildProcessBatchObjectKey({
+    const objectKey = buildImportStagingObjectKey({
       processId: input.processId,
       fileId,
       fileName: file.fileName,
@@ -827,6 +846,8 @@ export async function presignDocumentUploads(input: {
       bucketName: storageBuckets.processDocuments,
       objectKey,
       contentType: 'application/pdf',
+      // Trava o tamanho do PUT no valor declarado (<=25MB ja validado acima).
+      contentLength: file.size,
     })
     uploads.push({ fileId, objectKey, uploadUrl })
   }
@@ -834,8 +855,9 @@ export async function presignDocumentUploads(input: {
   return { uploads }
 }
 
-// Conclui o import pre-assinado: valida (dono + objeto existe no S3 + tamanho),
-// registra cada arquivo no lote e dispara a ingestao SEQUENCIAL.
+// Conclui o import pre-assinado: valida (dono + chave exata do staging + objeto
+// existe + tamanho real + assinatura PDF), move do staging para o local
+// definitivo, registra no lote e dispara a ingestao SEQUENCIAL.
 export async function completeDocumentImport(input: {
   processId: string
   files: Array<{ fileId: string; objectKey: string; fileName: string }>
@@ -857,52 +879,97 @@ export async function completeDocumentImport(input: {
     throw new ProcessServiceError(400, 'Nenhum arquivo para concluir.')
   }
 
-  const expectedPrefix = `processes/${input.processId}/batch/`
+  const bucketName = storageBuckets.processDocuments
   const fileRecords: Array<typeof processBatchFile.$inferSelect> = []
   for (const file of input.files) {
-    // Seguranca: a chave tem que pertencer a este processo (objeto criado pelo
-    // presign deste processo), nunca uma chave arbitraria.
-    if (!file.objectKey.startsWith(expectedPrefix)) {
+    // Seguranca: a chave precisa ser EXATAMENTE a que o presign geraria para
+    // este (processId, fileId, fileName) — nunca uma chave arbitraria, e o
+    // fileId fica amarrado ao objeto (nao apenas ao prefixo /batch/).
+    const stagingKey = buildImportStagingObjectKey({
+      processId: input.processId,
+      fileId: file.fileId,
+      fileName: file.fileName,
+    })
+    if (file.objectKey !== stagingKey) {
       throw new ProcessServiceError(400, 'Chave de objeto invalida.')
     }
 
-    const head = await headStorageObject({
-      bucketName: storageBuckets.processDocuments,
-      objectKey: file.objectKey,
-    })
+    const head = await headStorageObject({ bucketName, objectKey: stagingKey })
     if (!head) {
       throw new ProcessServiceError(
         400,
-        `O upload de "${file.fileName}" nao foi concluido.`,
+        `O upload de "${file.fileName}" nao foi encontrado (pode ja ter sido importado).`,
       )
     }
     if (head.sizeInBytes > maxBatchFileSizeInBytes) {
-      await deleteStorageObject({
-        bucketName: storageBuckets.processDocuments,
-        objectKey: file.objectKey,
-      }).catch(() => {})
+      await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+        () => {},
+      )
       throw new ProcessServiceError(
         413,
         `"${file.fileName}" excede o limite de 25 MB.`,
       )
     }
 
-    const [inserted] = await db
-      .insert(processBatchFile)
-      .values({
-        id: file.fileId,
-        processId: input.processId,
-        bucketName: storageBuckets.processDocuments,
-        objectKey: file.objectKey,
-        originalFileName: file.fileName,
-        mimeType: 'application/pdf',
-        sizeInBytes: head.sizeInBytes,
-        uploadedByUserId: input.actor.id,
-        splitStatus: 'processing',
-        splitUpdatedAt: new Date(),
-      })
-      .returning()
-    fileRecords.push(inserted)
+    // Confere a assinatura PDF (magic bytes) — a API nao viu o arquivo passar.
+    const prefix = await readStorageObjectPrefix({
+      bucketName,
+      objectKey: stagingKey,
+      length: PDF_MAGIC.length,
+    })
+    if (!hasPdfSignature(prefix)) {
+      await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+        () => {},
+      )
+      throw new ProcessServiceError(
+        415,
+        `"${file.fileName}" nao e um PDF valido.`,
+      )
+    }
+
+    // Move do staging para o local definitivo (copy server-side).
+    const batchKey = buildProcessBatchObjectKey({
+      processId: input.processId,
+      fileId: file.fileId,
+      fileName: file.fileName,
+    })
+    await copyStorageObject({
+      bucketName,
+      sourceObjectKey: stagingKey,
+      destinationObjectKey: batchKey,
+    })
+
+    // Insert protegido: replay/corrida (PK ou objectKey unico) vira 409 limpo,
+    // nao um 500. Em falha, desfaz a copia definitiva.
+    try {
+      const [inserted] = await db
+        .insert(processBatchFile)
+        .values({
+          id: file.fileId,
+          processId: input.processId,
+          bucketName,
+          objectKey: batchKey,
+          originalFileName: file.fileName,
+          mimeType: 'application/pdf',
+          sizeInBytes: head.sizeInBytes,
+          uploadedByUserId: input.actor.id,
+          splitStatus: 'processing',
+          splitUpdatedAt: new Date(),
+        })
+        .returning()
+      fileRecords.push(inserted)
+    } catch {
+      await deleteStorageObject({ bucketName, objectKey: batchKey }).catch(
+        () => {},
+      )
+      throw new ProcessServiceError(409, `"${file.fileName}" ja foi importado.`)
+    }
+
+    // Sucesso: remove o staging (a copia definitiva ja existe). Se falhar, o
+    // lifecycle do prefixo de staging limpa depois.
+    await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+      () => {},
+    )
   }
 
   // Coordenador SEQUENCIAL (detached) — mesma logica do multi-import.
