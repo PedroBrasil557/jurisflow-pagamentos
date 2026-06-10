@@ -1,3 +1,4 @@
+export * from '../../modules/ai-analysis/ai-analysis.schema'
 export * from '../../modules/auth/auth.schema'
 export * from '../../modules/auth-audit/auth-audit.schema'
 export * from '../../modules/housing-complexes/housing-complexes.schema'

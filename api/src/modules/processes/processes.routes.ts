@@ -14,6 +14,15 @@ import {
   queryValidator,
 } from '../../shared/validation/validators'
 import {
+  aiAnalysisDetailParamsSchema,
+  aiAnalysisListQuerySchema,
+  aiAnalysisProcessParamsSchema,
+} from '../ai-analysis/ai-analysis.schemas'
+import {
+  getAiAnalysis,
+  listAiAnalyses,
+} from '../ai-analysis/ai-analysis.service'
+import {
   assertCan,
   resolveUserPermissions,
 } from '../permissions/permissions.service'
@@ -781,6 +790,40 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
+  // Evidencia de IA do processo (camada generica de auditoria). Gate de acesso =
+  // ver o processo (getProcessById aplica assertCanViewProcess).
+  .get(
+    '/:processId/ai-analyses',
+    paramsValidator(aiAnalysisProcessParamsSchema),
+    queryValidator(aiAnalysisListQuerySchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { processId } = c.req.valid('param')
+        await getProcessById(processId, currentUser.id, perms)
+        const { kind, limit } = c.req.valid('query')
+        const items = await listAiAnalyses(processId, { kind, limit })
+        return c.json({ items }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .get(
+    '/:processId/ai-analyses/:id',
+    paramsValidator(aiAnalysisDetailParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { processId, id } = c.req.valid('param')
+        await getProcessById(processId, currentUser.id, perms)
+        const analysis = await getAiAnalysis(processId, id)
+        return c.json({ analysis }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .put(
     '/:processId/documentation-assignee',
     requireRole('admin'),

@@ -40,6 +40,10 @@ jobs:
         working-directory: ${{ github.workspace }}/api
         run: bun run typecheck
 
+      - name: API tests
+        working-directory: ${{ github.workspace }}/api
+        run: bun run test
+
       - name: Install Web dependencies
         working-directory: ${{ github.workspace }}/web
         run: bun install --frozen-lockfile
