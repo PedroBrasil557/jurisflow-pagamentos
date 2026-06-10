@@ -1,6 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { createProcessViaScanRequest } from './extraction.service'
 import type { ProcessFormValues } from '../process-form.types'
+import {
+  createProcessViaScanRequest,
+  importDocumentRequest,
+} from './extraction.service'
 import { processKeys } from './processes.queries'
 import {
   cancelProcessRequest,
@@ -38,6 +41,17 @@ export function useCreateProcessViaScan() {
 
   return useMutation({
     mutationFn: (file: File) => createProcessViaScanRequest(file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: processKeys.lists() })
+    },
+  })
+}
+
+export function useImportDocument() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (file: File) => importDocumentRequest(file),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     },

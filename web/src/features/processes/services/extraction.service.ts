@@ -7,6 +7,7 @@ const extractDocumentsClientRoute = apiClient.api.processes['extract-documents']
 const importBundleClientRoute =
   apiClient.api.processes[':processId']['import-bundle']
 const scanClientRoute = apiClient.api.processes.scan
+const importClientRoute = apiClient.api.processes.import
 
 export type CreateProcessViaScanResponse = InferResponseType<
   typeof scanClientRoute.$post,
@@ -38,6 +39,35 @@ export async function createProcessViaScanRequest(
   }
 
   return (await response.json()) as CreateProcessViaScanResponse
+}
+
+export type ImportDocumentResponse = InferResponseType<
+  typeof importClientRoute.$post,
+  202
+>
+
+// Importar documentos: envia UM PDF, cria o rascunho e dispara a ingestao
+// durável/assincrona (mesma do scan). Retorna na hora { processId, batchFileId };
+// o front navega para o editor e acompanha via splitStatus (polling).
+export async function importDocumentRequest(
+  file: File,
+): Promise<ImportDocumentResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const response = await fetch(importClientRoute.$url(), {
+    method: 'POST',
+    body: formData,
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel importar o documento.'),
+    )
+  }
+
+  return (await response.json()) as ImportDocumentResponse
 }
 
 export type ExtractDocumentsResponse = InferResponseType<
