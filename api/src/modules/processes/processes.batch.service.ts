@@ -5,8 +5,10 @@ import {
   buildProcessBatchObjectKey,
   buildStorageObjectKey,
   createStorageObjectDownloadUrl,
+  createStorageObjectUploadUrl,
   deleteStorageObject,
   getStorageObjectBytes,
+  headStorageObject,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -828,6 +830,152 @@ export async function reprocessFailedIngestion(input: {
   })
 
   return { count: errorFiles.length }
+}
+
+const MAX_IMPORT_FILES = 20
+
+// Gera URLs pre-assinadas de UPLOAD: o browser sobe cada PDF DIRETO no S3 (sem
+// passar pela API — contorna o teto de 10MB do API Gateway). Como a API nao ve
+// mais o arquivo passar, o tipo/tamanho sao validados aqui (presign) e de novo
+// no complete (HEAD do objeto real).
+export async function presignDocumentUploads(input: {
+  processId: string
+  files: Array<{ fileName: string; contentType: string; size: number }>
+}): Promise<{
+  uploads: Array<{ fileId: string; objectKey: string; uploadUrl: string }>
+}> {
+  if (input.files.length === 0) {
+    throw new ProcessServiceError(400, 'Informe ao menos um arquivo.')
+  }
+  if (input.files.length > MAX_IMPORT_FILES) {
+    throw new ProcessServiceError(
+      400,
+      `Maximo de ${MAX_IMPORT_FILES} arquivos por envio.`,
+    )
+  }
+
+  const uploads: Array<{
+    fileId: string
+    objectKey: string
+    uploadUrl: string
+  }> = []
+  for (const file of input.files) {
+    if (file.contentType.toLowerCase() !== 'application/pdf') {
+      throw new ProcessServiceError(415, `"${file.fileName}": envie um PDF.`)
+    }
+    if (file.size <= 0 || file.size > maxBatchFileSizeInBytes) {
+      throw new ProcessServiceError(
+        413,
+        `"${file.fileName}" excede o limite de 25 MB.`,
+      )
+    }
+
+    const fileId = crypto.randomUUID()
+    const objectKey = buildProcessBatchObjectKey({
+      processId: input.processId,
+      fileId,
+      fileName: file.fileName,
+    })
+    const uploadUrl = await createStorageObjectUploadUrl({
+      bucketName: storageBuckets.processDocuments,
+      objectKey,
+      contentType: 'application/pdf',
+    })
+    uploads.push({ fileId, objectKey, uploadUrl })
+  }
+
+  return { uploads }
+}
+
+// Conclui o import pre-assinado: valida (dono + objeto existe no S3 + tamanho),
+// registra cada arquivo no lote e dispara a ingestao SEQUENCIAL.
+export async function completeDocumentImport(input: {
+  processId: string
+  files: Array<{ fileId: string; objectKey: string; fileName: string }>
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}): Promise<{ batchFileIds: string[] }> {
+  const { process: currentProcess, relationship } =
+    await getProcessContextOrThrow({
+      processId: input.processId,
+      userId: input.actor.id,
+      perms: input.perms,
+    })
+  assertCanAccessBatch(input.perms, relationship)
+  assertCanAccessDocumentation(input.perms, relationship)
+  assertProcessAction(input.perms, relationship, 'uploadChecklist')
+  assertChecklistUploadAllowed(currentProcess.status)
+
+  if (input.files.length === 0) {
+    throw new ProcessServiceError(400, 'Nenhum arquivo para concluir.')
+  }
+
+  const expectedPrefix = `processes/${input.processId}/batch/`
+  const fileRecords: Array<typeof processBatchFile.$inferSelect> = []
+  for (const file of input.files) {
+    // Seguranca: a chave tem que pertencer a este processo (objeto criado pelo
+    // presign deste processo), nunca uma chave arbitraria.
+    if (!file.objectKey.startsWith(expectedPrefix)) {
+      throw new ProcessServiceError(400, 'Chave de objeto invalida.')
+    }
+
+    const head = await headStorageObject({
+      bucketName: storageBuckets.processDocuments,
+      objectKey: file.objectKey,
+    })
+    if (!head) {
+      throw new ProcessServiceError(
+        400,
+        `O upload de "${file.fileName}" nao foi concluido.`,
+      )
+    }
+    if (head.sizeInBytes > maxBatchFileSizeInBytes) {
+      await deleteStorageObject({
+        bucketName: storageBuckets.processDocuments,
+        objectKey: file.objectKey,
+      }).catch(() => {})
+      throw new ProcessServiceError(
+        413,
+        `"${file.fileName}" excede o limite de 25 MB.`,
+      )
+    }
+
+    const [inserted] = await db
+      .insert(processBatchFile)
+      .values({
+        id: file.fileId,
+        processId: input.processId,
+        bucketName: storageBuckets.processDocuments,
+        objectKey: file.objectKey,
+        originalFileName: file.fileName,
+        mimeType: 'application/pdf',
+        sizeInBytes: head.sizeInBytes,
+        uploadedByUserId: input.actor.id,
+        splitStatus: 'processing',
+        splitUpdatedAt: new Date(),
+      })
+      .returning()
+    fileRecords.push(inserted)
+  }
+
+  // Coordenador SEQUENCIAL (detached) — mesma logica do multi-import.
+  void (async () => {
+    for (const fileRecord of fileRecords) {
+      await runScanIngestion({
+        processId: input.processId,
+        fileRecord,
+        actor: input.actor,
+        perms: input.perms,
+      })
+    }
+  })().catch((error) => {
+    console.error('Falha no coordenador de ingestao (import presigned)', {
+      processId: input.processId,
+      error: String(error),
+    })
+  })
+
+  return { batchFileIds: fileRecords.map((record) => record.id) }
 }
 
 export async function getBatchFileDownload(input: {

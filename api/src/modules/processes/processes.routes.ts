@@ -29,12 +29,14 @@ import {
   resolveUserPermissions,
 } from '../permissions/permissions.service'
 import {
+  completeDocumentImport,
   deleteBatchFile,
   downloadAllBatchFiles,
   downloadAllBatchFilesZip,
   getBatchFileDownload,
   listBatchFiles,
   maxBatchFileSizeInBytes,
+  presignDocumentUploads,
   reprocessFailedIngestion,
   startBatchFileSplit,
   startMultiDocumentIngestion,
@@ -57,8 +59,10 @@ import {
 } from './processes.pdf.service'
 import {
   cancelProcessPayloadSchema,
+  completeImportBodySchema,
   createProcessPayloadSchema,
   listProcessesQuerySchema,
+  presignImportBodySchema,
   processBatchFileParamsSchema,
   processChecklistFileParamsSchema,
   processChecklistItemParamsSchema,
@@ -251,6 +255,63 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
+  // Import via upload PRE-ASSINADO S3 (arquivos grandes, > 10MB): cria o rascunho
+  // e devolve URLs assinadas. O browser sobe os PDFs DIRETO no S3 (sem passar
+  // pela API), depois chama /import/complete.
+  .post(
+    '/import/presign',
+    jsonValidator(presignImportBodySchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        assertCan(perms, 'create')
+        assertCan(perms, 'uploadChecklist')
+        const { files } = c.req.valid('json')
+
+        logEvent('import.presign', {
+          requestId: c.get('requestId'),
+          userId: currentUser.id,
+          fileCount: files.length,
+          totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+        })
+
+        const draft = await createDraftProcess(currentUser, perms)
+        try {
+          const { uploads } = await presignDocumentUploads({
+            processId: draft.id,
+            files,
+          })
+          return c.json({ processId: draft.id, uploads }, 200)
+        } catch (error) {
+          await deleteProcess(draft.id)
+          throw error
+        }
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // Conclui o import pre-assinado: registra os arquivos ja no S3 e dispara a
+  // ingestao SEQUENCIAL (mesma do scan).
+  .post(
+    '/import/complete',
+    jsonValidator(completeImportBodySchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { processId, files } = c.req.valid('json')
+        const result = await completeDocumentImport({
+          processId,
+          files,
+          actor: currentUser,
+          perms,
+        })
+        return c.json(result, 202)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   // Reprocessa a ingestao dos documentos que falharam (continuidade quando a IA
   // falha) — re-roda a extracao/anexo do PDF que ja esta no lote.
   .post(

@@ -404,3 +404,34 @@ export type SetDocumentationAssigneePayload = z.output<
 export function normalizeProcessPayload(input: unknown) {
   return createProcessPayloadSchema.parse(input)
 }
+
+// Import via upload pre-assinado S3 (browser sobe direto no S3, sem passar pela
+// API — contorna o teto de 10MB do API Gateway).
+const IMPORT_MAX_FILES = 20
+
+export const presignImportBodySchema = z.object({
+  files: z
+    .array(
+      z.object({
+        fileName: z.string().min(1).max(255),
+        contentType: z.string().min(1).max(128),
+        size: z.number().int().positive(),
+      }),
+    )
+    .min(1)
+    .max(IMPORT_MAX_FILES),
+})
+
+export const completeImportBodySchema = z.object({
+  processId: z.string().min(1),
+  files: z
+    .array(
+      z.object({
+        fileId: z.string().min(1),
+        objectKey: z.string().min(1).max(1024),
+        fileName: z.string().min(1).max(255),
+      }),
+    )
+    .min(1)
+    .max(IMPORT_MAX_FILES),
+})

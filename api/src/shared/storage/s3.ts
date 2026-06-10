@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
@@ -209,6 +210,51 @@ export async function createStorageObjectDownloadUrl(input: {
       expiresIn: input.expiresInSeconds ?? 60 * 10,
     },
   )
+}
+
+// URL pre-assinada de UPLOAD (PUT): o browser sobe o arquivo DIRETO para o S3,
+// sem passar pela API (contorna o teto de 10MB do API Gateway). Assinada com o
+// client publico (endpoint que o browser alcanca). O contentType assinado deve
+// bater com o header Content-Type do PUT.
+export async function createStorageObjectUploadUrl(input: {
+  bucketName: StorageBucketName
+  objectKey: string
+  contentType: string
+  expiresInSeconds?: number
+}): Promise<string> {
+  return getSignedUrl(
+    publicStorageClient,
+    new PutObjectCommand({
+      Bucket: input.bucketName,
+      Key: input.objectKey,
+      ContentType: input.contentType,
+    }),
+    {
+      expiresIn: input.expiresInSeconds ?? 60 * 10,
+    },
+  )
+}
+
+// Confere se um objeto existe (e seu tamanho) — usado para validar um upload
+// pre-assinado antes de registra-lo. Retorna null se nao existir.
+export async function headStorageObject(input: {
+  bucketName: StorageBucketName
+  objectKey: string
+}): Promise<{ sizeInBytes: number; contentType?: string } | null> {
+  try {
+    const response = await internalStorageClient.send(
+      new HeadObjectCommand({
+        Bucket: input.bucketName,
+        Key: input.objectKey,
+      }),
+    )
+    return {
+      sizeInBytes: response.ContentLength ?? 0,
+      contentType: response.ContentType,
+    }
+  } catch {
+    return null
+  }
 }
 
 export const s3Config = {
