@@ -61,8 +61,8 @@ const STALE_MINUTES = 10
 
 // Reivindica atomicamente o proximo processo a consultar: 'pending', ou
 // 'processing' travado (orfao > STALE_MINUTES). Marca 'processing' e incrementa
-// as tentativas. (Single worker no dev; para multi-worker, adicionar
-// FOR UPDATE SKIP LOCKED no subselect.)
+// as tentativas. FOR UPDATE SKIP LOCKED no subselect torna o claim seguro com
+// multiplos workers (ex.: overlap de rolling deploy) — sem dupla reivindicacao.
 export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
   const claimed = await db
     .update(process)
@@ -78,6 +78,7 @@ export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
                AND updated_at < now() - interval '${sql.raw(String(STALE_MINUTES))} minutes')
         ORDER BY caixa_quitacao_attempts ASC, updated_at ASC
         LIMIT 1
+        FOR UPDATE SKIP LOCKED
       )`,
     )
     .returning({ id: process.id, cpf: process.cpf })

@@ -9,7 +9,7 @@ export type ConsultaSignals = {
 }
 
 // Mensagem oficial de ausencia de contrato (Portaria MCID nº 1.248/2023).
-const NAO_ENCONTRADO = /n[ãa]o foi encontrado contrato/i
+export const NAO_ENCONTRADO = /n[ãa]o foi encontrado contrato/i
 
 // Decisao DETERMINISTICA (sem IA). O sinal PRIMARIO e o estado do botao "Emitir
 // declaracao": ele so fica habilitado/visivel quando ha contrato quitado. A

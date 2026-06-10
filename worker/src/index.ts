@@ -3,7 +3,11 @@ import { consultarQuitacao } from './caixa-quitacao/consulta.ts'
 
 const API_URL = process.env.API_URL ?? 'http://localhost:3556'
 const TOKEN = process.env.INTERNAL_API_TOKEN ?? 'dev-internal-token-change-me'
-const POLL_MS = Number(process.env.POLL_MS ?? 5000)
+// Fallback robusto: um POLL_MS invalido (ex.: "5s") nao pode virar NaN ->
+// setTimeout(NaN)=0 -> busy-loop martelando o /claim.
+const parsedPoll = Number(process.env.POLL_MS)
+const POLL_MS =
+  Number.isFinite(parsedPoll) && parsedPoll > 0 ? parsedPoll : 5000
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 
@@ -46,7 +50,7 @@ async function reportResult(
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 async function main(): Promise<void> {
-  const browser: Browser = await chromium.launch({ headless: true })
+  let browser: Browser = await chromium.launch({ headless: true })
   let running = true
   const stop = () => {
     running = false
@@ -71,12 +75,20 @@ async function main(): Promise<void> {
     }
 
     console.log(`[worker] consultando processo=${job.processId}`)
-    const ctx = await browser.newContext({
-      acceptDownloads: true,
-      userAgent: USER_AGENT,
-    })
-    const page = await ctx.newPage()
+    // newContext/newPage DENTRO do try: um erro aqui (ou browser morto) nao deve
+    // derrubar o loop inteiro — vira 'erro' daquele job. O browser e recriado se
+    // tiver desconectado (crash/OOM em execucao de longa duracao).
+    let ctx: Awaited<ReturnType<Browser['newContext']>> | null = null
     try {
+      if (!browser.isConnected()) {
+        console.warn('[worker] browser desconectado; relancando')
+        browser = await chromium.launch({ headless: true })
+      }
+      ctx = await browser.newContext({
+        acceptDownloads: true,
+        userAgent: USER_AGENT,
+      })
+      const page = await ctx.newPage()
       const outcome = await consultarQuitacao(page, job.cpf)
       await reportResult(
         job.processId,
@@ -97,7 +109,9 @@ async function main(): Promise<void> {
         null,
       ).catch(() => {})
     } finally {
-      await ctx.close()
+      if (ctx) {
+        await ctx.close().catch(() => {})
+      }
     }
   }
 

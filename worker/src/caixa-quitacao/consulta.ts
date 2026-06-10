@@ -3,6 +3,7 @@ import type { Page } from 'playwright'
 import {
   type ConsultaQuitacaoResult,
   classifyConsultaQuitacao,
+  NAO_ENCONTRADO,
 } from './classify.ts'
 
 export const CONSULTA_URL =
@@ -64,9 +65,18 @@ export async function consultarQuitacao(
   await page
     .waitForLoadState('networkidle', { timeout: 30_000 })
     .catch(() => {})
-  await page.waitForTimeout(2_000)
 
   const emit = page.locator(SELECTORS.emitir)
+  // Em vez de um sleep fixo (fragil sob postback ASP.NET lento), espera por um
+  // estado DEFINITIVO: botao "Emitir" habilitado+visivel (quitado) OU a mensagem
+  // de "nao encontrado". Se estourar o timeout, le o estado atual mesmo assim.
+  await Promise.race([
+    emit.waitFor({ state: 'visible', timeout: 15_000 }),
+    page.getByText(NAO_ENCONTRADO).first().waitFor({ timeout: 15_000 }),
+  ]).catch(() => {})
+  // pequena folga para o botao terminar de habilitar apos ficar visivel
+  await page.waitForTimeout(500)
+
   const emitButtonVisible = await emit.isVisible().catch(() => false)
   const emitButtonEnabled = await emit.isEnabled().catch(() => false)
   const resultMessage = await readResultMessage(page)
@@ -87,6 +97,17 @@ export async function consultarQuitacao(
   const download = await downloadPromise
   const path = await download.path()
   const bytes = path ? await readFile(path) : Buffer.alloc(0)
+
+  // Quitado confirmado, mas o PDF veio vazio/falhou: trata como 'erro'
+  // (reprocessavel) em vez de anexar uma declaracao em branco como sucesso.
+  if (bytes.length === 0) {
+    return {
+      result: 'erro',
+      message:
+        'Contrato quitado, mas o download da declaracao falhou (PDF vazio).',
+      pdf: null,
+    }
+  }
 
   return {
     result: 'quitado',

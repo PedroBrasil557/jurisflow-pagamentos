@@ -55,7 +55,7 @@ export class Worker extends Construct {
         ENVIRONMENT: env.envName,
         API_URL: apiUrl,
         POLL_MS: env.isProd ? '10000' : '5000',
-        INTERNAL_API_TOKEN: process.env.INTERNAL_API_TOKEN ?? '',
+        INTERNAL_API_TOKEN: env.internalApiToken,
       },
       logging: LogDriver.awsLogs({
         streamPrefix: getEnvName('jurisflow-worker'),
