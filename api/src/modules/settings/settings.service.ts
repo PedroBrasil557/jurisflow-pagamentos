@@ -17,6 +17,17 @@ export type KeyStatus = {
 export type AnthropicKeySource = KeySource
 export type AnthropicKeyStatus = KeyStatus
 
+// Flag de auto-aplicacao do contrato Caixa (default false = shadow).
+export async function getCaixaOwnerAutoApply(): Promise<boolean> {
+  const [row] = await db
+    .select({ caixaOwnerAutoApply: appSettings.caixaOwnerAutoApply })
+    .from(appSettings)
+    .where(eq(appSettings.id, SETTINGS_ID))
+    .limit(1)
+
+  return row?.caixaOwnerAutoApply ?? false
+}
+
 // Le a chave salva no banco (texto puro), ou null se nao houver.
 export async function getAnthropicApiKey(): Promise<string | null> {
   const [row] = await db

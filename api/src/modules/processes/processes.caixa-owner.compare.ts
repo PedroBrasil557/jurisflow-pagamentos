@@ -67,3 +67,63 @@ export function compareCaixaOwner(
 
   return { result: 'review', matchedBy: 'none' }
 }
+
+export const CAIXA_OWNER_TITULAR = 'titular_contrato_caixa'
+
+export type CaixaOwnerOutcome = {
+  // Estado operacional resultante (process.caixaAnalysisStatus).
+  analysisStatus: 'done' | 'review'
+  // Se deve gravar ownerType = titular (so quando ha CERTEZA + flag ligada).
+  apply: boolean
+  newOwnerType?: typeof CAIXA_OWNER_TITULAR
+  historyEvent: 'CAIXA_OWNER_AUTO_SET' | 'CAIXA_OWNER_REVIEW_REQUIRED' | null
+}
+
+// Decide o desfecho a partir do resultado deterministico + estado atual do
+// processo + flag. PURA (sem I/O). Regras:
+// - 'review' => sempre revisar (nunca auto-aplica "nao titular").
+// - 'titular' ja aplicado => no-op.
+// - shadow (flag off) => mesmo com 'titular', so registra e manda revisar.
+// - human-lock => se um humano definiu outro ownerType, nao sobrescreve: revisar.
+// - caso contrario, com a flag ligada => auto-aplica titular.
+export function decideCaixaOwnerOutcome(input: {
+  result: CaixaOwnerResult['result']
+  currentOwnerType: string
+  ownerTypeSource: string
+  autoApplyEnabled: boolean
+}): CaixaOwnerOutcome {
+  if (input.result === 'review') {
+    return {
+      analysisStatus: 'review',
+      apply: false,
+      historyEvent: 'CAIXA_OWNER_REVIEW_REQUIRED',
+    }
+  }
+
+  if (input.currentOwnerType === CAIXA_OWNER_TITULAR) {
+    return { analysisStatus: 'done', apply: false, historyEvent: null }
+  }
+
+  if (!input.autoApplyEnabled) {
+    return {
+      analysisStatus: 'review',
+      apply: false,
+      historyEvent: 'CAIXA_OWNER_REVIEW_REQUIRED',
+    }
+  }
+
+  if (input.ownerTypeSource === 'human' && input.currentOwnerType !== '') {
+    return {
+      analysisStatus: 'review',
+      apply: false,
+      historyEvent: 'CAIXA_OWNER_REVIEW_REQUIRED',
+    }
+  }
+
+  return {
+    analysisStatus: 'done',
+    apply: true,
+    newOwnerType: CAIXA_OWNER_TITULAR,
+    historyEvent: 'CAIXA_OWNER_AUTO_SET',
+  }
+}

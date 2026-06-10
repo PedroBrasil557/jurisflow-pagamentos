@@ -3,6 +3,7 @@ import { normalizeName } from '../../shared/utils/name'
 import {
   type CaixaBuyer,
   compareCaixaOwner,
+  decideCaixaOwnerOutcome,
 } from './processes.caixa-owner.compare'
 
 // CPFs validos (checksum) e distintos para os testes.
@@ -82,5 +83,71 @@ describe('compareCaixaOwner', () => {
       titular,
     )
     expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
+  })
+})
+
+describe('decideCaixaOwnerOutcome', () => {
+  test('review => sempre revisar, nunca aplica', () => {
+    const o = decideCaixaOwnerOutcome({
+      result: 'review',
+      currentOwnerType: '',
+      ownerTypeSource: 'human',
+      autoApplyEnabled: true,
+    })
+    expect(o.apply).toBe(false)
+    expect(o.analysisStatus).toBe('review')
+    expect(o.historyEvent).toBe('CAIXA_OWNER_REVIEW_REQUIRED')
+  })
+
+  test('titular ja aplicado => no-op (done, sem evento)', () => {
+    const o = decideCaixaOwnerOutcome({
+      result: 'titular',
+      currentOwnerType: 'titular_contrato_caixa',
+      ownerTypeSource: 'system',
+      autoApplyEnabled: true,
+    })
+    expect(o).toEqual({
+      analysisStatus: 'done',
+      apply: false,
+      historyEvent: null,
+    })
+  })
+
+  test('shadow (flag off): titular detectado => revisar, sem aplicar', () => {
+    const o = decideCaixaOwnerOutcome({
+      result: 'titular',
+      currentOwnerType: '',
+      ownerTypeSource: 'human',
+      autoApplyEnabled: false,
+    })
+    expect(o.apply).toBe(false)
+    expect(o.analysisStatus).toBe('review')
+  })
+
+  test('flag on + ownerType vazio => auto-aplica titular', () => {
+    const o = decideCaixaOwnerOutcome({
+      result: 'titular',
+      currentOwnerType: '',
+      ownerTypeSource: 'human',
+      autoApplyEnabled: true,
+    })
+    expect(o).toEqual({
+      analysisStatus: 'done',
+      apply: true,
+      newOwnerType: 'titular_contrato_caixa',
+      historyEvent: 'CAIXA_OWNER_AUTO_SET',
+    })
+  })
+
+  test('human-lock: humano definiu "nao titular" => revisar, nao sobrescreve', () => {
+    const o = decideCaixaOwnerOutcome({
+      result: 'titular',
+      currentOwnerType: 'nao_titular_contrato_caixa',
+      ownerTypeSource: 'human',
+      autoApplyEnabled: true,
+    })
+    expect(o.apply).toBe(false)
+    expect(o.analysisStatus).toBe('review')
+    expect(o.historyEvent).toBe('CAIXA_OWNER_REVIEW_REQUIRED')
   })
 })

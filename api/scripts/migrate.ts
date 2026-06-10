@@ -31,4 +31,15 @@ if (orphaned.rowCount && orphaned.rowCount > 0) {
   console.log(`Reset ${orphaned.rowCount} desmembramento(s) orfao(s).`)
 }
 
+// Mesma logica para a analise do contrato Caixa: 'processing' restante no boot
+// foi interrompido por restart/crash. Sem isso o processo ficaria travado.
+const orphanedCaixa = await pool.query(
+  `UPDATE process
+   SET caixa_analysis_status = 'error'
+   WHERE caixa_analysis_status = 'processing'`,
+)
+if (orphanedCaixa.rowCount && orphanedCaixa.rowCount > 0) {
+  console.log(`Reset ${orphanedCaixa.rowCount} analise(s) Caixa orfa(s).`)
+}
+
 await pool.end()

@@ -37,6 +37,7 @@ import {
   startScanIngestion,
   uploadBatchFiles,
 } from './processes.batch.service'
+import { startCaixaOwnerAnalysis } from './processes.caixa-owner.service'
 import {
   deleteChecklistFile,
   downloadAllChecklistFiles,
@@ -819,6 +820,25 @@ export const processRoutes = new Hono<AppBindings>()
         await getProcessById(processId, currentUser.id, perms)
         const analysis = await getAiAnalysis(processId, id)
         return c.json({ analysis }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // Reanalisa o contrato Caixa sob demanda (dispara o job em background).
+  .post(
+    '/:processId/caixa-owner/reanalyze',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { processId } = c.req.valid('param')
+        await getProcessById(processId, currentUser.id, perms)
+        const result = await startCaixaOwnerAnalysis({
+          processId,
+          triggeredByUserId: currentUser.id,
+        })
+        return c.json(result, 202)
       } catch (error) {
         return handleServiceError(c, error)
       }
