@@ -14,21 +14,23 @@ export function ImportProcessAction() {
   const inputRef = useRef<HTMLInputElement>(null)
 
   async function handleFileSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    // Limpa para permitir re-selecionar o mesmo arquivo depois.
+    const files = Array.from(event.target.files ?? [])
+    // Limpa para permitir re-selecionar os mesmos arquivos depois.
     event.target.value = ''
-    if (!file) {
+    if (files.length === 0) {
       return
     }
-    if (file.type.toLowerCase() !== 'application/pdf') {
-      toast.error('Envie um arquivo PDF.')
+    if (files.some((file) => file.type.toLowerCase() !== 'application/pdf')) {
+      toast.error('Envie apenas arquivos PDF.')
       return
     }
 
     try {
-      const result = await importMutation.mutateAsync(file)
+      const result = await importMutation.mutateAsync(files)
       toast.success(
-        'Documento enviado. O cadastro esta sendo processado por IA.',
+        files.length === 1
+          ? 'Documento enviado. O cadastro esta sendo processado por IA.'
+          : `${files.length} documentos enviados. O cadastro esta sendo processado por IA.`,
       )
       importMutation.reset()
       void navigate({
@@ -39,7 +41,7 @@ export function ImportProcessAction() {
       toast.error(
         error instanceof Error
           ? error.message
-          : 'Nao foi possivel importar o documento.',
+          : 'Nao foi possivel importar os documentos.',
       )
     }
   }
@@ -49,6 +51,7 @@ export function ImportProcessAction() {
       <input
         accept="application/pdf"
         className="hidden"
+        multiple
         onChange={handleFileSelected}
         ref={inputRef}
         type="file"

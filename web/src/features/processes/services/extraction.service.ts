@@ -46,14 +46,16 @@ export type ImportDocumentResponse = InferResponseType<
   202
 >
 
-// Importar documentos: envia UM PDF, cria o rascunho e dispara a ingestao
-// durável/assincrona (mesma do scan). Retorna na hora { processId, batchFileId };
-// o front navega para o editor e acompanha via splitStatus (polling).
+// Importar documentos: envia 1+ PDFs, cria o rascunho e dispara a ingestao
+// durável/assincrona SEQUENCIAL (mesma do scan). Retorna na hora { processId,
+// batchFileIds }; o front navega para o editor e acompanha via splitStatus.
 export async function importDocumentRequest(
-  file: File,
+  files: File[],
 ): Promise<ImportDocumentResponse> {
   const formData = new FormData()
-  formData.append('file', file)
+  for (const file of files) {
+    formData.append('file', file)
+  }
 
   const response = await fetch(importClientRoute.$url(), {
     method: 'POST',

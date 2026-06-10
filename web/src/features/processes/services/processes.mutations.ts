@@ -51,7 +51,7 @@ export function useImportDocument() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (file: File) => importDocumentRequest(file),
+    mutationFn: (files: File[]) => importDocumentRequest(files),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     },

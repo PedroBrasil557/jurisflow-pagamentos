@@ -630,12 +630,13 @@ async function runScanIngestion(input: {
 
 // Armazena o scan no lote (como fonte) e dispara a ingestao digitalizacao em background.
 // Gated por 'create' na rota. Retorna o id do arquivo p/ o front acompanhar.
-export async function startScanIngestion(input: {
+// Guarda UM arquivo no lote (S3 + processBatchFile 'processing'), pronto para a
+// ingestao. Nao dispara o trabalho — quem chama decide (single ou multi).
+async function storeIngestionFile(input: {
   processId: string
   file: File
   actor: ProcessActor
-  perms: ResolvedPermissions
-}) {
+}): Promise<typeof processBatchFile.$inferSelect> {
   assertBatchFile(input.file)
 
   if (input.file.type.toLowerCase() !== 'application/pdf') {
@@ -668,7 +669,6 @@ export async function startScanIngestion(input: {
     )
   }
 
-  let fileRecord: typeof processBatchFile.$inferSelect
   try {
     const [inserted] = await db
       .insert(processBatchFile)
@@ -685,7 +685,7 @@ export async function startScanIngestion(input: {
         splitUpdatedAt: new Date(),
       })
       .returning()
-    fileRecord = inserted
+    return inserted
   } catch (error) {
     try {
       await deleteStorageObject({ bucketName, objectKey })
@@ -694,6 +694,19 @@ export async function startScanIngestion(input: {
     }
     throw error
   }
+}
+
+export async function startScanIngestion(input: {
+  processId: string
+  file: File
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}) {
+  const fileRecord = await storeIngestionFile({
+    processId: input.processId,
+    file: input.file,
+    actor: input.actor,
+  })
 
   // Dispara sem await: o trabalho continua apos a resposta HTTP.
   void runScanIngestion({
@@ -704,6 +717,59 @@ export async function startScanIngestion(input: {
   })
 
   return { batchFileId: fileRecord.id }
+}
+
+// Ingestao de MULTIPLOS documentos no mesmo processo: guarda todos no lote e
+// processa SEQUENCIALMENTE (um por vez) em background. Sequencial de proposito:
+// evita corrida no preenchimento dos campos do rascunho e nas transicoes de
+// status quando varios arquivos chegam juntos (G1 da revisao de arquitetura).
+export async function startMultiDocumentIngestion(input: {
+  processId: string
+  files: File[]
+  actor: ProcessActor
+  perms: ResolvedPermissions
+}): Promise<{ batchFileIds: string[] }> {
+  // Valida TODOS antes de guardar qualquer um (sem upload parcial).
+  for (const file of input.files) {
+    assertBatchFile(file)
+    if (file.type.toLowerCase() !== 'application/pdf') {
+      throw new ProcessServiceError(
+        415,
+        'Apenas arquivos PDF podem ser processados.',
+      )
+    }
+  }
+
+  const fileRecords: Array<typeof processBatchFile.$inferSelect> = []
+  for (const file of input.files) {
+    fileRecords.push(
+      await storeIngestionFile({
+        processId: input.processId,
+        file,
+        actor: input.actor,
+      }),
+    )
+  }
+
+  // Coordenador SEQUENCIAL (detached): um arquivo por vez. runScanIngestion nunca
+  // lanca (grava o desfecho em splitStatus), entao a fila nao para por uma falha.
+  void (async () => {
+    for (const fileRecord of fileRecords) {
+      await runScanIngestion({
+        processId: input.processId,
+        fileRecord,
+        actor: input.actor,
+        perms: input.perms,
+      })
+    }
+  })().catch((error) => {
+    console.error('Falha no coordenador de ingestao multi-arquivo', {
+      processId: input.processId,
+      error: String(error),
+    })
+  })
+
+  return { batchFileIds: fileRecords.map((record) => record.id) }
 }
 
 export async function getBatchFileDownload(input: {

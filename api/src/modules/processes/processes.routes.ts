@@ -36,6 +36,7 @@ import {
   listBatchFiles,
   maxBatchFileSizeInBytes,
   startBatchFileSplit,
+  startMultiDocumentIngestion,
   startScanIngestion,
   uploadBatchFiles,
 } from './processes.batch.service'
@@ -151,6 +152,38 @@ async function createProcessFromDocument(
   }
 }
 
+// Versao multi-arquivo (importar): cria o rascunho e dispara a ingestao
+// SEQUENCIAL de todos os PDFs. Rollback do rascunho se a ingestao nao iniciar.
+async function createProcessFromDocuments(
+  c: Context<AppBindings>,
+  files: File[],
+) {
+  const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+  assertCan(perms, 'create')
+  assertCan(perms, 'uploadChecklist')
+
+  logEvent('import.start', {
+    requestId: c.get('requestId'),
+    userId: currentUser.id,
+    fileCount: files.length,
+    totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+  })
+
+  const draft = await createDraftProcess(currentUser, perms)
+  try {
+    const { batchFileIds } = await startMultiDocumentIngestion({
+      processId: draft.id,
+      files,
+      actor: currentUser,
+      perms,
+    })
+    return c.json({ processId: draft.id, batchFileIds }, 202)
+  } catch (error) {
+    await deleteProcess(draft.id)
+    throw error
+  }
+}
+
 export const processRoutes = new Hono<AppBindings>()
   .use('*', requireAuth())
   .get('/', queryValidator(listProcessesQuerySchema), async (c) => {
@@ -234,14 +267,22 @@ export const processRoutes = new Hono<AppBindings>()
   // acompanha o progresso via splitStatus (polling).
   .post('/import', uploadBodyLimit(maxBatchFileSizeInBytes), async (c) => {
     const formData = await c.req.raw.formData()
-    const file = formData.get('file')
+    const files: File[] = []
+    for (const entry of formData.getAll('file')) {
+      if (entry instanceof File) {
+        files.push(entry)
+      }
+    }
 
-    if (!(file instanceof File)) {
-      return c.json({ message: 'Informe o arquivo PDF para importar.' }, 400)
+    if (files.length === 0) {
+      return c.json(
+        { message: 'Informe ao menos um arquivo PDF para importar.' },
+        400,
+      )
     }
 
     try {
-      return await createProcessFromDocument(c, file, 'import')
+      return await createProcessFromDocuments(c, files)
     } catch (error) {
       return handleServiceError(c, error)
     }
