@@ -12,7 +12,10 @@ export function requestLogger() {
     const duration = Math.round(performance.now() - start)
     const status = c.res.status
     const userId = c.get('user')?.id ?? '-'
+    const requestId = c.get('requestId') ?? '-'
 
-    console.log(`${method} ${path} ${status} ${duration}ms user=${userId}`)
+    console.log(
+      `${method} ${path} ${status} ${duration}ms user=${userId} req=${requestId}`,
+    )
   }
 }

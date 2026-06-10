@@ -253,6 +253,7 @@ export const processRoutes = new Hono<AppBindings>()
           documents: documents.data,
           actor: currentUser,
           perms,
+          requestId: c.get('requestId'),
         })
 
         return c.json(result, 200)

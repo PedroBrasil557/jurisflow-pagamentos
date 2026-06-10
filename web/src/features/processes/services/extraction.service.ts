@@ -1,6 +1,7 @@
 import type { InferResponseType } from 'hono/client'
 import { apiClient } from '@/shared/services/api-client'
 import { getErrorMessage } from '@/shared/services/api-error'
+import { reportClientError } from '@/shared/services/telemetry'
 
 const extractDocumentsClientRoute = apiClient.api.processes['extract-documents']
 const importBundleClientRoute =
@@ -89,19 +90,41 @@ export async function importBundleRequest(input: {
     param: { processId: input.processId },
   })
 
-  const response = await fetch(url, {
-    method: 'POST',
-    body: formData,
-    credentials: 'include',
-  })
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+    })
+  } catch (error) {
+    // Falha de REDE: a requisicao nem completou (ex.: "Failed to fetch"/
+    // ERR_FAILED — conexao caiu, antivirus/proxy/extensao bloqueou). Como nunca
+    // chega ao endpoint, reporta via telemetria com contexto para diagnostico.
+    reportClientError('import_bundle_network_error', {
+      processId: input.processId,
+      fileName: input.file.name,
+      fileSizeBytes: input.file.size,
+      errorName: error instanceof Error ? error.name : 'unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    })
+    throw new Error(
+      'Falha de rede ao enviar o documento (a conexao caiu ou foi bloqueada por antivirus/proxy/extensao). Verifique a rede e tente novamente.',
+    )
+  }
 
   if (!response.ok) {
-    throw new Error(
-      await getErrorMessage(
-        response,
-        'Nao foi possivel anexar os documentos ao checklist.',
-      ),
+    const requestId = response.headers.get('x-request-id') ?? undefined
+    reportClientError('import_bundle_http_error', {
+      processId: input.processId,
+      status: response.status,
+      requestId,
+    })
+    const base = await getErrorMessage(
+      response,
+      'Nao foi possivel anexar os documentos ao checklist.',
     )
+    throw new Error(requestId ? `${base} (cod: ${requestId})` : base)
   }
 
   return (await response.json()) as InferResponseType<

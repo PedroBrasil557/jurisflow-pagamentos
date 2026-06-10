@@ -19,8 +19,10 @@ import {
   settingsClientRoutes,
 } from '../modules/settings/settings.routes'
 import { systemRoutes } from '../modules/system/system.routes'
+import { telemetryRoutes } from '../modules/telemetry/telemetry.routes'
 import { createCorsMiddleware } from '../shared/middleware/cors'
 import { requestLogger } from '../shared/middleware/logger'
+import { requestId } from '../shared/middleware/request-id'
 import { sessionMiddleware } from '../shared/middleware/session'
 import type { AppBindings } from '../shared/types/app'
 
@@ -31,6 +33,7 @@ type CreateAppRouterOptions = {
 export function createAppRouter(options: CreateAppRouterOptions) {
   const appRouter = new Hono<AppBindings>()
 
+  appRouter.use('/api/*', requestId())
   appRouter.use('/api/*', createCorsMiddleware(options.allowedOrigins))
   appRouter.use('/api/*', sessionMiddleware)
   appRouter.use('/api/*', requestLogger())
@@ -51,6 +54,7 @@ export function createAppRouter(options: CreateAppRouterOptions) {
     .route('/api/dashboard', dashboardRoutes)
     .route('/api/processes', processRoutes)
     .route('/api/internal/caixa-quitacao', caixaQuitacaoInternalRoutes)
+    .route('/api/telemetry', telemetryRoutes)
     .route('/api/system', systemRoutes)
     .get('/', (c) => {
       return c.json(
