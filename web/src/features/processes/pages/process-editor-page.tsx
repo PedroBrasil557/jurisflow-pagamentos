@@ -1,4 +1,8 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { Link, useBlocker, useNavigate } from '@tanstack/react-router'
 import { ArrowLeft, Loader2, Sparkles, User } from 'lucide-react'
 import type { ChangeEvent } from 'react'
@@ -50,7 +54,11 @@ import {
   useCreateProcess,
   useUpdateProcess,
 } from '../services/processes.mutations'
-import { processDetailOptions } from '../services/processes.queries'
+import {
+  processBatchFilesOptions,
+  processDetailOptions,
+  processKeys,
+} from '../services/processes.queries'
 import {
   generateProcessPdfRequest,
   getProcessPdfModelsRequest,
@@ -90,6 +98,21 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
     ...processDetailOptions(processId ?? ''),
     enabled: mode === 'edit' && !!processId,
   })
+  // Ingestao de documentos em andamento (importar/escanear): enquanto houver um
+  // arquivo do lote em 'processing', o form fica read-only e mostramos o
+  // progresso. Ao concluir, recarregamos o processo (campos auto-preenchidos) e
+  // o checklist (documentos anexados). A query ja faz polling enquanto processa.
+  const batchQ = useQuery({
+    ...processBatchFilesOptions(processId ?? ''),
+    enabled: mode === 'edit' && !!processId,
+  })
+  const batchFiles = batchQ.data?.files ?? []
+  const isIngesting = batchFiles.some(
+    (file) => file.splitStatus === 'processing',
+  )
+  const ingestErrorFile = batchFiles.find(
+    (file) => file.splitStatus === 'error',
+  )
 
   const allHousingComplexes = useMemo(
     () => hcQ.data?.pages.flatMap((p) => p.items) ?? [],
@@ -141,6 +164,25 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   useEffect(() => {
     reset(initialValues)
   }, [initialValues, reset])
+
+  const queryClient = useQueryClient()
+  // Ao concluir a ingestao (processing -> done/error), recarrega o processo
+  // (campos preenchidos) e o checklist (documentos anexados).
+  const wasIngestingRef = useRef(false)
+  useEffect(() => {
+    if (
+      wasIngestingRef.current &&
+      !isIngesting &&
+      mode === 'edit' &&
+      processId
+    ) {
+      queryClient.invalidateQueries({ queryKey: processKeys.detail(processId) })
+      queryClient.invalidateQueries({
+        queryKey: processKeys.checklist(processId),
+      })
+    }
+    wasIngestingRef.current = isIngesting
+  }, [isIngesting, mode, processId, queryClient])
 
   const shouldBlock = isDirty && !isSubmitting && !successState
   useBlocker({
@@ -462,6 +504,29 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
         </div>
       ) : null}
 
+      {isIngesting ? (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-4 py-3 text-sm">
+          <Loader2 className="size-5 shrink-0 animate-spin text-blue-500" />
+          <div className="grid gap-0.5">
+            <span className="font-medium text-foreground">
+              Lendo e organizando seus documentos&hellip;
+            </span>
+            <span className="text-muted-foreground text-xs">
+              Os campos e o checklist serao preenchidos automaticamente. Aguarde
+              um instante.
+            </span>
+          </div>
+        </div>
+      ) : ingestErrorFile ? (
+        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+          Nao foi possivel ler os documentos automaticamente
+          {ingestErrorFile.splitMessage
+            ? `: ${ingestErrorFile.splitMessage}`
+            : '.'}{' '}
+          Voce pode preencher os campos e anexar os documentos manualmente.
+        </div>
+      ) : null}
+
       {mode === 'create' && !isReadOnly ? (
         <div className="mb-6 flex flex-col gap-3 rounded-lg border border-blue-500/30 bg-blue-500/5 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
@@ -493,7 +558,7 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
         noValidate
         onSubmit={handleSubmit(handleProcessSubmit)}
       >
-        <fieldset className="contents" disabled={isReadOnly}>
+        <fieldset className="contents" disabled={isReadOnly || isIngesting}>
           <ProcessFormSection title="Tipo de proprietario">
             <ProcessSelectField
               {...register('ownerType')}
@@ -991,13 +1056,13 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
             <div className="mx-auto flex max-w-5xl items-center justify-between">
               <button
                 className="text-sm text-muted-foreground hover:text-foreground"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isIngesting}
                 onClick={handleReset}
                 type="button"
               >
                 Restaurar campos
               </button>
-              <Button disabled={isSubmitting} type="submit">
+              <Button disabled={isSubmitting || isIngesting} type="submit">
                 {isSubmitting ? 'Salvando...' : submitLabel}
               </Button>
             </div>
