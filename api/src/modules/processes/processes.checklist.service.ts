@@ -926,9 +926,16 @@ export async function attachSystemChecklistFile(input: {
   })
 
   if (didUploadFile && isCaixaOwnerDocKey(input.documentTypeKey)) {
-    void startCaixaOwnerAnalysis({
+    // Fire-and-forget: nunca deixar a Promise rejeitar sem tratamento (o claim
+    // faz I/O no banco) — uma rejeicao nao capturada vira unhandledRejection.
+    startCaixaOwnerAnalysis({
       processId: input.processId,
       triggeredByUserId: null,
+    }).catch((error) => {
+      console.error(
+        '[caixa-owner] falha ao disparar analise (anexo de sistema):',
+        error,
+      )
     })
   }
 
@@ -1235,9 +1242,13 @@ export async function submitProcessChecklistItem(input: {
   // Gatilho automatico: ao anexar/substituir um termo da Caixa, dispara a
   // analise do titular do contrato em background (nao bloqueia a resposta).
   if (didUploadFile && isCaixaOwnerDocKey(checklistItem.documentType.key)) {
-    void startCaixaOwnerAnalysis({
+    // Fire-and-forget protegido: rejeicao do claim/dispatch nao pode escapar
+    // como unhandledRejection (nao ha handler global).
+    startCaixaOwnerAnalysis({
       processId: input.processId,
       triggeredByUserId: input.actor.id,
+    }).catch((error) => {
+      console.error('[caixa-owner] falha ao disparar analise:', error)
     })
   }
 

@@ -784,6 +784,10 @@ export async function updateProcess(
       ...mergedValues,
       ...normalizedWitnessValues,
       housingComplexId,
+      // Edicao manual do ownerType marca a fonte como 'human' — assim a analise
+      // automatica (caixa-owner) respeita o human-lock e nao sobrescreve a
+      // escolha do usuario numa reanalise posterior.
+      ...(changedFields.ownerType ? { ownerTypeSource: 'human' } : {}),
     })
     .where(eq(process.id, processId))
     .returning()
