@@ -52,14 +52,6 @@ import {
   uploadProcessChecklistFile,
 } from './processes.checklist.service'
 import {
-  extractDocumentsFromFiles,
-  MAX_FILE_SIZE_IN_BYTES,
-} from './processes.extraction.service'
-import {
-  importBundleDocumentsSchema,
-  importDocumentBundle,
-} from './processes.import.service'
-import {
   generateProcessPdf,
   listProcessPdfModels,
 } from './processes.pdf.service'
@@ -220,35 +212,6 @@ export const processRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
-  .post(
-    '/extract-documents',
-    uploadBodyLimit(MAX_FILE_SIZE_IN_BYTES),
-    async (c) => {
-      const formData = await c.req.raw.formData()
-      const files: File[] = []
-
-      for (const value of formData.getAll('files')) {
-        if (value instanceof File) {
-          files.push(value)
-        }
-      }
-
-      if (files.length === 0) {
-        return c.json({ message: 'Informe ao menos um documento.' }, 400)
-      }
-
-      try {
-        const { perms } = await getCurrentUserWithPermissions(c)
-        assertCan(perms, 'create')
-
-        const result = await extractDocumentsFromFiles(files)
-
-        return c.json(result, 200)
-      } catch (error) {
-        return handleServiceError(c, error)
-      }
-    },
-  )
   .post('/scan', uploadBodyLimit(maxBatchFileSizeInBytes), async (c) => {
     const formData = await c.req.raw.formData()
     const file = formData.get('file')
@@ -303,55 +266,6 @@ export const processRoutes = new Hono<AppBindings>()
           perms,
         })
         return c.json(result, 202)
-      } catch (error) {
-        return handleServiceError(c, error)
-      }
-    },
-  )
-  .post(
-    '/:processId/import-bundle',
-    uploadBodyLimit(MAX_FILE_SIZE_IN_BYTES),
-    paramsValidator(processIdParamsSchema),
-    async (c) => {
-      const formData = await c.req.raw.formData()
-      const file = formData.get('file')
-      const documentsRaw = formData.get('documents')
-
-      if (!(file instanceof File)) {
-        return c.json({ message: 'Informe o arquivo PDF.' }, 400)
-      }
-
-      if (typeof documentsRaw !== 'string') {
-        return c.json(
-          { message: 'Informe a classificacao dos documentos.' },
-          400,
-        )
-      }
-
-      let parsedDocuments: unknown
-      try {
-        parsedDocuments = JSON.parse(documentsRaw)
-      } catch {
-        return c.json({ message: 'Classificacao de documentos invalida.' }, 400)
-      }
-
-      const documents = importBundleDocumentsSchema.safeParse(parsedDocuments)
-      if (!documents.success) {
-        return c.json({ message: 'Classificacao de documentos invalida.' }, 400)
-      }
-
-      try {
-        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
-        const result = await importDocumentBundle({
-          processId: c.req.valid('param').processId,
-          file,
-          documents: documents.data,
-          actor: currentUser,
-          perms,
-          requestId: c.get('requestId'),
-        })
-
-        return c.json(result, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }

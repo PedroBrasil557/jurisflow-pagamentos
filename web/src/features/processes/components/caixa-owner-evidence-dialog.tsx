@@ -6,6 +6,7 @@ import { caixaAnalysisDetailOptions } from '../services/caixa-owner.queries'
 
 type ByDoc = {
   documentKey?: string
+  fileId?: string
   titular?: string | null
   cpfTitular?: string | null
   conjuge?: string | null
@@ -91,10 +92,10 @@ export function CaixaOwnerEvidenceDialog({
             </p>
           ) : (
             <div className="grid gap-3">
-              {byDoc.map((doc, docIndex) => (
+              {byDoc.map((doc) => (
                 <div
                   className="rounded-lg border border-border p-3"
-                  key={`${doc.documentKey}-${docIndex}`}
+                  key={`${doc.documentKey}-${doc.fileId}`}
                 >
                   <p className="font-medium">
                     {docLabels[doc.documentKey ?? ''] ?? doc.documentKey}
