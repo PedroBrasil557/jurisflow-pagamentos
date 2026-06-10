@@ -995,7 +995,7 @@ function CameraScreen({
                 className="size-full object-cover"
                 src={lastThumb}
               />
-              <span className="absolute -top-1.5 -right-1.5 flex min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-white">
+              <span className="absolute top-0.5 right-0.5 flex min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-white shadow ring-1 ring-white/60">
                 {pagesCount}
               </span>
             </span>
