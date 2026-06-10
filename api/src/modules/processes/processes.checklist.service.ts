@@ -68,12 +68,14 @@ const checklistUploadAllowedStatuses = [
   'DOCUMENTACAO_PRONTA',
 ] as const satisfies readonly ProcessStatus[]
 
+function isChecklistUploadAllowed(currentStatus: ProcessStatus): boolean {
+  return checklistUploadAllowedStatuses.includes(
+    currentStatus as (typeof checklistUploadAllowedStatuses)[number],
+  )
+}
+
 export function assertChecklistUploadAllowed(currentStatus: ProcessStatus) {
-  if (
-    checklistUploadAllowedStatuses.includes(
-      currentStatus as (typeof checklistUploadAllowedStatuses)[number],
-    )
-  ) {
+  if (isChecklistUploadAllowed(currentStatus)) {
     return
   }
 
@@ -911,6 +913,17 @@ export async function attachSystemChecklistFile(input: {
   }
 
   const checklistItem = await getChecklistItemOrThrow(input.processId, doc.id)
+
+  // Contexto de sistema: se o processo nao esta numa etapa que aceita anexos
+  // (EM_PROCESSO/FINALIZADO/CANCELADO), PULA silenciosamente — nao lanca (evita
+  // retry infinito do worker) e nao dispara a analise do titular.
+  if (!isChecklistUploadAllowed(checklistItem.processStatus)) {
+    console.warn(
+      `[caixa-quitacao] anexo de sistema ignorado: processo ${input.processId} em ${checklistItem.processStatus} nao aceita anexos`,
+    )
+    return { didUploadFile: false }
+  }
+
   // Apenas o id e usado por attachChecklistFile (uploadedByUserId/actorUserId).
   const actor = { id: 'jurisflow-bot' } as unknown as ProcessActor
 
