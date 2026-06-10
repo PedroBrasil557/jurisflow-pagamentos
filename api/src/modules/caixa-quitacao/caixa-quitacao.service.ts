@@ -1,7 +1,10 @@
 import { eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
+import { attachSystemChecklistFile } from '../processes/processes.checklist.service'
 import { process } from '../processes/processes.schema'
+
+const QUITACAO_DOC_KEY = 'declaracao_quitacao'
 
 export type QuitacaoJob = { processId: string; cpf: string } | null
 
@@ -60,8 +63,35 @@ export async function recordQuitacaoResult(
     throw new ServiceError(404, 'Processo nao encontrado.')
   }
 
-  let nextStatus: string = input.result
-  if (input.result === 'erro' && proc.attempts < MAX_ATTEMPTS) {
+  let result: QuitacaoResultInput['result'] = input.result
+  let message = input.message
+
+  // Quitado + PDF: anexa a Declaracao de Quitacao no slot declaracao_quitacao
+  // (isso dispara a analise do titular do contrato). Se o anexo falhar, trata
+  // como erro para reprocessar (a consulta e idempotente).
+  if (input.result === 'quitado' && input.pdfBase64) {
+    try {
+      const bytes = Buffer.from(input.pdfBase64, 'base64')
+      const file = new File(
+        [bytes],
+        input.pdfFilename ?? 'Declaracao de Quitacao.pdf',
+        { type: 'application/pdf' },
+      )
+      await attachSystemChecklistFile({
+        processId: input.processId,
+        documentTypeKey: QUITACAO_DOC_KEY,
+        file,
+      })
+    } catch (error) {
+      result = 'erro'
+      message = `Quitado, mas falhou ao anexar a declaracao: ${
+        error instanceof Error ? error.message : 'erro'
+      }`
+    }
+  }
+
+  let nextStatus: string = result
+  if (result === 'erro' && proc.attempts < MAX_ATTEMPTS) {
     nextStatus = 'pending'
   }
 
@@ -69,7 +99,7 @@ export async function recordQuitacaoResult(
     .update(process)
     .set({
       caixaQuitacaoStatus: nextStatus,
-      caixaQuitacaoMessage: input.message.slice(0, 1000),
+      caixaQuitacaoMessage: message.slice(0, 1000),
       caixaQuitacaoCheckedAt: new Date(),
     })
     .where(eq(process.id, input.processId))

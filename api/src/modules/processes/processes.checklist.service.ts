@@ -875,6 +875,66 @@ async function attachChecklistFile(input: {
   }
 }
 
+// Anexo em CONTEXTO DE SISTEMA (sem permissao de usuario): usado pelo worker de
+// consulta de quitacao para anexar o PDF baixado da Caixa ao slot do checklist.
+// Reusa o core attachChecklistFile (ator = usuario tecnico jurisflow-bot) e
+// dispara a mesma cadeia do anexo manual (analise do titular para termos Caixa).
+// NAO sincroniza status do processo aqui — isso ocorre na proxima interacao do
+// usuario com o checklist (anexar um doc obrigatorio raramente completa tudo).
+export async function attachSystemChecklistFile(input: {
+  processId: string
+  documentTypeKey: string
+  file: File
+}): Promise<{ didUploadFile: boolean }> {
+  await ensureProcessChecklistItems(input.processId)
+
+  const [doc] = await db
+    .select({ id: processDocument.id })
+    .from(processDocument)
+    .innerJoin(
+      processDocumentType,
+      eq(processDocument.documentTypeId, processDocumentType.id),
+    )
+    .where(
+      and(
+        eq(processDocument.processId, input.processId),
+        eq(processDocumentType.key, input.documentTypeKey),
+      ),
+    )
+    .limit(1)
+
+  if (!doc) {
+    throw new ProcessServiceError(
+      404,
+      'Item do checklist nao encontrado para o documento.',
+    )
+  }
+
+  const checklistItem = await getChecklistItemOrThrow(input.processId, doc.id)
+  // Apenas o id e usado por attachChecklistFile (uploadedByUserId/actorUserId).
+  const actor = { id: 'jurisflow-bot' } as unknown as ProcessActor
+
+  let didUploadFile = false
+  await db.transaction(async (tx) => {
+    const result = await attachChecklistFile({
+      checklistItem,
+      file: input.file,
+      actor,
+      executor: tx,
+    })
+    didUploadFile = result.didUploadFile
+  })
+
+  if (didUploadFile && isCaixaOwnerDocKey(input.documentTypeKey)) {
+    void startCaixaOwnerAnalysis({
+      processId: input.processId,
+      triggeredByUserId: null,
+    })
+  }
+
+  return { didUploadFile }
+}
+
 export async function syncProcessStatusAfterChecklistChange(input: {
   actor: ProcessActor
   checklist: Awaited<ReturnType<typeof getProcessChecklist>>
