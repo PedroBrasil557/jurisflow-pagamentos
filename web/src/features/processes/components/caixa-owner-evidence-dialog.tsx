@@ -4,14 +4,42 @@ import { AppDialog } from '@/shared/components/app-dialog'
 import { StatusBadge } from '@/shared/components/status-badge'
 import { caixaAnalysisDetailOptions } from '../services/caixa-owner.queries'
 
-type Comprador = { nome?: string; cpf?: string | null; trechoFonte?: string }
-type ByDoc = { documentKey?: string; compradores?: Comprador[] }
+type ByDoc = {
+  documentKey?: string
+  titular?: string | null
+  cpfTitular?: string | null
+  conjuge?: string | null
+  cpfConjuge?: string | null
+  trechoFonte?: string | null
+}
 type DecisionShape = { result?: string; matchedBy?: string }
 type OutputShape = { byDoc?: ByDoc[] }
 
 const docLabels: Record<string, string> = {
   termo_entrega_recebimento_imovel: 'Termo de entrega/recebimento',
   declaracao_quitacao: 'Declaracao de quitacao',
+}
+
+function PersonRow({
+  label,
+  nome,
+  cpf,
+}: {
+  label: string
+  nome?: string | null
+  cpf?: string | null
+}) {
+  return (
+    <div className="grid grid-cols-[5rem_1fr] gap-2">
+      <span className="text-muted-foreground">{label}:</span>
+      <span>
+        {nome || '—'}
+        {cpf ? (
+          <span className="text-muted-foreground"> · CPF {cpf}</span>
+        ) : null}
+      </span>
+    </div>
+  )
 }
 
 type CaixaOwnerEvidenceDialogProps = {
@@ -71,30 +99,23 @@ export function CaixaOwnerEvidenceDialog({
                   <p className="font-medium">
                     {docLabels[doc.documentKey ?? ''] ?? doc.documentKey}
                   </p>
-                  {(doc.compradores ?? []).length === 0 ? (
-                    <p className="mt-1 text-muted-foreground">
-                      Nenhum comprador lido neste termo.
+                  <div className="mt-2 grid gap-1">
+                    <PersonRow
+                      cpf={doc.cpfTitular}
+                      label="Titular"
+                      nome={doc.titular}
+                    />
+                    <PersonRow
+                      cpf={doc.cpfConjuge}
+                      label="Conjuge"
+                      nome={doc.conjuge}
+                    />
+                  </div>
+                  {doc.trechoFonte ? (
+                    <p className="mt-2 text-muted-foreground text-xs italic">
+                      "{doc.trechoFonte}"
                     </p>
-                  ) : (
-                    <ul className="mt-2 grid gap-2">
-                      {(doc.compradores ?? []).map((comprador, buyerIndex) => (
-                        <li
-                          className="grid gap-0.5"
-                          key={`${comprador.nome}-${buyerIndex}`}
-                        >
-                          <span className="font-medium">{comprador.nome}</span>
-                          <span className="text-muted-foreground">
-                            CPF: {comprador.cpf ?? '—'}
-                          </span>
-                          {comprador.trechoFonte ? (
-                            <span className="text-xs text-muted-foreground italic">
-                              "{comprador.trechoFonte}"
-                            </span>
-                          ) : null}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  ) : null}
                 </div>
               ))}
             </div>

@@ -1,70 +1,73 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { ServiceError } from '../../shared/errors/service-error'
-import type { CaixaBuyer } from './processes.caixa-owner.compare'
 
 // O modelo SO extrai (nao julga, nao compara). A decisao e 100% deterministica
 // em codigo (compareCaixaOwner). NAO passamos temperature (removido no Opus 4.x
 // -> HTTP 400) nem strict (causa timeout de gramatica), seguindo a extracao.
 const SYSTEM = `Voce extrai dados de um termo da Caixa Economica Federal (termo de entrega/recebimento do imovel pela instituicao bancaria, ou declaracao de quitacao).
 
-Sua UNICA tarefa e localizar o(s) COMPRADOR(es)/beneficiario(s) do imovel e registrar o nome e o CPF EXATAMENTE como aparecem no documento.
+Sua UNICA tarefa e identificar, no documento, o TITULAR do contrato (comprador/beneficiario principal do imovel) e, se houver, o seu CONJUGE (co-comprador/companheiro(a)), e registrar nome e CPF de cada um EXATAMENTE como aparecem.
 
 Regras:
 1. Registre apenas o que estiver LITERALMENTE escrito no documento. Nunca invente nem deduza dados ausentes.
-2. Se o CPF do comprador NAO aparecer no documento, use null no campo cpf.
-3. Pode haver mais de um comprador (ex.: casal) — registre todos.
-4. Nao classifique, nao decida e nao opine: apenas extraia nome e CPF.
-5. Em trechoFonte, copie um pedaco curto do texto onde voce leu o nome/CPF.`
-
-const buyerSchema = z.object({
-  nome: z.string().trim().min(1),
-  cpf: z.string().trim().nullable().optional(),
-  trechoFonte: z.string().trim().optional(),
-})
+2. Se algum campo (titular, cpf_titular, conjuge, cpf_conjuge) NAO aparecer no documento, use null.
+3. titular = a pessoa principal do contrato. conjuge = o(a) companheiro(a) co-titular, quando houver.
+4. Nao classifique, nao decida e nao opine: apenas extraia os nomes e CPFs.
+5. Em trecho_fonte, copie um pedaco curto do texto onde voce leu os dados.`
 
 const extractionSchema = z.object({
-  compradores: z.array(buyerSchema),
+  titular: z.string().trim().nullable().optional(),
+  cpf_titular: z.string().trim().nullable().optional(),
+  conjuge: z.string().trim().nullable().optional(),
+  cpf_conjuge: z.string().trim().nullable().optional(),
+  trecho_fonte: z.string().trim().nullable().optional(),
 })
 
+const nullableString = {
+  type: ['string', 'null'],
+} as const
+
 const extractionTool = {
-  name: 'registrar_compradores',
+  name: 'registrar_titular_contrato',
   description:
-    'Registra o(s) comprador(es)/beneficiario(s) do imovel extraido(s) do termo da Caixa.',
+    'Registra o titular e o conjuge (co-titular) extraidos do termo da Caixa.',
   input_schema: {
     type: 'object',
     properties: {
-      compradores: {
-        type: 'array',
-        description: 'Compradores/beneficiarios encontrados no termo.',
-        items: {
-          type: 'object',
-          properties: {
-            nome: {
-              type: 'string',
-              description:
-                'Nome completo do comprador, como escrito no documento.',
-            },
-            cpf: {
-              type: ['string', 'null'],
-              description:
-                'CPF do comprador (digitos ou formatado), ou null se ausente.',
-            },
-            trechoFonte: {
-              type: 'string',
-              description: 'Trecho curto do documento onde o nome/CPF aparece.',
-            },
-          },
-          required: ['nome'],
-        },
+      titular: {
+        ...nullableString,
+        description:
+          'Nome completo do titular (comprador principal), como escrito, ou null.',
+      },
+      cpf_titular: {
+        ...nullableString,
+        description: 'CPF do titular (digitos ou formatado), ou null.',
+      },
+      conjuge: {
+        ...nullableString,
+        description:
+          'Nome completo do conjuge/co-titular, como escrito, ou null se nao houver.',
+      },
+      cpf_conjuge: {
+        ...nullableString,
+        description: 'CPF do conjuge (digitos ou formatado), ou null.',
+      },
+      trecho_fonte: {
+        ...nullableString,
+        description: 'Trecho curto do documento onde os dados aparecem.',
       },
     },
-    required: ['compradores'],
+    required: ['titular', 'cpf_titular', 'conjuge', 'cpf_conjuge'],
   },
 } satisfies Anthropic.Tool
 
 export type CaixaOwnerExtraction = {
-  compradores: CaixaBuyer[]
+  titular: string | null
+  cpfTitular: string | null
+  conjuge: string | null
+  cpfConjuge: string | null
+  trechoFonte: string | null
   model: string
   usage: { inputTokens: number; outputTokens: number } | null
 }
@@ -104,7 +107,7 @@ export async function extractCaixaOwner(input: {
     max_tokens: 2000,
     system: SYSTEM,
     tools: [extractionTool],
-    tool_choice: { type: 'tool', name: 'registrar_compradores' },
+    tool_choice: { type: 'tool', name: 'registrar_titular_contrato' },
     messages: [
       {
         role: 'user',
@@ -112,7 +115,7 @@ export async function extractCaixaOwner(input: {
           buildSourceBlock(input.base64, input.mediaType),
           {
             type: 'text',
-            text: 'Extraia o(s) comprador(es) deste termo da Caixa.',
+            text: 'Extraia o titular e o conjuge (se houver) deste termo da Caixa.',
           },
         ],
       },
@@ -132,11 +135,11 @@ export async function extractCaixaOwner(input: {
   }
 
   return {
-    compradores: parsed.data.compradores.map((b) => ({
-      nome: b.nome,
-      cpf: b.cpf ?? null,
-      trechoFonte: b.trechoFonte,
-    })),
+    titular: parsed.data.titular ?? null,
+    cpfTitular: parsed.data.cpf_titular ?? null,
+    conjuge: parsed.data.conjuge ?? null,
+    cpfConjuge: parsed.data.cpf_conjuge ?? null,
+    trechoFonte: parsed.data.trecho_fonte ?? null,
     model: message.model,
     usage: message.usage
       ? {

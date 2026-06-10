@@ -29,7 +29,7 @@ const CAIXA_DOC_KEYS = [
 
 // Usuario tecnico (seedado na migracao) — ator das acoes automaticas.
 const SYSTEM_ACTOR_ID = 'jurisflow-bot'
-const PROMPT_VERSION = 'caixa_owner@1'
+const PROMPT_VERSION = 'caixa_owner@2'
 
 export function isCaixaOwnerDocKey(key: string): boolean {
   return (CAIXA_DOC_KEYS as readonly string[]).includes(key)
@@ -101,7 +101,11 @@ type DocExtraction = {
   documentKey: string
   fileId: string
   revision: number
-  compradores: CaixaBuyer[]
+  titular: string | null
+  cpfTitular: string | null
+  conjuge: string | null
+  cpfConjuge: string | null
+  trechoFonte: string | null
 }
 
 // Executa a analise (detached). Le os termos do S3, extrai (IA), compara
@@ -188,9 +192,26 @@ async function runCaixaOwnerAnalysis(input: {
           documentKey: file.documentKey,
           fileId: file.fileId,
           revision: file.revision,
-          compradores: extraction.compradores,
+          titular: extraction.titular,
+          cpfTitular: extraction.cpfTitular,
+          conjuge: extraction.conjuge,
+          cpfConjuge: extraction.cpfConjuge,
+          trechoFonte: extraction.trechoFonte,
         })
-        allCompradores.push(...extraction.compradores)
+        // Para a comparacao deterministica: titular e conjuge entram como
+        // "compradores" (basta um bater por CPF/nome -> titular do contrato).
+        if (extraction.titular) {
+          allCompradores.push({
+            nome: extraction.titular,
+            cpf: extraction.cpfTitular,
+          })
+        }
+        if (extraction.conjuge) {
+          allCompradores.push({
+            nome: extraction.conjuge,
+            cpf: extraction.cpfConjuge,
+          })
+        }
       } catch (error) {
         errors.push(
           `${file.documentKey}: ${error instanceof Error ? error.message : 'falha'}`,
