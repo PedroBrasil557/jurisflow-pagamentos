@@ -7,6 +7,7 @@ import {
   requireRole,
 } from '../../shared/middleware/auth-guard'
 import { handleServiceError } from '../../shared/middleware/error-handler'
+import { logEvent } from '../../shared/observability/log'
 import type { AppBindings } from '../../shared/types/app'
 import {
   jsonValidator,
@@ -113,6 +114,43 @@ function uploadBodyLimit(maxFileBytes: number) {
   })
 }
 
+// Cria um processo a partir de UM documento (PDF): rascunho + ingestao DURÁVEL e
+// ASSÍNCRONA (a mesma do scan — salva no lote, extrai/classifica/anexa em
+// background, splitStatus + polling). Reusado por POST /scan (câmera) e POST
+// /import (upload de arquivo). Rollback do rascunho se a ingestao nao iniciar.
+async function createProcessFromDocument(
+  c: Context<AppBindings>,
+  file: File,
+  source: 'scan' | 'import',
+) {
+  const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+  assertCan(perms, 'create')
+  // A ingestao anexa documentos no checklist: exige a permissao ANTES de criar o
+  // rascunho, para nao deixar um processo que a ingestao nao completa.
+  assertCan(perms, 'uploadChecklist')
+
+  logEvent(`${source}.start`, {
+    requestId: c.get('requestId'),
+    userId: currentUser.id,
+    fileName: file.name,
+    fileSizeBytes: file.size,
+  })
+
+  const draft = await createDraftProcess(currentUser, perms)
+  try {
+    const { batchFileId } = await startScanIngestion({
+      processId: draft.id,
+      file,
+      actor: currentUser,
+      perms,
+    })
+    return c.json({ processId: draft.id, batchFileId }, 202)
+  } catch (error) {
+    await deleteProcess(draft.id)
+    throw error
+  }
+}
+
 export const processRoutes = new Hono<AppBindings>()
   .use('*', requireAuth())
   .get('/', queryValidator(listProcessesQuerySchema), async (c) => {
@@ -186,29 +224,24 @@ export const processRoutes = new Hono<AppBindings>()
     }
 
     try {
-      const { currentUser, perms } = await getCurrentUserWithPermissions(c)
-      assertCan(perms, 'create')
-      // A digitalizacao anexa documentos no checklist: exige a permissao ANTES de
-      // criar o rascunho, para nao deixar um processo que a ingestao nao completa.
-      assertCan(perms, 'uploadChecklist')
+      return await createProcessFromDocument(c, file, 'scan')
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  // Importar documentos: cria um processo a partir de um PDF enviado (upload) e
+  // dispara a MESMA ingestao durável do scan. O front navega para o detalhe e
+  // acompanha o progresso via splitStatus (polling).
+  .post('/import', uploadBodyLimit(maxBatchFileSizeInBytes), async (c) => {
+    const formData = await c.req.raw.formData()
+    const file = formData.get('file')
 
-      // Cria o rascunho primeiro; se a ingestao nao puder iniciar, faz rollback
-      // (apaga o rascunho + scan) para nao deixar processo orfao.
-      const draft = await createDraftProcess(currentUser, perms)
+    if (!(file instanceof File)) {
+      return c.json({ message: 'Informe o arquivo PDF para importar.' }, 400)
+    }
 
-      try {
-        const { batchFileId } = await startScanIngestion({
-          processId: draft.id,
-          file,
-          actor: currentUser,
-          perms,
-        })
-
-        return c.json({ processId: draft.id, batchFileId }, 202)
-      } catch (error) {
-        await deleteProcess(draft.id)
-        throw error
-      }
+    try {
+      return await createProcessFromDocument(c, file, 'import')
     } catch (error) {
       return handleServiceError(c, error)
     }
