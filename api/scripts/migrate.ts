@@ -42,4 +42,15 @@ if (orphanedCaixa.rowCount && orphanedCaixa.rowCount > 0) {
   console.log(`Reset ${orphanedCaixa.rowCount} analise(s) Caixa orfa(s).`)
 }
 
+// Consulta de quitacao (worker RPA): 'processing' restante no boot foi
+// interrompido -> volta para 'pending' para ser reprocessado pelo worker.
+const orphanedQuitacao = await pool.query(
+  `UPDATE process
+   SET caixa_quitacao_status = 'pending'
+   WHERE caixa_quitacao_status = 'processing'`,
+)
+if (orphanedQuitacao.rowCount && orphanedQuitacao.rowCount > 0) {
+  console.log(`Reset ${orphanedQuitacao.rowCount} consulta(s) de quitacao orfa(s).`)
+}
+
 await pool.end()

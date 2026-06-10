@@ -75,6 +75,8 @@ const envSchema = z.object({
     .default('true')
     .transform((value) => value === 'true'),
   GEOIP_API_URL: z.url().default('http://ip-api.com/json'),
+  // Token compartilhado para os endpoints internos consumidos pelo worker RPA.
+  INTERNAL_API_TOKEN: z.string().min(1).default('dev-internal-token-change-me'),
 })
 
 const parsedEnv = envSchema.parse({
@@ -96,6 +98,7 @@ const parsedEnv = envSchema.parse({
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
   GEOIP_ENABLED: process.env.GEOIP_ENABLED,
   GEOIP_API_URL: process.env.GEOIP_API_URL,
+  INTERNAL_API_TOKEN: process.env.INTERNAL_API_TOKEN,
 })
 
 export const env = {
@@ -128,4 +131,5 @@ export const env = {
     enabled: parsedEnv.GEOIP_ENABLED,
     apiUrl: parsedEnv.GEOIP_API_URL,
   },
+  internalApiToken: parsedEnv.INTERNAL_API_TOKEN,
 }

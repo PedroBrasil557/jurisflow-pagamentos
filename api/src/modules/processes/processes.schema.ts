@@ -65,6 +65,16 @@ export const process = pgTable(
     caixaAnalysisStatus: text('caixa_analysis_status')
       .default('idle')
       .notNull(),
+    // Consulta automatica do termo de quitacao no portal da Caixa (worker RPA):
+    // idle | pending | processing | quitado | nao_encontrado | erro.
+    caixaQuitacaoStatus: text('caixa_quitacao_status')
+      .default('idle')
+      .notNull(),
+    caixaQuitacaoMessage: text('caixa_quitacao_message'),
+    caixaQuitacaoCheckedAt: timestamp('caixa_quitacao_checked_at'),
+    caixaQuitacaoAttempts: integer('caixa_quitacao_attempts')
+      .default(0)
+      .notNull(),
     cpf: text('cpf').notNull(),
     rg: text('rg').notNull(),
     cadunico: text('cadunico').notNull(),

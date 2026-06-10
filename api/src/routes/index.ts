@@ -3,6 +3,7 @@ import { adminRoutes } from '../modules/admin/admin.routes'
 import { authRoutes } from '../modules/auth/auth.routes'
 import { auth } from '../modules/auth/auth.service'
 import { authAuditRoutes } from '../modules/auth-audit/auth-audit.routes'
+import { caixaQuitacaoInternalRoutes } from '../modules/caixa-quitacao/caixa-quitacao.routes'
 import { dashboardRoutes } from '../modules/dashboard/dashboard.routes'
 import {
   housingComplexAdminRoutes,
@@ -49,6 +50,7 @@ export function createAppRouter(options: CreateAppRouterOptions) {
     .route('/api/housing-complexes', housingComplexOptionsRoutes)
     .route('/api/dashboard', dashboardRoutes)
     .route('/api/processes', processRoutes)
+    .route('/api/internal/caixa-quitacao', caixaQuitacaoInternalRoutes)
     .route('/api/system', systemRoutes)
     .get('/', (c) => {
       return c.json(
