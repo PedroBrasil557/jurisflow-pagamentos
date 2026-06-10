@@ -147,6 +147,16 @@ function renderCroppedPage(
 
 type Screen = 'camera' | 'review' | 'edit'
 
+// Vibracao curta de confirmacao ao capturar (Web Vibration API). Suportada no
+// Android; iOS Safari nao implementa navigator.vibrate (sem efeito la).
+function hapticTap() {
+  try {
+    navigator.vibrate?.(40)
+  } catch {
+    // sem suporte ou bloqueado por policy — ignora.
+  }
+}
+
 export function WebScannerDialog({
   open,
   onClose,
@@ -200,6 +210,7 @@ export function WebScannerDialog({
   const [pages, setPages] = useState<ScannedPage[]>([])
   const [filter, setFilter] = useState<FilterMode>('color')
   const [error, setError] = useState('')
+  const [flash, setFlash] = useState(false)
 
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
@@ -440,6 +451,7 @@ export function WebScannerDialog({
     setPages([])
     setFilter('color')
     setError('')
+    setFlash(false)
     setCameraReady(false)
     setCameraFailed(false)
     setVideoDim(null)
@@ -498,6 +510,11 @@ export function WebScannerDialog({
       return
     }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    hapticTap()
+    // Flash visual de confirmacao (funciona em qualquer aparelho, iPhone
+    // incluso, onde a vibracao nao existe).
+    setFlash(true)
+    window.setTimeout(() => setFlash(false), 130)
     void addPageFromCanvas(canvas)
   }
 
@@ -739,6 +756,10 @@ export function WebScannerDialog({
             ref={fileInputRef}
             type="file"
           />
+
+          {flash ? (
+            <div className="pointer-events-none absolute inset-0 z-40 bg-white" />
+          ) : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
@@ -974,7 +995,7 @@ function CameraScreen({
                 className="size-full object-cover"
                 src={lastThumb}
               />
-              <span className="absolute -top-1.5 -right-1.5 flex min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-white">
+              <span className="absolute top-0.5 right-0.5 flex min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-white shadow ring-1 ring-white/60">
                 {pagesCount}
               </span>
             </span>
@@ -987,11 +1008,6 @@ function CameraScreen({
       {mlStatus === 'loading' ? (
         <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-white/60">
           Carregando IA de deteccao de bordas...
-        </p>
-      ) : null}
-      {mlStatus === 'ready' ? (
-        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-emerald-300/80">
-          IA de bordas ativa
         </p>
       ) : null}
       {mlStatus === 'error' ? (
