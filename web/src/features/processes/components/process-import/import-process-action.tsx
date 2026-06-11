@@ -1,4 +1,3 @@
-import { useNavigate } from '@tanstack/react-router'
 import { FileUp, Loader2 } from 'lucide-react'
 import { type ChangeEvent, useRef } from 'react'
 import { toast } from 'sonner'
@@ -9,11 +8,11 @@ import { useImportDocument } from '../../services/processes.mutations'
 // no S3), nao ha o teto de 10MB do API Gateway.
 const MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024
 
-// Acao "Importar documentos": abre um seletor de arquivo (PDF), cria o processo
-// via ingestao durável/assincrona (mesma do scan) e navega para o editor, onde o
-// usuario acompanha o processamento (banner da Fase 1) e revisa/salva.
+// Acao "Importar documentos": abre um seletor de arquivo (PDF) e cria o processo
+// via ingestao durável/assincrona (mesma do scan). NAO navega: o usuario
+// permanece na lista para importar/escanear varios em sequencia (a IA preenche os
+// campos em background; o novo processo aparece no topo da lista, ja atualizada).
 export function ImportProcessAction() {
-  const navigate = useNavigate()
   const importMutation = useImportDocument()
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -37,17 +36,13 @@ export function ImportProcessAction() {
     }
 
     try {
-      const result = await importMutation.mutateAsync(files)
+      await importMutation.mutateAsync(files)
       toast.success(
         files.length === 1
           ? 'Documento enviado. O cadastro esta sendo processado por IA.'
           : `${files.length} documentos enviados. O cadastro esta sendo processado por IA.`,
       )
       importMutation.reset()
-      void navigate({
-        to: '/processos/$processId/editar',
-        params: { processId: result.processId },
-      })
     } catch (error) {
       toast.error(
         error instanceof Error

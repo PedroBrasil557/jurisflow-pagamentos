@@ -166,9 +166,15 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   })
   const watchedValues = useWatch({ control })
   const values = (watchedValues ?? initialValues) as ProcessFormValues
+  // So reseta o formulario com os valores vindos do servidor quando o usuario
+  // NAO tem edicoes pendentes. Sem o guard, o polling (2.5s enquanto caixa/
+  // quitacao processam) gera um novo objeto `draft` a cada refetch e apagaria o
+  // que o usuario esta digitando.
   useEffect(() => {
-    reset(initialValues)
-  }, [initialValues, reset])
+    if (!isDirty) {
+      reset(initialValues)
+    }
+  }, [initialValues, isDirty, reset])
 
   const queryClient = useQueryClient()
   // Ao concluir a ingestao (processing -> done/error), recarrega o processo

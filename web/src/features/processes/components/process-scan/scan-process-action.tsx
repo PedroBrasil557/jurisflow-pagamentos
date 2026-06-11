@@ -1,4 +1,3 @@
-import { useNavigate } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScanButton } from '@/shared/components/document-scanner/scan-button'
@@ -6,23 +5,19 @@ import { useCreateProcessViaScan } from '../../services/processes.mutations'
 
 // Acao de "Escanear documentos": o botao abre a camera direto (sem dialogo
 // intermediario). Ao concluir a captura, envia o documento e, enquanto a IA
-// processa, mostra um overlay de tela cheia; ao terminar, navega para o
-// checklist do processo criado.
+// processa, mostra um overlay de tela cheia. NAO navega: o usuario permanece na
+// lista para escanear/importar varios em sequencia (a IA preenche os campos em
+// background; o novo processo aparece no topo da lista, ja atualizada).
 export function ScanProcessAction() {
-  const navigate = useNavigate()
   const scanMutation = useCreateProcessViaScan()
 
   async function handleScanComplete(file: File) {
     try {
-      const result = await scanMutation.mutateAsync(file)
+      await scanMutation.mutateAsync(file)
       toast.success(
         'Documento enviado. O cadastro esta sendo processado por IA.',
       )
       scanMutation.reset()
-      void navigate({
-        to: '/processos/$processId/checklist',
-        params: { processId: result.processId },
-      })
     } catch (error) {
       toast.error(
         error instanceof Error
