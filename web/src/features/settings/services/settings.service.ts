@@ -6,6 +6,8 @@ const settingsClientRoute = apiClient.api.admin.settings
 const anthropicKeyClientRoute = settingsClientRoute['anthropic-key']
 const scanbotKeyClientRoute = settingsClientRoute['scanbot-license']
 const scannerProviderClientRoute = settingsClientRoute['scanner-provider']
+const caixaOwnerAutoApplyClientRoute =
+  settingsClientRoute['caixa-owner-auto-apply']
 
 export type SettingsStatus = InferResponseType<
   typeof settingsClientRoute.$get,
@@ -83,6 +85,26 @@ export async function saveScanbotKeyRequest(scanbotLicenseKey: string) {
 
   return (await response.json()) as InferResponseType<
     typeof scanbotKeyClientRoute.$put,
+    200
+  >
+}
+
+export async function saveCaixaOwnerAutoApplyRequest(enabled: boolean) {
+  const response = await caixaOwnerAutoApplyClientRoute.$put({
+    json: { enabled },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel salvar a configuracao do titular (Caixa).',
+      ),
+    )
+  }
+
+  return (await response.json()) as InferResponseType<
+    typeof caixaOwnerAutoApplyClientRoute.$put,
     200
   >
 }

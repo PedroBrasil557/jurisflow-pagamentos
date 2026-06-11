@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent } from '#/components/ui/card'
 import { Label } from '#/components/ui/label'
+import { Switch } from '#/components/ui/switch'
 import { Textarea } from '#/components/ui/textarea'
 import { cn } from '#/lib/utils'
 import { PageHeader } from '@/shared/components/page-header'
@@ -15,6 +16,7 @@ import {
   useClearAnthropicKey,
   useClearScanbotKey,
   useSaveAnthropicKey,
+  useSaveCaixaOwnerAutoApply,
   useSaveScanbotKey,
   useSaveScannerProvider,
 } from '../services/settings.mutations'
@@ -230,6 +232,60 @@ function ScannerProviderSelect({
   )
 }
 
+function CaixaOwnerAutoApplyCard({
+  enabled,
+  isLoading,
+  isBusy,
+  onChange,
+}: {
+  enabled: boolean
+  isLoading: boolean
+  isBusy: boolean
+  onChange: (enabled: boolean) => void
+}) {
+  const switchId = useId()
+
+  return (
+    <Card>
+      <CardContent className="grid gap-4 p-6">
+        <div className="grid gap-1">
+          <h2 className="text-lg font-semibold text-foreground">
+            Auto-preenchimento do titular (Caixa)
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Quando a analise do contrato Caixa identifica o titular com certeza
+            (por CPF ou nome identico), preenche o campo "Tipo de proprietario"
+            automaticamente. Desligado (modo validacao): so registra a evidencia
+            e pede revisao manual.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-foreground">Status:</span>
+            {isLoading ? (
+              <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            ) : enabled ? (
+              <StatusBadge tone="success">Ativo</StatusBadge>
+            ) : (
+              <StatusBadge tone="warning">
+                Modo validacao (desligado)
+              </StatusBadge>
+            )}
+          </div>
+          <Switch
+            aria-label="Auto-preenchimento do titular (Caixa)"
+            checked={enabled}
+            disabled={isBusy || isLoading}
+            id={switchId}
+            onCheckedChange={onChange}
+          />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function SettingsPage() {
   const statusQuery = useQuery(settingsStatusOptions())
   const saveAnthropic = useSaveAnthropicKey()
@@ -237,6 +293,7 @@ export function SettingsPage() {
   const saveScanbot = useSaveScanbotKey()
   const clearScanbot = useClearScanbotKey()
   const saveScannerProvider = useSaveScannerProvider()
+  const saveCaixaOwnerAutoApply = useSaveCaixaOwnerAutoApply()
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('ai')
   const status = statusQuery.data
@@ -275,28 +332,41 @@ export function SettingsPage() {
         ]}
       >
         {activeTab === 'ai' ? (
-          <KeyCard
-            description="Usada na extracao de dados de documentos (RG/CNH e comprovante) ao cadastrar processos. A chave salva aqui tem prioridade sobre a variavel de ambiente do servidor."
-            helpText="Por seguranca, a chave nunca e exibida novamente apos salva — apenas os ultimos digitos."
-            isBusy={saveAnthropic.isPending || clearAnthropic.isPending}
-            isLoading={statusQuery.isLoading}
-            isSaving={saveAnthropic.isPending}
-            onClear={() =>
-              runMutation(
-                clearAnthropic.mutateAsync(),
-                'Nao foi possivel remover a chave.',
-              )
-            }
-            onSave={(value) =>
-              runMutation(
-                saveAnthropic.mutateAsync(value),
-                'Nao foi possivel salvar a chave.',
-              )
-            }
-            placeholder="sk-ant-..."
-            status={status?.anthropic}
-            title="Chave da API Anthropic"
-          />
+          <div className="grid gap-6">
+            <KeyCard
+              description="Usada na extracao de dados de documentos (RG/CNH e comprovante) ao cadastrar processos. A chave salva aqui tem prioridade sobre a variavel de ambiente do servidor."
+              helpText="Por seguranca, a chave nunca e exibida novamente apos salva — apenas os ultimos digitos."
+              isBusy={saveAnthropic.isPending || clearAnthropic.isPending}
+              isLoading={statusQuery.isLoading}
+              isSaving={saveAnthropic.isPending}
+              onClear={() =>
+                runMutation(
+                  clearAnthropic.mutateAsync(),
+                  'Nao foi possivel remover a chave.',
+                )
+              }
+              onSave={(value) =>
+                runMutation(
+                  saveAnthropic.mutateAsync(value),
+                  'Nao foi possivel salvar a chave.',
+                )
+              }
+              placeholder="sk-ant-..."
+              status={status?.anthropic}
+              title="Chave da API Anthropic"
+            />
+            <CaixaOwnerAutoApplyCard
+              enabled={status?.caixaOwner?.autoApply ?? false}
+              isBusy={saveCaixaOwnerAutoApply.isPending}
+              isLoading={statusQuery.isLoading}
+              onChange={(enabled) =>
+                runMutation(
+                  saveCaixaOwnerAutoApply.mutateAsync(enabled),
+                  'Nao foi possivel salvar a configuracao.',
+                )
+              }
+            />
+          </div>
         ) : (
           <div className="grid gap-6">
             <ScannerProviderSelect

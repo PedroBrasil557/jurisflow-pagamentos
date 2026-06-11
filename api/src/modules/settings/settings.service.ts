@@ -28,6 +28,27 @@ export async function getCaixaOwnerAutoApply(): Promise<boolean> {
   return row?.caixaOwnerAutoApply ?? false
 }
 
+export async function saveCaixaOwnerAutoApply(
+  enabled: boolean,
+): Promise<{ enabled: boolean }> {
+  const now = new Date()
+
+  await db
+    .insert(appSettings)
+    .values({
+      id: SETTINGS_ID,
+      caixaOwnerAutoApply: enabled,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { caixaOwnerAutoApply: enabled, updatedAt: now },
+    })
+
+  return { enabled }
+}
+
 // Le a chave salva no banco (texto puro), ou null se nao houver.
 export async function getAnthropicApiKey(): Promise<string | null> {
   const [row] = await db

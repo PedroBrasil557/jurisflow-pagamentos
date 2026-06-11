@@ -3,11 +3,23 @@ import { settingsKeys } from './settings.queries'
 import {
   clearAnthropicKeyRequest,
   clearScanbotKeyRequest,
-  saveAnthropicKeyRequest,
-  saveScanbotKeyRequest,
   type ScannerProvider,
+  saveAnthropicKeyRequest,
+  saveCaixaOwnerAutoApplyRequest,
+  saveScanbotKeyRequest,
   saveScannerProviderRequest,
 } from './settings.service'
+
+export function useSaveCaixaOwnerAutoApply() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (enabled: boolean) => saveCaixaOwnerAutoApplyRequest(enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
+    },
+  })
+}
 
 export function useSaveAnthropicKey() {
   const queryClient = useQueryClient()

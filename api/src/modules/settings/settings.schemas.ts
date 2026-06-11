@@ -27,3 +27,11 @@ export const saveScannerProviderPayloadSchema = z.object({
 export type SaveScannerProviderPayload = z.infer<
   typeof saveScannerProviderPayloadSchema
 >
+
+export const saveCaixaOwnerAutoApplyPayloadSchema = z.object({
+  enabled: z.boolean(),
+})
+
+export type SaveCaixaOwnerAutoApplyPayload = z.infer<
+  typeof saveCaixaOwnerAutoApplyPayloadSchema
+>
