@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  type ConjuntoMatchResult,
   type ConjuntoRecord,
+  decideProcuracaoConjuntoOutcome,
   matchConjuntoInAddress,
+  PROCURACAO_CONJUNTO_HISTORY,
 } from './processes.procuracao-conjunto.compare'
 
 function conj(
@@ -101,5 +104,85 @@ describe('matchConjuntoInAddress', () => {
       RESIDENCIAL_VILA_NOVA,
     ])
     expect(r.result).toBe('review')
+  })
+})
+
+function matched(name: string): ConjuntoMatchResult {
+  return {
+    result: 'match',
+    conjunto: { id: 'x', name, city: null },
+    matchedBy: 'name',
+  }
+}
+const reviewed: ConjuntoMatchResult = { result: 'review', matchedBy: 'none' }
+
+describe('decideProcuracaoConjuntoOutcome', () => {
+  test('match sem certeza (review) => nao aplica', () => {
+    const o = decideProcuracaoConjuntoOutcome({
+      matchResult: reviewed,
+      currentHousingComplex: '',
+      housingComplexSource: 'system',
+      autoApplyEnabled: true,
+    })
+    expect(o.apply).toBe(false)
+    expect(o.analysisStatus).toBe('review')
+  })
+
+  test('ja e o conjunto casado => no-op', () => {
+    const o = decideProcuracaoConjuntoOutcome({
+      matchResult: matched('Residencial Vila Nova'),
+      currentHousingComplex: 'RESIDENCIAL VILA NOVA',
+      housingComplexSource: 'human',
+      autoApplyEnabled: true,
+    })
+    expect(o.apply).toBe(false)
+    expect(o.analysisStatus).toBe('done')
+    expect(o.historyEvent).toBeNull()
+  })
+
+  test('shadow (flag off) => so revisa, mesmo com match', () => {
+    const o = decideProcuracaoConjuntoOutcome({
+      matchResult: matched('Residencial Vila Nova'),
+      currentHousingComplex: '',
+      housingComplexSource: 'system',
+      autoApplyEnabled: false,
+    })
+    expect(o.apply).toBe(false)
+    expect(o.analysisStatus).toBe('review')
+  })
+
+  test('human-lock: humano escolheu OUTRO => divergencia, nao sobrescreve', () => {
+    const o = decideProcuracaoConjuntoOutcome({
+      matchResult: matched('Residencial Vila Nova'),
+      currentHousingComplex: 'Parque das Flores',
+      housingComplexSource: 'human',
+      autoApplyEnabled: true,
+    })
+    expect(o.apply).toBe(false)
+    expect(o.divergence).toBe(true)
+    expect(o.historyEvent).toBe(PROCURACAO_CONJUNTO_HISTORY.DIVERGENCE)
+  })
+
+  test('vazio + flag on => auto-aplica o conjunto casado', () => {
+    const o = decideProcuracaoConjuntoOutcome({
+      matchResult: matched('Residencial Vila Nova'),
+      currentHousingComplex: '',
+      housingComplexSource: 'system',
+      autoApplyEnabled: true,
+    })
+    expect(o.apply).toBe(true)
+    expect(o.newHousingComplex).toBe('Residencial Vila Nova')
+    expect(o.historyEvent).toBe(PROCURACAO_CONJUNTO_HISTORY.AUTO_SET)
+  })
+
+  test('valor antigo do SISTEMA diferente + flag on => corrige (aplica)', () => {
+    const o = decideProcuracaoConjuntoOutcome({
+      matchResult: matched('Residencial Vila Nova'),
+      currentHousingComplex: 'Parque das Flores',
+      housingComplexSource: 'system',
+      autoApplyEnabled: true,
+    })
+    expect(o.apply).toBe(true)
+    expect(o.newHousingComplex).toBe('Residencial Vila Nova')
   })
 })

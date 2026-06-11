@@ -96,3 +96,88 @@ export function matchConjuntoInAddress(
   // Ainda ambiguo (mesmo nome, mesma cidade/tamanho) → revisao humana.
   return { result: 'review', matchedBy: 'none' }
 }
+
+export const PROCURACAO_CONJUNTO_HISTORY = {
+  AUTO_SET: 'PROCURACAO_CONJUNTO_AUTO_SET',
+  REVIEW: 'PROCURACAO_CONJUNTO_REVIEW_REQUIRED',
+  // Humano escolheu OUTRO conjunto: nunca sobrescreve calado — alerta.
+  DIVERGENCE: 'PROCURACAO_CONJUNTO_DIVERGENCE',
+} as const
+
+export type ProcuracaoConjuntoOutcome = {
+  // Estado operacional (process.procuracao_conjunto_status).
+  analysisStatus: 'done' | 'review'
+  // Se deve gravar process.housingComplex = newHousingComplex.
+  apply: boolean
+  newHousingComplex?: string
+  // Divergencia: a procuracao indica um conjunto diferente do que ja esta no
+  // processo (escolhido por humano) — para destacar na UI, nao para sobrescrever.
+  divergence: boolean
+  historyEvent: string | null
+}
+
+// Decide o desfecho a partir do match determinístico + estado atual + flag. PURA.
+// Espelha decideCaixaOwnerOutcome. Regras:
+// - sem match inequivoco => sempre revisar (nunca chuta — risco juridico).
+// - ja e o conjunto casado => no-op.
+// - shadow (flag off) => so registra e revisar.
+// - human-lock + divergencia => humano escolheu OUTRO: NAO sobrescreve, alerta.
+// - confiante + flag on + nao-travado => auto-aplica o conjunto casado.
+export function decideProcuracaoConjuntoOutcome(input: {
+  matchResult: ConjuntoMatchResult
+  currentHousingComplex: string
+  housingComplexSource: string
+  autoApplyEnabled: boolean
+}): ProcuracaoConjuntoOutcome {
+  const matched = input.matchResult.conjunto
+
+  if (input.matchResult.result === 'review' || !matched) {
+    return {
+      analysisStatus: 'review',
+      apply: false,
+      divergence: false,
+      historyEvent: PROCURACAO_CONJUNTO_HISTORY.REVIEW,
+    }
+  }
+
+  const current = input.currentHousingComplex.trim()
+  const sameAsCurrent =
+    current !== '' && normalizeName(current) === normalizeName(matched.name)
+
+  if (sameAsCurrent) {
+    return {
+      analysisStatus: 'done',
+      apply: false,
+      divergence: false,
+      historyEvent: null,
+    }
+  }
+
+  if (!input.autoApplyEnabled) {
+    return {
+      analysisStatus: 'review',
+      apply: false,
+      divergence: current !== '',
+      historyEvent: PROCURACAO_CONJUNTO_HISTORY.REVIEW,
+    }
+  }
+
+  // Human-lock: um humano definiu OUTRO conjunto. Nao sobrescreve — alerta.
+  if (input.housingComplexSource === 'human' && current !== '') {
+    return {
+      analysisStatus: 'review',
+      apply: false,
+      divergence: true,
+      historyEvent: PROCURACAO_CONJUNTO_HISTORY.DIVERGENCE,
+    }
+  }
+
+  // Confiante + flag on + nao-travado-por-humano => auto-aplica.
+  return {
+    analysisStatus: 'done',
+    apply: true,
+    newHousingComplex: matched.name,
+    divergence: false,
+    historyEvent: PROCURACAO_CONJUNTO_HISTORY.AUTO_SET,
+  }
+}
