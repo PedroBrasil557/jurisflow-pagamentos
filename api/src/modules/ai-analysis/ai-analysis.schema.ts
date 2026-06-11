@@ -20,7 +20,10 @@ import { process } from '../processes/processes.schema'
 
 // Tipo da rotina que gerou a analise. Mantido como `text` (extensivel sem
 // migracao), mas tipado no codigo. Novos consumidores acrescentam aqui.
-export type AiAnalysisKind = 'caixa_owner' | 'document_extraction'
+export type AiAnalysisKind =
+  | 'caixa_owner'
+  | 'document_extraction'
+  | 'procuracao_conjunto'
 
 // Referencia (nao os bytes) do artefato analisado — permite provar qual versao
 // do arquivo gerou a decisao mesmo se o objeto for movido/substituido.

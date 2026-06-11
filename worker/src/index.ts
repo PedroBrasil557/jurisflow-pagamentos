@@ -1,7 +1,13 @@
 import { type Browser, chromium } from 'playwright'
 import { consultarQuitacao } from './caixa-quitacao/consulta.ts'
 
-const API_URL = process.env.API_URL ?? 'http://localhost:3556'
+// Remove barra(s) finais: o API Gateway (HttpApi.url) vem com '/' no fim e a
+// concatenacao `${API_URL}/api/...` geraria '//api/...' (barra dupla) -> 404 no
+// Hono. Local (sem barra) nao expunha isso; prod expunha.
+const API_URL = (process.env.API_URL ?? 'http://localhost:3556').replace(
+  /\/+$/,
+  '',
+)
 const TOKEN = process.env.INTERNAL_API_TOKEN ?? 'dev-internal-token-change-me'
 // Fallback robusto: um POLL_MS invalido (ex.: "5s") nao pode virar NaN ->
 // setTimeout(NaN)=0 -> busy-loop martelando o /claim.
@@ -16,17 +22,51 @@ const MIN_INTERVAL_MS =
   Number.isFinite(parsedInterval) && parsedInterval >= 0 ? parsedInterval : 5000
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+// Backoff maior ao detectar erro de CONFIGURACAO (404/401): nao adianta martelar
+// a cada POLL_MS uma URL/rota/token errados — espera mais e mantem o log limpo.
+const CONFIG_ERROR_BACKOFF_MS = 60_000
 
 type Job = { processId: string; cpf: string }
 
-async function claimJob(): Promise<Job | null> {
-  const res = await fetch(`${API_URL}/api/internal/caixa-quitacao/claim`, {
-    method: 'POST',
-    headers: { 'x-internal-token': TOKEN },
-  })
-  if (!res.ok) {
-    throw new Error(`claim HTTP ${res.status}`)
+// Erro do claim classificado: 'config' (404/401/403 — URL/rota/versao da API ou
+// token errados; NAO e transitorio) vs 'transient' (5xx/rede — tentar de novo).
+class ClaimError extends Error {
+  constructor(
+    readonly kind: 'config' | 'transient',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ClaimError'
   }
+}
+
+async function claimJob(): Promise<Job | null> {
+  let res: Response
+  try {
+    res = await fetch(`${API_URL}/api/internal/caixa-quitacao/claim`, {
+      method: 'POST',
+      headers: { 'x-internal-token': TOKEN },
+    })
+  } catch (error) {
+    // Falha de rede (DNS/conexao): nao alcancou a API. Transitorio.
+    throw new ClaimError(
+      'transient',
+      `rede: ${error instanceof Error ? error.message : 'falha'}`,
+    )
+  }
+
+  // 4xx de claim = CONFIGURACAO, nao "fila vazia": rota inexistente (404 — ex.:
+  // API_URL/versao da API errada), ou token invalido (401/403).
+  if (res.status === 404 || res.status === 401 || res.status === 403) {
+    throw new ClaimError(
+      'config',
+      `HTTP ${res.status} em ${API_URL}/api/internal/caixa-quitacao/claim — confira API_URL, se a rota existe nessa versao da API, e o INTERNAL_API_TOKEN.`,
+    )
+  }
+  if (!res.ok) {
+    throw new ClaimError('transient', `HTTP ${res.status}`)
+  }
+
   const data = (await res.json()) as { job: Job | null }
   return data.job
 }
@@ -69,15 +109,35 @@ async function main(): Promise<void> {
 
   // Timestamp do inicio da ultima consulta — base do pacing global.
   let lastConsultaAt = 0
+  // Sinal POSITIVO de boot: confirma no log que o worker alcancou a API (claim
+  // OK) na primeira vez — "ausencia de erro" nao e confirmacao.
+  let connectedLogged = false
 
   while (running) {
     let job: Job | null = null
     try {
       job = await claimJob()
     } catch (error) {
-      console.error('[worker] claim falhou:', (error as Error).message)
+      // Config (404/401): erro de DEPLOY/configuracao — loga ALTO + backoff maior
+      // (a 1a iteracao do loop ja funciona como probe de boot). Transitorio
+      // (5xx/rede): loga e tenta de novo no ritmo normal.
+      if (error instanceof ClaimError && error.kind === 'config') {
+        console.error(
+          `[worker] ERRO DE CONFIGURACAO no claim: ${error.message}`,
+        )
+        await sleep(CONFIG_ERROR_BACKOFF_MS)
+        continue
+      }
+      console.error(
+        `[worker] claim falhou (transitorio): ${(error as Error).message}`,
+      )
       await sleep(POLL_MS)
       continue
+    }
+
+    if (!connectedLogged) {
+      connectedLogged = true
+      console.log(`[worker] conectado a API (${API_URL}) — claim OK.`)
     }
 
     if (!job) {

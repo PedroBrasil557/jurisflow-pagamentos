@@ -56,6 +56,7 @@ import {
   generateProcessPdf,
   listProcessPdfModels,
 } from './processes.pdf.service'
+import { startProcuracaoConjuntoAnalysis } from './processes.procuracao-conjunto.service'
 import {
   cancelProcessPayloadSchema,
   completeImportBodySchema,
@@ -852,6 +853,26 @@ export const processRoutes = new Hono<AppBindings>()
         // visibilidade do processo.
         assertCan(perms, 'uploadChecklist')
         const result = await startCaixaOwnerAnalysis({
+          processId,
+          triggeredByUserId: currentUser.id,
+        })
+        return c.json(result, 202)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // Reanalisa a procuracao (conjunto) sob demanda (dispara o job em background).
+  .post(
+    '/:processId/procuracao-conjunto/reanalyze',
+    paramsValidator(processIdParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const { processId } = c.req.valid('param')
+        await getProcessById(processId, currentUser.id, perms)
+        assertCan(perms, 'uploadChecklist')
+        const result = await startProcuracaoConjuntoAnalysis({
           processId,
           triggeredByUserId: currentUser.id,
         })

@@ -35,3 +35,11 @@ export const saveCaixaOwnerAutoApplyPayloadSchema = z.object({
 export type SaveCaixaOwnerAutoApplyPayload = z.infer<
   typeof saveCaixaOwnerAutoApplyPayloadSchema
 >
+
+export const saveProcuracaoConjuntoAutoApplyPayloadSchema = z.object({
+  enabled: z.boolean(),
+})
+
+export type SaveProcuracaoConjuntoAutoApplyPayload = z.infer<
+  typeof saveProcuracaoConjuntoAutoApplyPayloadSchema
+>

@@ -12,6 +12,11 @@ export const appSettings = pgTable('app_settings', {
   caixaOwnerAutoApply: boolean('caixa_owner_auto_apply')
     .default(false)
     .notNull(),
+  // Liga a auto-aplicacao do conjunto (housingComplex) pela analise da procuracao.
+  // Default false (shadow): registra evidencia mas NAO altera o processo.
+  procuracaoConjuntoAutoApply: boolean('procuracao_conjunto_auto_apply')
+    .default(false)
+    .notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at')
     .defaultNow()

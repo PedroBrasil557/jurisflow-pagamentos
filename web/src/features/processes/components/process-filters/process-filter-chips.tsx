@@ -2,10 +2,10 @@ import { X } from 'lucide-react'
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
 import {
-  ownerTypeLabels,
   type OwnerTypeValue,
-  processStatusLabels,
+  ownerTypeLabels,
   type ProcessStatusValue,
+  processStatusLabels,
 } from '../../services/processes.service'
 import { formatShortDate } from './process-filters.utils'
 

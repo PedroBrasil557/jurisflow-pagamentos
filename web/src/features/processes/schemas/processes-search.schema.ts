@@ -1,8 +1,8 @@
 import {
-  ownerTypeLabels,
   type OwnerTypeValue,
-  processStatusLabels,
+  ownerTypeLabels,
   type ProcessStatusValue,
+  processStatusLabels,
 } from '../services/processes.service'
 
 export type ProcessesSearch = {

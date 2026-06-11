@@ -808,6 +808,11 @@ export async function updateProcess(
       // automatica (caixa-owner) respeita o human-lock e nao sobrescreve a
       // escolha do usuario numa reanalise posterior.
       ...(changedFields.ownerType ? { ownerTypeSource: 'human' } : {}),
+      // Idem para o housingComplex (conjunto): edicao manual trava contra a
+      // analise da procuracao (vira alerta de divergencia, nao sobrescreve).
+      ...(changedFields.housingComplex
+        ? { housingComplexSource: 'human' }
+        : {}),
     })
     .where(eq(process.id, processId))
     .returning()

@@ -6,6 +6,7 @@ import { jsonValidator } from '../../shared/validation/validators'
 import {
   saveAnthropicKeyPayloadSchema,
   saveCaixaOwnerAutoApplyPayloadSchema,
+  saveProcuracaoConjuntoAutoApplyPayloadSchema,
   saveScanbotKeyPayloadSchema,
   saveScannerProviderPayloadSchema,
 } from './settings.schemas'
@@ -14,11 +15,13 @@ import {
   clearScanbotLicenseKey,
   getAnthropicKeyStatus,
   getCaixaOwnerAutoApply,
+  getProcuracaoConjuntoAutoApply,
   getScanbotKeyStatus,
   getScanbotLicenseKey,
   getScannerProvider,
   saveAnthropicApiKey,
   saveCaixaOwnerAutoApply,
+  saveProcuracaoConjuntoAutoApply,
   saveScanbotLicenseKey,
   saveScannerProvider,
 } from './settings.service'
@@ -27,13 +30,19 @@ export const settingsAdminRoutes = new Hono<AppBindings>()
   .use('*', requireRole('admin'))
   .get('/', async (c) => {
     try {
-      const [anthropic, scanbot, scannerProvider, caixaOwnerAutoApply] =
-        await Promise.all([
-          getAnthropicKeyStatus(),
-          getScanbotKeyStatus(),
-          getScannerProvider(),
-          getCaixaOwnerAutoApply(),
-        ])
+      const [
+        anthropic,
+        scanbot,
+        scannerProvider,
+        caixaOwnerAutoApply,
+        procuracaoConjuntoAutoApply,
+      ] = await Promise.all([
+        getAnthropicKeyStatus(),
+        getScanbotKeyStatus(),
+        getScannerProvider(),
+        getCaixaOwnerAutoApply(),
+        getProcuracaoConjuntoAutoApply(),
+      ])
 
       return c.json(
         {
@@ -41,6 +50,7 @@ export const settingsAdminRoutes = new Hono<AppBindings>()
           scanbot,
           scanner: { provider: scannerProvider },
           caixaOwner: { autoApply: caixaOwnerAutoApply },
+          procuracaoConjunto: { autoApply: procuracaoConjuntoAutoApply },
         },
         200,
       )
@@ -63,6 +73,29 @@ export const settingsAdminRoutes = new Hono<AppBindings>()
               ? 'Auto-preenchimento do titular (Caixa) ativado.'
               : 'Auto-preenchimento do titular (Caixa) desativado (modo validacao).',
             caixaOwner: result,
+          },
+          200,
+        )
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .put(
+    '/procuracao-conjunto-auto-apply',
+    jsonValidator(saveProcuracaoConjuntoAutoApplyPayloadSchema),
+    async (c) => {
+      try {
+        const result = await saveProcuracaoConjuntoAutoApply(
+          c.req.valid('json').enabled,
+        )
+
+        return c.json(
+          {
+            message: result.enabled
+              ? 'Auto-preenchimento do conjunto (procuracao) ativado.'
+              : 'Auto-preenchimento do conjunto (procuracao) desativado (modo validacao).',
+            procuracaoConjunto: result,
           },
           200,
         )
