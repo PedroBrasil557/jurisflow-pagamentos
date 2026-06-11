@@ -211,6 +211,12 @@ export function WebScannerDialog({
   const [filter, setFilter] = useState<FilterMode>('color')
   const [error, setError] = useState('')
   const [flash, setFlash] = useState(false)
+  // Captura em voo: addPageFromCanvas faz um await (deteccao ~200-400ms) ANTES de
+  // inserir a pagina em `pages`. O guard impede (a) duplo-toque no shutter e (b)
+  // finalizar o PDF antes da pagina entrar — que dropava a ultima pagina
+  // silenciosamente. O ref e a trava sincrona; o state desabilita os botoes.
+  const [capturing, setCapturing] = useState(false)
+  const capturingRef = useRef(false)
 
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
@@ -478,28 +484,39 @@ export function WebScannerDialog({
   }
 
   async function addPageFromCanvas(canvas: HTMLCanvasElement) {
-    const detected = await detectBest(canvas, { fallback: true })
-    const corners = detected ?? defaultCorners(canvas.width, canvas.height)
-    const rendered = renderCroppedPage(canvas, corners, filter, engineReady)
+    capturingRef.current = true
+    setCapturing(true)
+    try {
+      const detected = await detectBest(canvas, { fallback: true })
+      const corners = detected ?? defaultCorners(canvas.width, canvas.height)
+      const rendered = renderCroppedPage(canvas, corners, filter, engineReady)
 
-    pageIdRef.current += 1
-    setPages((prev) => [
-      ...prev,
-      {
-        id: `page-${pageIdRef.current}`,
-        originalDataUrl: canvas.toDataURL('image/jpeg', 0.92),
-        corners,
-        filter,
-        dataUrl: rendered.dataUrl,
-        width: rendered.width,
-        height: rendered.height,
-      },
-    ])
+      pageIdRef.current += 1
+      setPages((prev) => [
+        ...prev,
+        {
+          id: `page-${pageIdRef.current}`,
+          originalDataUrl: canvas.toDataURL('image/jpeg', 0.92),
+          corners,
+          filter,
+          dataUrl: rendered.dataUrl,
+          width: rendered.width,
+          height: rendered.height,
+        },
+      ])
+    } finally {
+      capturingRef.current = false
+      setCapturing(false)
+    }
   }
 
   function handleShutter() {
     const video = videoRef.current
     if (!video?.videoWidth) {
+      return
+    }
+    // Captura ainda em voo: ignora o toque (evita pagina duplicada).
+    if (capturingRef.current) {
       return
     }
     const canvas = document.createElement('canvas')
@@ -627,6 +644,11 @@ export function WebScannerDialog({
     if (pages.length === 0) {
       return
     }
+    // Ha captura em voo: a pagina ainda nao entrou em `pages`. Bloqueia para nao
+    // gerar o PDF sem ela (o botao tambem fica desabilitado enquanto capturing).
+    if (capturingRef.current) {
+      return
+    }
     try {
       const scanPages: ScanPage[] = pages.map((page) => ({
         dataUrl: page.dataUrl,
@@ -680,6 +702,7 @@ export function WebScannerDialog({
               boxRef={measureCameraBox}
               cameraFailed={cameraFailed}
               cameraReady={cameraReady}
+              capturing={capturing}
               engineStatus={engineStatus}
               mlStatus={useMl ? mlStatus : null}
               filter={filter}
@@ -700,6 +723,7 @@ export function WebScannerDialog({
 
           {screen === 'review' ? (
             <ReviewScreen
+              capturing={capturing}
               onAddMore={() => setScreen('camera')}
               onClose={handleClose}
               onEdit={openEdit}
@@ -869,6 +893,7 @@ type CameraScreenProps = {
   boxRef: React.Ref<HTMLDivElement>
   cameraFailed: boolean
   cameraReady: boolean
+  capturing: boolean
   engineStatus: string
   mlStatus: DocAlignerStatus | null
   filter: FilterMode
@@ -890,6 +915,7 @@ function CameraScreen({
   boxRef,
   cameraFailed,
   cameraReady,
+  capturing,
   engineStatus,
   mlStatus,
   filter,
@@ -974,7 +1000,7 @@ function CameraScreen({
         <button
           aria-label="Capturar"
           className="flex size-18 items-center justify-center rounded-full ring-4 ring-white/80 disabled:opacity-40"
-          disabled={!cameraReady}
+          disabled={!cameraReady || capturing}
           onClick={onShutter}
           type="button"
         >
@@ -1030,6 +1056,7 @@ function CameraScreen({
 }
 
 type ReviewScreenProps = {
+  capturing: boolean
   onAddMore: () => void
   onClose: () => void
   onEdit: (page: ScannedPage) => void
@@ -1041,6 +1068,7 @@ type ReviewScreenProps = {
 }
 
 function ReviewScreen({
+  capturing,
   onAddMore,
   onClose,
   onEdit,
@@ -1116,7 +1144,11 @@ function ReviewScreen({
             Adicionar foto em alta resolucao
           </Button>
         ) : null}
-        <Button disabled={pages.length === 0} onClick={onFinish} type="button">
+        <Button
+          disabled={pages.length === 0 || capturing}
+          onClick={onFinish}
+          type="button"
+        >
           {`Anexar PDF (${pages.length})`}
         </Button>
       </div>
