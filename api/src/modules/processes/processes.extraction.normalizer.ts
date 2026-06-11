@@ -91,7 +91,16 @@ function upper(value?: string): string {
 }
 
 function isIsoDate(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value)
+  // Formato E data de calendario real: o regex sozinho aceita "2024-02-31", que o
+  // Date faz roll-over para 2024-03-02 — gravando uma data errada na coluna `date`
+  // de um campo legal. O startsWith pega o roll-over (a normalizacao diverge).
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false
+  }
+  const parsed = new Date(`${value}T00:00:00Z`)
+  return (
+    !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value)
+  )
 }
 
 function formatZip(value: string): { value: string; valid: boolean } {
