@@ -11,6 +11,11 @@ export type ConsultaSignals = {
 // Mensagem oficial de ausencia de contrato (Portaria MCID nº 1.248/2023).
 export const NAO_ENCONTRADO = /n[ãa]o foi encontrado contrato/i
 
+// Site da Caixa temporariamente indisponivel/sobrecarregado. Aparece ABAIXO do
+// campo CPF (fora do bloco "Resultado", sem o botao "Voltar"). E TRANSITORIO ->
+// deve retentar, e e detectavel na hora (sem esperar o timeout do resultado).
+export const INDISPONIVEL = /consulta indispon[íi]vel|tente mais tarde/i
+
 // Decisao DETERMINISTICA (sem IA). O sinal PRIMARIO e o estado do botao "Emitir
 // declaracao": ele so fica habilitado/visivel quando ha contrato quitado. A
 // mensagem so e usada para distinguir "nao encontrado" de um "erro" inesperado.

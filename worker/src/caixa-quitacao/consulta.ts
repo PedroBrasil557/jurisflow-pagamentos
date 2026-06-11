@@ -3,13 +3,18 @@ import type { Page } from 'playwright'
 import {
   type ConsultaQuitacaoResult,
   classifyConsultaQuitacao,
+  INDISPONIVEL,
   NAO_ENCONTRADO,
 } from './classify.ts'
 
 export const CONSULTA_URL =
   'https://www.caixa.gov.br/voce/habitacao/minha-casa-minha-vida/faixa-I/consulta-MCMV/Paginas/default.aspx'
 
-// Seletores descobertos no spike (estaveis: ids fixos do ASP.NET).
+// Seletores verificados na pagina real (2026-06): a pagina e ASP.NET/SharePoint
+// (a maioria dos controles tem id manglado ctl00$...), mas o widget da consulta
+// usa estes IDs limpos e custom. Validados ao vivo: #cpf, #btnConsultar,
+// #btnEmitirDeclaracao, #btnVoltar existem. Se mudarem, o sentinela D11 abaixo
+// (campo CPF ausente) falha com mensagem clara.
 const SELECTORS = {
   cpf: '#cpf',
   consultar: '#btnConsultar',
@@ -42,6 +47,32 @@ async function readResultMessage(page: Page): Promise<string> {
     .trim()
 }
 
+// Captura EVIDENCIA deterministica do estado atual da pagina para diagnostico
+// (caminhos de erro/indeterminados). Loga os marcadores que distinguem os
+// estados — PII-safe (so booleans/contagens, nao o texto do resultado). O
+// upload do screenshot vinculado ao processo (S3) fica como evolucao futura.
+async function captureEvidence(page: Page, reason: string): Promise<void> {
+  const emit = page.locator(SELECTORS.emitir)
+  const markers = {
+    reason,
+    url: page.url(),
+    emitVisible: await emit.isVisible().catch(() => false),
+    emitEnabled: await emit.isEnabled().catch(() => false),
+    voltarVisible: await page
+      .locator(SELECTORS.voltar)
+      .isVisible()
+      .catch(() => false),
+    hasNaoEncontrado: await page
+      .getByText(NAO_ENCONTRADO)
+      .count()
+      .catch(() => 0),
+    hasIndisponivel: await page.getByText(INDISPONIVEL).count().catch(() => 0),
+  }
+  console.error(
+    `[consulta] evidencia ${JSON.stringify({ ts: new Date().toISOString(), ...markers })}`,
+  )
+}
+
 // Executa a consulta de quitacao para um CPF. NAO lanca em fluxo normal: erros
 // inesperados viram result 'erro'. Recebe uma Page ja criada (o worker controla
 // o ciclo de vida do browser/contexto).
@@ -61,17 +92,20 @@ export async function consultarQuitacao(
     }
   }
 
+  // PASSO 1: abre a pagina e espera DETERMINISTICAMENTE o campo CPF aparecer.
   await page.goto(CONSULTA_URL, {
     waitUntil: 'domcontentloaded',
     timeout: 90_000,
   })
   await page
-    .waitForLoadState('networkidle', { timeout: 30_000 })
+    .locator(SELECTORS.cpf)
+    .waitFor({ state: 'visible', timeout: 20_000 })
     .catch(() => {})
 
   // D11: sentinela — se o campo CPF nao existe, a pagina nao e a esperada (site
-  // alterado ou em manutencao). Falha com mensagem clara, nao um timeout opaco.
+  // alterado ou em manutencao). Falha com mensagem clara + evidencia.
   if ((await page.locator(SELECTORS.cpf).count()) === 0) {
+    await captureEvidence(page, 'pagina_inesperada')
     return {
       result: 'erro',
       message:
@@ -80,26 +114,60 @@ export async function consultarQuitacao(
     }
   }
 
+  // PASSO 2: preenche o CPF e submete.
   const cpfInput = page.locator(SELECTORS.cpf)
   await cpfInput.fill('')
   await cpfInput.pressSequentially(digits, { delay: 50 })
-
   await page.locator(SELECTORS.consultar).click({ timeout: 15_000 })
-  await page
-    .waitForLoadState('networkidle', { timeout: 30_000 })
-    .catch(() => {})
 
+  // PASSO 3: espera um DESFECHO deterministico, correndo os sinais conhecidos
+  // (mapeados ao vivo). O que vier PRIMEIRO decide:
+  //  - #btnVoltar visivel       => o bloco "Resultado" carregou (quitado/nao-encontrado)
+  //  - texto "indisponivel"     => site sobrecarregado ("tente mais tarde"): transitorio
+  // Se nenhum aparecer no tempo, o resultado nao carregou (indeterminado).
+  const RESULT_TIMEOUT = 30_000
+  const settled = await Promise.race([
+    page
+      .locator(SELECTORS.voltar)
+      .waitFor({ state: 'visible', timeout: RESULT_TIMEOUT })
+      .then(() => 'loaded' as const)
+      .catch(() => null),
+    page
+      .getByText(INDISPONIVEL)
+      .first()
+      .waitFor({ state: 'visible', timeout: RESULT_TIMEOUT })
+      .then(() => 'indisponivel' as const)
+      .catch(() => null),
+  ])
+
+  // Estado INDISPONIVEL: o site da Caixa pediu "tente mais tarde". Transitorio
+  // (sera retentado pelo MAX_ATTEMPTS) — desfecho explicito, nao um erro opaco.
+  if (settled === 'indisponivel') {
+    await captureEvidence(page, 'indisponivel')
+    return {
+      result: 'erro',
+      message:
+        'Consulta indisponivel no site da Caixa no momento ("tente mais tarde"). Sera retentada.',
+      pdf: null,
+    }
+  }
+
+  // O resultado nao carregou no tempo (nem "Resultado", nem "indisponivel"):
+  // indeterminado (site lento/instavel). Transitorio + evidencia.
+  if (settled !== 'loaded') {
+    await captureEvidence(page, 'resultado_nao_carregou')
+    return {
+      result: 'erro',
+      message:
+        'O resultado da consulta nao carregou a tempo (site lento/instavel). Sera retentada.',
+      pdf: null,
+    }
+  }
+
+  // PASSO 4: o bloco "Resultado" carregou (Voltar visivel). Pequena folga para o
+  // botao Emitir terminar de habilitar, e classifica o desfecho ja estavel.
+  await page.waitForTimeout(300)
   const emit = page.locator(SELECTORS.emitir)
-  // Em vez de um sleep fixo (fragil sob postback ASP.NET lento), espera por um
-  // estado DEFINITIVO: botao "Emitir" habilitado+visivel (quitado) OU a mensagem
-  // de "nao encontrado". Se estourar o timeout, le o estado atual mesmo assim.
-  await Promise.race([
-    emit.waitFor({ state: 'visible', timeout: 15_000 }),
-    page.getByText(NAO_ENCONTRADO).first().waitFor({ timeout: 15_000 }),
-  ]).catch(() => {})
-  // pequena folga para o botao terminar de habilitar apos ficar visivel
-  await page.waitForTimeout(500)
-
   const emitButtonVisible = await emit.isVisible().catch(() => false)
   const emitButtonEnabled = await emit.isEnabled().catch(() => false)
   const resultMessage = await readResultMessage(page)
@@ -110,11 +178,23 @@ export async function consultarQuitacao(
     resultMessage,
   })
 
-  if (classified.result !== 'quitado') {
-    return { result: classified.result, message: classified.message, pdf: null }
+  // Resultado carregou mas nao bate com quitado NEM nao-encontrado: estado
+  // inesperado (estrutura da pagina pode ter mudado) — evidencia para diagnostico.
+  if (classified.result === 'erro') {
+    await captureEvidence(page, 'estado_inesperado')
+    return {
+      result: 'erro',
+      message:
+        'Resultado da consulta em estado inesperado (a estrutura da pagina pode ter mudado).',
+      pdf: null,
+    }
   }
 
-  // Quitado: emitir => download direto do PDF da Declaracao de Quitacao.
+  if (classified.result === 'nao_encontrado') {
+    return { result: 'nao_encontrado', message: classified.message, pdf: null }
+  }
+
+  // PASSO 5: quitado => emitir => download direto do PDF da Declaracao de Quitacao.
   const downloadPromise = page.waitForEvent('download', { timeout: 30_000 })
   await emit.click()
   const download = await downloadPromise
