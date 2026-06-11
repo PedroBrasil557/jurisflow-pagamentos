@@ -14,7 +14,9 @@
     "lint": "biome lint .",
     "check": "biome check .",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test",
+    "db:test:setup": "bun run scripts/setup-test-db.ts",
+    "test:integration": "RUN_INTEGRATION=1 DATABASE_URL=postgresql://postgres:postgres@localhost:3557/app_test bun test src/modules/processes/processes.ingestion.queue.integration.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",

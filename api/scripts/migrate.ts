@@ -17,18 +17,22 @@ const db = drizzle(pool)
 await migrate(db, { migrationsFolder: './drizzle' })
 console.log('Migrations complete.')
 
-// Reseta desmembramentos orfaos: no boot nenhum job esta rodando, entao qualquer
-// 'processing' restante foi interrompido por um restart/crash. Sem isso, o arquivo
-// ficaria travado (guard de idempotencia) e o front faria polling indefinidamente.
+// Reseta APENAS desmembramentos orfaos do fluxo LEGADO de batch-split (sem lease):
+// esses rodam como promise detached na API e morrem no restart. A ingestao (fila
+// worker+claim) tem split_lease_expires_at e e recuperada pelo PROPRIO worker
+// (re-reivindica 'processing' com lease expirado) — NAO deve ser resetada aqui,
+// senao um job vivo do worker (processo separado, sobrevive ao restart da API)
+// viraria 'error' indevidamente.
 const orphaned = await pool.query(
   `UPDATE process_batch_file
    SET split_status = 'error',
        split_message = 'O desmembramento foi interrompido. Tente novamente.',
        split_updated_at = now()
-   WHERE split_status = 'processing'`,
+   WHERE split_status = 'processing'
+     AND split_lease_expires_at IS NULL`,
 )
 if (orphaned.rowCount && orphaned.rowCount > 0) {
-  console.log(`Reset ${orphaned.rowCount} desmembramento(s) orfao(s).`)
+  console.log(`Reset ${orphaned.rowCount} desmembramento(s) orfao(s) (legado).`)
 }
 
 // Analise do contrato Caixa, SO para 'processing' obsoleto (heartbeat
