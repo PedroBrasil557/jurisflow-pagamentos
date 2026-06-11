@@ -1,7 +1,13 @@
 import { type Browser, chromium } from 'playwright'
 import { consultarQuitacao } from './caixa-quitacao/consulta.ts'
 
-const API_URL = process.env.API_URL ?? 'http://localhost:3556'
+// Remove barra(s) finais: o API Gateway (HttpApi.url) vem com '/' no fim e a
+// concatenacao `${API_URL}/api/...` geraria '//api/...' (barra dupla) -> 404 no
+// Hono. Local (sem barra) nao expunha isso; prod expunha.
+const API_URL = (process.env.API_URL ?? 'http://localhost:3556').replace(
+  /\/+$/,
+  '',
+)
 const TOKEN = process.env.INTERNAL_API_TOKEN ?? 'dev-internal-token-change-me'
 // Fallback robusto: um POLL_MS invalido (ex.: "5s") nao pode virar NaN ->
 // setTimeout(NaN)=0 -> busy-loop martelando o /claim.
