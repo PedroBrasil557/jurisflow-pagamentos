@@ -25,16 +25,12 @@ import {
   housingComplexOptionsInfiniteQuery,
 } from '../../services/housing-complexes.queries'
 import {
-  ownerTypeFilterOptions,
   type OwnerTypeValue,
-  processStatusOptions,
+  ownerTypeFilterOptions,
   type ProcessStatusValue,
+  processStatusOptions,
 } from '../../services/processes.service'
-import {
-  dateToIso,
-  formatShortDate,
-  isoToDate,
-} from './process-filters.utils'
+import { dateToIso, formatShortDate, isoToDate } from './process-filters.utils'
 
 export type ProcessFiltersValue = {
   statuses: ProcessStatusValue[]

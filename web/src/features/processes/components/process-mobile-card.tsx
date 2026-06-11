@@ -3,8 +3,8 @@ import type { ResolvedPermissions } from '@/features/permissions/services/permis
 import { formatCpf } from '../process-form.utils'
 import type { ProcessListItem } from '../services/processes.service'
 import { ProcessActions } from './process-actions'
-import { ProcessLastMovement } from './process-last-movement'
 import { ProcessIngestionBadge } from './process-ingestion-badge'
+import { ProcessLastMovement } from './process-last-movement'
 import { ProcessStatusBadge } from './process-status-badge'
 
 export function ProcessMobileCard({

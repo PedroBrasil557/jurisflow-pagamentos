@@ -47,6 +47,7 @@ export function processDetailOptions(processId: string) {
       const p = query.state.data?.process
       const running =
         p?.caixaAnalysisStatus === 'processing' ||
+        p?.procuracaoConjuntoStatus === 'processing' ||
         p?.caixaQuitacaoStatus === 'pending' ||
         p?.caixaQuitacaoStatus === 'processing'
       return running ? 2500 : false

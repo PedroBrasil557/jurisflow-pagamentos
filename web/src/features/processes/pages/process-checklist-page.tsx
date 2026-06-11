@@ -23,6 +23,7 @@ import { CaixaQuitacaoCard } from '../components/caixa-quitacao-card'
 import { BatchSection } from '../components/process-batch-section'
 import { ChecklistItemCard } from '../components/process-checklist-item-card'
 import { ChecklistItemDialog } from '../components/process-checklist-item-dialog'
+import { ProcuracaoConjuntoCard } from '../components/procuracao-conjunto-card'
 import {
   buildProcessRelationship,
   canAccessBatch,
@@ -446,6 +447,15 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
             ownerTypeSource={process.ownerTypeSource}
             processId={processId}
             status={process.caixaAnalysisStatus}
+          />
+        ) : null}
+
+        {process.procuracaoConjuntoStatus !== 'idle' ? (
+          <ProcuracaoConjuntoCard
+            housingComplex={process.housingComplex}
+            housingComplexSource={process.housingComplexSource}
+            processId={processId}
+            status={process.procuracaoConjuntoStatus}
           />
         ) : null}
 
