@@ -6,6 +6,7 @@ import {
   type ScannerProvider,
   saveAnthropicKeyRequest,
   saveCaixaOwnerAutoApplyRequest,
+  saveProcuracaoConjuntoAutoApplyRequest,
   saveScanbotKeyRequest,
   saveScannerProviderRequest,
 } from './settings.service'
@@ -15,6 +16,18 @@ export function useSaveCaixaOwnerAutoApply() {
 
   return useMutation({
     mutationFn: (enabled: boolean) => saveCaixaOwnerAutoApplyRequest(enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
+    },
+  })
+}
+
+export function useSaveProcuracaoConjuntoAutoApply() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (enabled: boolean) =>
+      saveProcuracaoConjuntoAutoApplyRequest(enabled),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: settingsKeys.status() })
     },

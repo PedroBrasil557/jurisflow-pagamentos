@@ -17,6 +17,7 @@ import {
   useClearScanbotKey,
   useSaveAnthropicKey,
   useSaveCaixaOwnerAutoApply,
+  useSaveProcuracaoConjuntoAutoApply,
   useSaveScanbotKey,
   useSaveScannerProvider,
 } from '../services/settings.mutations'
@@ -232,12 +233,16 @@ function ScannerProviderSelect({
   )
 }
 
-function CaixaOwnerAutoApplyCard({
+function AutoApplyToggleCard({
+  title,
+  description,
   enabled,
   isLoading,
   isBusy,
   onChange,
 }: {
+  title: string
+  description: string
   enabled: boolean
   isLoading: boolean
   isBusy: boolean
@@ -249,15 +254,8 @@ function CaixaOwnerAutoApplyCard({
     <Card>
       <CardContent className="grid gap-4 p-6">
         <div className="grid gap-1">
-          <h2 className="text-lg font-semibold text-foreground">
-            Auto-preenchimento do titular (Caixa)
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Quando a analise do contrato Caixa identifica o titular com certeza
-            (por CPF ou nome identico), preenche o campo "Tipo de proprietario"
-            automaticamente. Desligado (modo validacao): so registra a evidencia
-            e pede revisao manual.
-          </p>
+          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+          <p className="text-sm text-muted-foreground">{description}</p>
         </div>
 
         <div className="flex items-center justify-between gap-4">
@@ -274,7 +272,7 @@ function CaixaOwnerAutoApplyCard({
             )}
           </div>
           <Switch
-            aria-label="Auto-preenchimento do titular (Caixa)"
+            aria-label={title}
             checked={enabled}
             disabled={isBusy || isLoading}
             id={switchId}
@@ -294,6 +292,7 @@ export function SettingsPage() {
   const clearScanbot = useClearScanbotKey()
   const saveScannerProvider = useSaveScannerProvider()
   const saveCaixaOwnerAutoApply = useSaveCaixaOwnerAutoApply()
+  const saveProcuracaoConjuntoAutoApply = useSaveProcuracaoConjuntoAutoApply()
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('ai')
   const status = statusQuery.data
@@ -355,7 +354,8 @@ export function SettingsPage() {
               status={status?.anthropic}
               title="Chave da API Anthropic"
             />
-            <CaixaOwnerAutoApplyCard
+            <AutoApplyToggleCard
+              description='Quando a analise do contrato Caixa identifica o titular com certeza (por CPF ou nome identico), preenche o campo "Tipo de proprietario" automaticamente. Desligado (modo validacao): so registra a evidencia e pede revisao manual.'
               enabled={status?.caixaOwner?.autoApply ?? false}
               isBusy={saveCaixaOwnerAutoApply.isPending}
               isLoading={statusQuery.isLoading}
@@ -365,6 +365,20 @@ export function SettingsPage() {
                   'Nao foi possivel salvar a configuracao.',
                 )
               }
+              title="Auto-preenchimento do titular (Caixa)"
+            />
+            <AutoApplyToggleCard
+              description='Quando a procuracao identifica o conjunto no endereco do outorgante (match exato com o cadastro), preenche o campo "Conjunto" automaticamente. Desligado (modo validacao): so registra a evidencia e pede revisao manual.'
+              enabled={status?.procuracaoConjunto?.autoApply ?? false}
+              isBusy={saveProcuracaoConjuntoAutoApply.isPending}
+              isLoading={statusQuery.isLoading}
+              onChange={(enabled) =>
+                runMutation(
+                  saveProcuracaoConjuntoAutoApply.mutateAsync(enabled),
+                  'Nao foi possivel salvar a configuracao.',
+                )
+              }
+              title="Auto-preenchimento do conjunto (procuracao)"
             />
           </div>
         ) : (

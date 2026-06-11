@@ -8,6 +8,8 @@ const scanbotKeyClientRoute = settingsClientRoute['scanbot-license']
 const scannerProviderClientRoute = settingsClientRoute['scanner-provider']
 const caixaOwnerAutoApplyClientRoute =
   settingsClientRoute['caixa-owner-auto-apply']
+const procuracaoConjuntoAutoApplyClientRoute =
+  settingsClientRoute['procuracao-conjunto-auto-apply']
 
 export type SettingsStatus = InferResponseType<
   typeof settingsClientRoute.$get,
@@ -105,6 +107,26 @@ export async function saveCaixaOwnerAutoApplyRequest(enabled: boolean) {
 
   return (await response.json()) as InferResponseType<
     typeof caixaOwnerAutoApplyClientRoute.$put,
+    200
+  >
+}
+
+export async function saveProcuracaoConjuntoAutoApplyRequest(enabled: boolean) {
+  const response = await procuracaoConjuntoAutoApplyClientRoute.$put({
+    json: { enabled },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel salvar a configuracao do conjunto (procuracao).',
+      ),
+    )
+  }
+
+  return (await response.json()) as InferResponseType<
+    typeof procuracaoConjuntoAutoApplyClientRoute.$put,
     200
   >
 }
