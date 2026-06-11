@@ -55,9 +55,20 @@ export async function requestQuitacaoRecheck(
 
 export type QuitacaoJob = { processId: string; cpf: string } | null
 
-// Apos esgotar as tentativas, um 'erro' transitorio vira terminal.
-const MAX_ATTEMPTS = 3
+// Apos esgotar as tentativas, um 'erro' transitorio vira terminal. Com o backoff
+// abaixo, 6 tentativas se espalham por ~43min antes do terminal (-> recheck
+// manual). (Nota: 'process' aqui e a TABELA Drizzle, nao o global do Node.)
+const MAX_ATTEMPTS = 6
 const STALE_MINUTES = 10
+
+// Backoff exponencial entre retries do MESMO processo: 60s * 3^(attempts-1),
+// com teto de 900s => 1min, 3min, 9min, 15min(teto), 15min... Da tempo do
+// transitorio (site sobrecarregado) passar sem queimar as tentativas em segundos.
+// O processo continua 'pending' (duravel) — so fica INELEGIVEL ate o backoff
+// passar, e reentra sozinho no proximo claim.
+const BACKOFF_BASE_SECONDS = 60
+const BACKOFF_FACTOR = 3
+const BACKOFF_CAP_SECONDS = 900
 
 // Reivindica atomicamente o proximo processo a consultar: 'pending', ou
 // 'processing' travado (orfao > STALE_MINUTES). Marca 'processing' e incrementa
@@ -77,9 +88,21 @@ export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
       // um job orfao (job vivo nunca expira / orfao nunca expira).
       sql`${process.id} = (
         SELECT id FROM ${process}
-        WHERE caixa_quitacao_status = 'pending'
-           OR (caixa_quitacao_status = 'processing'
-               AND caixa_quitacao_started_at < now() - interval '${sql.raw(String(STALE_MINUTES))} minutes')
+        WHERE (
+          caixa_quitacao_status = 'pending'
+          AND (
+            caixa_quitacao_attempts = 0
+            OR caixa_quitacao_started_at IS NULL
+            OR caixa_quitacao_started_at < now() - (
+              LEAST(
+                ${sql.raw(String(BACKOFF_CAP_SECONDS))},
+                ${sql.raw(String(BACKOFF_BASE_SECONDS))} * power(${sql.raw(String(BACKOFF_FACTOR))}, caixa_quitacao_attempts - 1)
+              )::int * interval '1 second'
+            )
+          )
+        )
+        OR (caixa_quitacao_status = 'processing'
+            AND caixa_quitacao_started_at < now() - interval '${sql.raw(String(STALE_MINUTES))} minutes')
         ORDER BY caixa_quitacao_attempts ASC, caixa_quitacao_started_at ASC NULLS FIRST
         LIMIT 1
         FOR UPDATE SKIP LOCKED

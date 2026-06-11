@@ -8,6 +8,12 @@ const TOKEN = process.env.INTERNAL_API_TOKEN ?? 'dev-internal-token-change-me'
 const parsedPoll = Number(process.env.POLL_MS)
 const POLL_MS =
   Number.isFinite(parsedPoll) && parsedPoll > 0 ? parsedPoll : 5000
+// Pacing GLOBAL: intervalo minimo entre QUAISQUER consultas ao site da Caixa
+// (educado / evita o throttling por taxa). Como ha 1 worker, uma variavel em
+// memoria controla a taxa global. Default 5s.
+const parsedInterval = Number(process.env.CONSULTA_MIN_INTERVAL_MS)
+const MIN_INTERVAL_MS =
+  Number.isFinite(parsedInterval) && parsedInterval >= 0 ? parsedInterval : 5000
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 
@@ -57,7 +63,12 @@ async function main(): Promise<void> {
   }
   process.on('SIGTERM', stop)
   process.on('SIGINT', stop)
-  console.log(`[worker] iniciado. API=${API_URL} poll=${POLL_MS}ms`)
+  console.log(
+    `[worker] iniciado. API=${API_URL} poll=${POLL_MS}ms interval=${MIN_INTERVAL_MS}ms`,
+  )
+
+  // Timestamp do inicio da ultima consulta — base do pacing global.
+  let lastConsultaAt = 0
 
   while (running) {
     let job: Job | null = null
@@ -73,6 +84,15 @@ async function main(): Promise<void> {
       await sleep(POLL_MS)
       continue
     }
+
+    // Pacing GLOBAL: garante >= MIN_INTERVAL_MS desde o INICIO da consulta
+    // anterior antes de bater no site de novo. So espera quando consultas saem
+    // rapido demais (o que causaria throttling); se a anterior demorou, segue.
+    const waitMs = lastConsultaAt + MIN_INTERVAL_MS - Date.now()
+    if (waitMs > 0) {
+      await sleep(waitMs)
+    }
+    lastConsultaAt = Date.now()
 
     console.log(`[worker] consultando processo=${job.processId}`)
     // newContext/newPage DENTRO do try: um erro aqui (ou browser morto) nao deve
