@@ -328,25 +328,28 @@ async function updateProcessStatus(input: {
 
   assertValidStatusTransition(currentProcess.status, input.nextStatus)
 
-  const [updatedProcess] = await db
-    .update(process)
-    .set({
-      status: input.nextStatus,
-      ...input.extraValues,
+  return await db.transaction(async (tx) => {
+    const [updatedProcess] = await tx
+      .update(process)
+      .set({
+        status: input.nextStatus,
+        ...input.extraValues,
+      })
+      .where(eq(process.id, input.processId))
+      .returning()
+
+    await createProcessHistoryEntry({
+      processId: input.processId,
+      actorUserId: input.actor.id,
+      eventType: input.eventType,
+      fromStatus: currentProcess.status,
+      toStatus: input.nextStatus,
+      notes: input.notes ?? null,
+      executor: tx,
     })
-    .where(eq(process.id, input.processId))
-    .returning()
 
-  await createProcessHistoryEntry({
-    processId: input.processId,
-    actorUserId: input.actor.id,
-    eventType: input.eventType,
-    fromStatus: currentProcess.status,
-    toStatus: input.nextStatus,
-    notes: input.notes ?? null,
+    return updatedProcess
   })
-
-  return updatedProcess
 }
 
 export async function listProcesses(
@@ -935,24 +938,42 @@ export async function updateLegalProcess(
     )
   }
 
-  const [updatedProcess] = await db
-    .update(process)
-    .set({
-      legalProcessNumber: payload.legalProcessNumber,
-      causeValue: payload.causeValue,
-      protocolDate: payload.protocolDate,
+  const legalFieldDiff: ProcessHistoryChangedFields = {}
+  for (const fieldKey of [
+    'legalProcessNumber',
+    'causeValue',
+    'protocolDate',
+  ] as const) {
+    const before = currentProcess[fieldKey]
+    const after = payload[fieldKey]
+    if (before !== after) {
+      legalFieldDiff[fieldKey] = { before, after }
+    }
+  }
+
+  return await db.transaction(async (tx) => {
+    const [updatedProcess] = await tx
+      .update(process)
+      .set({
+        legalProcessNumber: payload.legalProcessNumber,
+        causeValue: payload.causeValue,
+        protocolDate: payload.protocolDate,
+      })
+      .where(eq(process.id, processId))
+      .returning()
+
+    await createProcessHistoryEntry({
+      processId,
+      actorUserId: actor.id,
+      eventType: 'UPDATED',
+      changedFields:
+        Object.keys(legalFieldDiff).length > 0 ? legalFieldDiff : null,
+      notes: 'Dados do processo juridico atualizados.',
+      executor: tx,
     })
-    .where(eq(process.id, processId))
-    .returning()
 
-  await createProcessHistoryEntry({
-    processId,
-    actorUserId: actor.id,
-    eventType: 'UPDATED',
-    notes: 'Dados do processo juridico atualizados.',
+    return updatedProcess
   })
-
-  return updatedProcess
 }
 
 export async function finalizeProcess(
@@ -1009,26 +1030,29 @@ export async function cancelProcess(
 
   const cancellationReason = payload.reason?.trim() || null
 
-  const [cancelledProcess] = await db
-    .update(process)
-    .set({
-      status: 'CANCELADO',
-      cancelledAt: new Date(),
-      cancellationReason,
+  return await db.transaction(async (tx) => {
+    const [cancelledProcess] = await tx
+      .update(process)
+      .set({
+        status: 'CANCELADO',
+        cancelledAt: new Date(),
+        cancellationReason,
+      })
+      .where(eq(process.id, processId))
+      .returning()
+
+    await createProcessHistoryEntry({
+      processId,
+      actorUserId: actor.id,
+      eventType: 'CANCELLED',
+      fromStatus: currentProcess.status,
+      toStatus: 'CANCELADO',
+      notes: cancellationReason ?? 'Processo cancelado.',
+      executor: tx,
     })
-    .where(eq(process.id, processId))
-    .returning()
 
-  await createProcessHistoryEntry({
-    processId,
-    actorUserId: actor.id,
-    eventType: 'CANCELLED',
-    fromStatus: currentProcess.status,
-    toStatus: 'CANCELADO',
-    notes: cancellationReason ?? 'Processo cancelado.',
+    return cancelledProcess
   })
-
-  return cancelledProcess
 }
 
 export async function setDocumentationAssignee(
