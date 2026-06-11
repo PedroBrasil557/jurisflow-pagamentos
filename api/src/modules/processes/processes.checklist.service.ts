@@ -40,6 +40,10 @@ import {
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
 import {
+  isProcuracaoDocKey,
+  startProcuracaoConjuntoAnalysis,
+} from './processes.procuracao-conjunto.service'
+import {
   process,
   processDocument,
   processDocumentFile,
@@ -1262,6 +1266,17 @@ export async function submitProcessChecklistItem(input: {
       triggeredByUserId: input.actor.id,
     }).catch((error) => {
       console.error('[caixa-owner] falha ao disparar analise:', error)
+    })
+  }
+
+  // Gatilho automatico: ao anexar a procuracao, dispara a analise do conjunto
+  // (a partir do endereco do outorgante) em background.
+  if (didUploadFile && isProcuracaoDocKey(checklistItem.documentType.key)) {
+    startProcuracaoConjuntoAnalysis({
+      processId: input.processId,
+      triggeredByUserId: input.actor.id,
+    }).catch((error) => {
+      console.error('[procuracao-conjunto] falha ao disparar analise:', error)
     })
   }
 

@@ -49,6 +49,40 @@ export async function saveCaixaOwnerAutoApply(
   return { enabled }
 }
 
+// Flag de auto-aplicacao do conjunto via procuracao (default false = shadow).
+export async function getProcuracaoConjuntoAutoApply(): Promise<boolean> {
+  const [row] = await db
+    .select({
+      procuracaoConjuntoAutoApply: appSettings.procuracaoConjuntoAutoApply,
+    })
+    .from(appSettings)
+    .where(eq(appSettings.id, SETTINGS_ID))
+    .limit(1)
+
+  return row?.procuracaoConjuntoAutoApply ?? false
+}
+
+export async function saveProcuracaoConjuntoAutoApply(
+  enabled: boolean,
+): Promise<{ enabled: boolean }> {
+  const now = new Date()
+
+  await db
+    .insert(appSettings)
+    .values({
+      id: SETTINGS_ID,
+      procuracaoConjuntoAutoApply: enabled,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { procuracaoConjuntoAutoApply: enabled, updatedAt: now },
+    })
+
+  return { enabled }
+}
+
 // Le a chave salva no banco (texto puro), ou null se nao houver.
 export async function getAnthropicApiKey(): Promise<string | null> {
   const [row] = await db

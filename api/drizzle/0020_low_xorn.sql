@@ -1,0 +1,1 @@
+ALTER TABLE "app_settings" ADD COLUMN "procuracao_conjunto_auto_apply" boolean DEFAULT false NOT NULL;

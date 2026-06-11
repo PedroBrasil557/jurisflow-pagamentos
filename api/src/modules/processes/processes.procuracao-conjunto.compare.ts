@@ -104,6 +104,9 @@ export const PROCURACAO_CONJUNTO_HISTORY = {
   DIVERGENCE: 'PROCURACAO_CONJUNTO_DIVERGENCE',
 } as const
 
+export type ProcuracaoConjuntoHistoryEvent =
+  (typeof PROCURACAO_CONJUNTO_HISTORY)[keyof typeof PROCURACAO_CONJUNTO_HISTORY]
+
 export type ProcuracaoConjuntoOutcome = {
   // Estado operacional (process.procuracao_conjunto_status).
   analysisStatus: 'done' | 'review'
@@ -113,7 +116,7 @@ export type ProcuracaoConjuntoOutcome = {
   // Divergencia: a procuracao indica um conjunto diferente do que ja esta no
   // processo (escolhido por humano) — para destacar na UI, nao para sobrescrever.
   divergence: boolean
-  historyEvent: string | null
+  historyEvent: ProcuracaoConjuntoHistoryEvent | null
 }
 
 // Decide o desfecho a partir do match determinístico + estado atual + flag. PURA.

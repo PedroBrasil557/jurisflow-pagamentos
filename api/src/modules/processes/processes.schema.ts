@@ -42,7 +42,9 @@ export type ProcessHistoryMetadata = {
   aiAnalysisId?: string
   fromOwnerType?: string
   toOwnerType?: string
-  matchedBy?: 'cpf' | 'name' | 'none'
+  matchedBy?: 'cpf' | 'name' | 'name+city' | 'none'
+  fromHousingComplex?: string
+  toHousingComplex?: string
 }
 
 export const process = pgTable(
