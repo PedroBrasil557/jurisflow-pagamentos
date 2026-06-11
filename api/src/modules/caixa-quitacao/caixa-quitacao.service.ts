@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
+import { logErrorEvent, logEvent } from '../../shared/observability/log'
 import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
 import { attachSystemChecklistFile } from '../processes/processes.checklist.service'
 import { process } from '../processes/processes.schema'
@@ -138,14 +139,36 @@ export async function recordQuitacaoResult(
     .limit(1)
 
   if (!proc) {
+    logEvent('quitacao.result_received', {
+      processId: input.processId,
+      result: input.result,
+      hasPdf: !!input.pdfBase64,
+      procStatus: 'not_found',
+    })
     throw new ServiceError(404, 'Processo nao encontrado.')
   }
+
+  logEvent('quitacao.result_received', {
+    processId: input.processId,
+    result: input.result,
+    hasPdf: !!input.pdfBase64,
+    pdfBytes: input.pdfBase64
+      ? Buffer.from(input.pdfBase64, 'base64').length
+      : 0,
+    procStatus: proc.status,
+    attempts: proc.attempts,
+  })
 
   // Correlaciona o resultado com o claim: so aceita /result para um processo que
   // esta REALMENTE sendo consultado ('processing' — estado em que so o claim do
   // worker poe o processo). Bloqueia /result forjado/replay para um processId
   // arbitrario (que injetaria uma declaracao falsa via attachSystemChecklistFile).
   if (proc.status !== 'processing') {
+    logEvent('quitacao.result_rejected', {
+      processId: input.processId,
+      procStatus: proc.status,
+      reason: 'not_processing',
+    })
     throw new ServiceError(
       409,
       'Nenhuma consulta de quitacao em andamento para este processo.',
@@ -166,17 +189,40 @@ export async function recordQuitacaoResult(
         input.pdfFilename ?? 'Declaracao de Quitacao.pdf',
         { type: 'application/pdf' },
       )
-      await attachSystemChecklistFile({
+      const attached = await attachSystemChecklistFile({
         processId: input.processId,
         documentTypeKey: QUITACAO_DOC_KEY,
         file,
       })
+      // didUploadFile=false => o anexo foi PULADO de PROPOSITO (status do processo
+      // nao aceita anexos: EM_PROCESSO/FINALIZADO/CANCELADO - guard A3). NAO vira
+      // 'erro' (evita retry infinito), mas o log torna o caso VISIVEL: era o ponto
+      // cego onde o sistema marcava quitado sem anexar o termo, silenciosamente.
+      logEvent('quitacao.attach', {
+        processId: input.processId,
+        documentTypeKey: QUITACAO_DOC_KEY,
+        didUploadFile: attached?.didUploadFile ?? null,
+        pdfBytes: bytes.length,
+      })
     } catch (error) {
+      logErrorEvent('quitacao.attach_failed', {
+        processId: input.processId,
+        error: error instanceof Error ? error.message : String(error),
+      })
       result = 'erro'
       message = `Quitado, mas falhou ao anexar a declaracao: ${
         error instanceof Error ? error.message : 'erro'
       }`
     }
+  } else if (input.result === 'quitado' && !input.pdfBase64) {
+    // Quitado SEM PDF: o worker nao mandou a declaracao. Visibilidade do caso.
+    logEvent('quitacao.attach', {
+      processId: input.processId,
+      documentTypeKey: QUITACAO_DOC_KEY,
+      didUploadFile: false,
+      pdfBytes: 0,
+      reason: 'no_pdf',
+    })
   }
 
   let nextStatus: string = result
@@ -203,8 +249,19 @@ export async function recordQuitacaoResult(
     .returning({ id: process.id })
 
   if (updated.length === 0) {
+    logEvent('quitacao.recorded', {
+      processId: input.processId,
+      finalStatus: 'ignored',
+      reason: 'status_changed_during_record',
+    })
     return { status: 'ignored' }
   }
+
+  logEvent('quitacao.recorded', {
+    processId: input.processId,
+    finalStatus: nextStatus,
+    result,
+  })
 
   return { status: nextStatus }
 }
