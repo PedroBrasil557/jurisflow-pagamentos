@@ -92,6 +92,19 @@ export const process = pgTable(
     city: text('city').notNull(),
     district: text('district').notNull(),
     housingComplex: text('housing_complex').notNull(),
+    // Origem do housingComplex: 'human' (escolhido na mao) | 'system' (auto-
+    // aplicado pela analise da procuracao). Habilita human-lock + proveniencia
+    // (espelha ownerTypeSource).
+    housingComplexSource: text('housing_complex_source')
+      .default('human')
+      .notNull(),
+    // Estado operacional da analise da procuracao (conjunto a partir do endereco
+    // do outorgante): idle | processing | done | review | error. Reset no boot.
+    procuracaoConjuntoStatus: text('procuracao_conjunto_status')
+      .default('idle')
+      .notNull(),
+    // Heartbeat do job: setado SO no claim. Base do staleness.
+    procuracaoConjuntoStartedAt: timestamp('procuracao_conjunto_started_at'),
     street: text('street').notNull(),
     number: text('number').notNull(),
     complement: text('complement').notNull(),

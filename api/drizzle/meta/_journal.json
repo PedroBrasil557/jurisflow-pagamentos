@@ -134,6 +134,13 @@
       "when": 1781118077664,
       "tag": "0018_fantastic_dragon_lord",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1781146441398,
+      "tag": "0019_typical_karen_page",
+      "breakpoints": true
     }
   ]
 }

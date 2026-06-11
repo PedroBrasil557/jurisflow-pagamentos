@@ -46,6 +46,20 @@ if (orphanedCaixa.rowCount && orphanedCaixa.rowCount > 0) {
   console.log(`Reset ${orphanedCaixa.rowCount} analise(s) Caixa orfa(s).`)
 }
 
+// Analise da procuracao (conjunto a partir do endereco): 'processing' obsoleto
+// (> 10 min) vira 'error' para recuperacao na UI. Mesma logica do caixa-owner.
+const orphanedProcuracao = await pool.query(
+  `UPDATE process
+   SET procuracao_conjunto_status = 'error'
+   WHERE procuracao_conjunto_status = 'processing'
+     AND procuracao_conjunto_started_at < now() - interval '10 minutes'`,
+)
+if (orphanedProcuracao.rowCount && orphanedProcuracao.rowCount > 0) {
+  console.log(
+    `Reset ${orphanedProcuracao.rowCount} analise(s) de procuracao orfa(s).`,
+  )
+}
+
 // Consulta de quitacao (worker RPA): 'processing' OBSOLETO (> 10 min) volta para
 // 'pending' para ser reprocessado. Staleness pelo heartbeat, nao por updated_at.
 const orphanedQuitacao = await pool.query(
