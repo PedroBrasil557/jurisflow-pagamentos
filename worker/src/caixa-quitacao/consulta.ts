@@ -73,6 +73,19 @@ async function captureEvidence(page: Page, reason: string): Promise<void> {
   )
 }
 
+// Valida que os bytes sao um PDF real: assinatura "%PDF-" + tamanho minimo
+// plausivel (uma declaracao tem varios KB; < 1KB e erro/truncado).
+function isPdfBytes(bytes: Buffer): boolean {
+  return (
+    bytes.length > 1024 &&
+    bytes[0] === 0x25 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x44 &&
+    bytes[3] === 0x46 &&
+    bytes[4] === 0x2d
+  )
+}
+
 // Executa a consulta de quitacao para um CPF. NAO lanca em fluxo normal: erros
 // inesperados viram result 'erro'. Recebe uma Page ja criada (o worker controla
 // o ciclo de vida do browser/contexto).
@@ -114,11 +127,26 @@ export async function consultarQuitacao(
     }
   }
 
-  // PASSO 2: preenche o CPF e submete.
+  // PASSO 2: preenche o CPF e submete. O clique pode LANCAR (botao nao clicavel
+  // sob carga/site lento) — tratamos como desfecho transitorio + evidencia, nunca
+  // deixamos a excecao escapar para um 'erro' opaco.
   const cpfInput = page.locator(SELECTORS.cpf)
-  await cpfInput.fill('')
-  await cpfInput.pressSequentially(digits, { delay: 50 })
-  await page.locator(SELECTORS.consultar).click({ timeout: 15_000 })
+  await cpfInput.fill('').catch(() => {})
+  await cpfInput.pressSequentially(digits, { delay: 50 }).catch(() => {})
+  const submitted = await page
+    .locator(SELECTORS.consultar)
+    .click({ timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (!submitted) {
+    await captureEvidence(page, 'consultar_nao_clicavel')
+    return {
+      result: 'erro',
+      message:
+        'Nao foi possivel acionar "Consultar" (pagina nao respondeu). Sera retentada.',
+      pdf: null,
+    }
+  }
 
   // PASSO 3: espera um DESFECHO deterministico, correndo os sinais conhecidos
   // (mapeados ao vivo). O que vier PRIMEIRO decide:
@@ -194,20 +222,62 @@ export async function consultarQuitacao(
     return { result: 'nao_encontrado', message: classified.message, pdf: null }
   }
 
-  // PASSO 5: quitado => emitir => download direto do PDF da Declaracao de Quitacao.
-  const downloadPromise = page.waitForEvent('download', { timeout: 30_000 })
-  await emit.click()
-  const download = await downloadPromise
-  const path = await download.path()
-  const bytes = path ? await readFile(path) : Buffer.alloc(0)
-
-  // Quitado confirmado, mas o PDF veio vazio/falhou: trata como 'erro'
-  // (reprocessavel) em vez de anexar uma declaracao em branco como sucesso.
-  if (bytes.length === 0) {
+  // PASSO 5: quitado => emitir declaracao => CAPTURAR o PDF deterministicamente.
+  // Boas praticas de RPA: (1) armar o listener ANTES do clique; (2) timeout NAO
+  // lanca (vira desfecho tratado, como os demais estados); (3) checar failure();
+  // (4) VALIDAR o artefato (%PDF + tamanho), pois o evento de download nao
+  // garante um PDF integro (pode vir HTML de erro / truncado). Toda falha e
+  // transitoria (retry) + evidencia.
+  const downloadPromise = page
+    .waitForEvent('download', { timeout: 45_000 })
+    .catch(() => null)
+  const emitClicked = await emit
+    .click({ timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (!emitClicked) {
+    await captureEvidence(page, 'emitir_nao_clicavel')
     return {
       result: 'erro',
       message:
-        'Contrato quitado, mas o download da declaracao falhou (PDF vazio).',
+        'Nao foi possivel acionar "Emitir declaracao". Sera retentada.',
+      pdf: null,
+    }
+  }
+  const download = await downloadPromise
+
+  // (a) o download nem comecou (abriu inline / nova aba / site nao gerou).
+  if (!download) {
+    await captureEvidence(page, 'download_nao_iniciou')
+    return {
+      result: 'erro',
+      message:
+        'A declaracao nao foi gerada (download nao iniciou). Sera retentada.',
+      pdf: null,
+    }
+  }
+
+  // (b) o download comecou mas falhou no meio.
+  const failure = await download.failure()
+  if (failure) {
+    await captureEvidence(page, 'download_falhou')
+    return {
+      result: 'erro',
+      message: `Falha no download da declaracao (${failure}). Sera retentada.`,
+      pdf: null,
+    }
+  }
+
+  // (c) le e VALIDA o artefato: precisa ser um PDF real (assinatura + tamanho),
+  // nao um HTML de erro nem um arquivo truncado.
+  const path = await download.path()
+  const bytes = path ? await readFile(path) : Buffer.alloc(0)
+  if (!isPdfBytes(bytes)) {
+    await captureEvidence(page, 'declaracao_invalida')
+    return {
+      result: 'erro',
+      message:
+        'A declaracao baixada nao e um PDF valido (vazio/corrompido). Sera retentada.',
       pdf: null,
     }
   }
