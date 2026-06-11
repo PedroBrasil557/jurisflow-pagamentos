@@ -5,6 +5,7 @@ import type { AppBindings } from '../../shared/types/app'
 import { jsonValidator } from '../../shared/validation/validators'
 import {
   saveAnthropicKeyPayloadSchema,
+  saveCaixaOwnerAutoApplyPayloadSchema,
   saveScanbotKeyPayloadSchema,
   saveScannerProviderPayloadSchema,
 } from './settings.schemas'
@@ -12,10 +13,12 @@ import {
   clearAnthropicApiKey,
   clearScanbotLicenseKey,
   getAnthropicKeyStatus,
+  getCaixaOwnerAutoApply,
   getScanbotKeyStatus,
   getScanbotLicenseKey,
   getScannerProvider,
   saveAnthropicApiKey,
+  saveCaixaOwnerAutoApply,
   saveScanbotLicenseKey,
   saveScannerProvider,
 } from './settings.service'
@@ -24,20 +27,50 @@ export const settingsAdminRoutes = new Hono<AppBindings>()
   .use('*', requireRole('admin'))
   .get('/', async (c) => {
     try {
-      const [anthropic, scanbot, scannerProvider] = await Promise.all([
-        getAnthropicKeyStatus(),
-        getScanbotKeyStatus(),
-        getScannerProvider(),
-      ])
+      const [anthropic, scanbot, scannerProvider, caixaOwnerAutoApply] =
+        await Promise.all([
+          getAnthropicKeyStatus(),
+          getScanbotKeyStatus(),
+          getScannerProvider(),
+          getCaixaOwnerAutoApply(),
+        ])
 
       return c.json(
-        { anthropic, scanbot, scanner: { provider: scannerProvider } },
+        {
+          anthropic,
+          scanbot,
+          scanner: { provider: scannerProvider },
+          caixaOwner: { autoApply: caixaOwnerAutoApply },
+        },
         200,
       )
     } catch (error) {
       return handleServiceError(c, error)
     }
   })
+  .put(
+    '/caixa-owner-auto-apply',
+    jsonValidator(saveCaixaOwnerAutoApplyPayloadSchema),
+    async (c) => {
+      try {
+        const result = await saveCaixaOwnerAutoApply(
+          c.req.valid('json').enabled,
+        )
+
+        return c.json(
+          {
+            message: result.enabled
+              ? 'Auto-preenchimento do titular (Caixa) ativado.'
+              : 'Auto-preenchimento do titular (Caixa) desativado (modo validacao).',
+            caixaOwner: result,
+          },
+          200,
+        )
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .put(
     '/scanner-provider',
     jsonValidator(saveScannerProviderPayloadSchema),
