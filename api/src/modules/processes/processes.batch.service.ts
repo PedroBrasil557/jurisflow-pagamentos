@@ -25,6 +25,7 @@ import {
   assertCanAccessBatch,
   assertCanAccessDocumentation,
   assertProcessAction,
+  resolveUserPermissions,
 } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
 import {
@@ -36,6 +37,14 @@ import { ProcessServiceError } from './processes.errors'
 import { extractDocumentsFromFiles } from './processes.extraction.service'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { importDocumentBundle } from './processes.import.service'
+import {
+  enqueueIngestion,
+  failIngestion,
+  INGESTION_HEARTBEAT_MS,
+  type IngestionJob,
+  markIngestionDone,
+  renewIngestionLease,
+} from './processes.ingestion.queue'
 import { process, processBatchFile } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
@@ -520,116 +529,158 @@ async function applyExtractedFieldsToDraft(
   return { hasIdentity: Boolean(fullName) || Boolean(cpf) }
 }
 
-// Ingestao digitalizacao em background: extrai campos + classifica, preenche o rascunho,
-// desmembra/anexa e define o status final por completude. NUNCA lanca: grava o
-// resultado em splitStatus/splitMessage.
-async function runScanIngestion(input: {
+// Trabalho PURO da ingestao digitalizacao: extrai campos + classifica, preenche o
+// rascunho, desmembra/anexa e decide o status final por completude. Retorna a
+// mensagem de desfecho (sucesso) ou LANCA em falha. NAO grava splitStatus — quem
+// chama mapeia para splitStatus (inline) ou para a fila (worker).
+async function runIngestionWork(input: {
   processId: string
   fileRecord: typeof processBatchFile.$inferSelect
   actor: ProcessActor
   perms: ResolvedPermissions
-}) {
+}): Promise<string> {
   const { fileRecord } = input
 
-  try {
-    const bytes = await getStorageObjectBytes({
-      bucketName: fileRecord.bucketName,
-      objectKey: fileRecord.objectKey,
-    }).catch(() => {
-      throw new ProcessServiceError(
-        503,
-        'Nao foi possivel ler o arquivo do storage. Tente novamente.',
-      )
-    })
-
-    const file = new File(
-      [new Uint8Array(bytes)],
-      fileRecord.originalFileName,
-      {
-        type: 'application/pdf',
-      },
+  const bytes = await getStorageObjectBytes({
+    bucketName: fileRecord.bucketName,
+    objectKey: fileRecord.objectKey,
+  }).catch(() => {
+    throw new ProcessServiceError(
+      503,
+      'Nao foi possivel ler o arquivo do storage. Tente novamente.',
     )
+  })
 
-    const { fields, documents } = await extractDocumentsFromFiles([file])
+  const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
+    type: 'application/pdf',
+  })
 
-    // Best-effort: aplicar campos extraidos nao pode derrubar o anexo dos docs.
-    let hasIdentity = false
-    try {
-      const applied = await applyExtractedFieldsToDraft(input.processId, fields)
-      hasIdentity = applied.hasIdentity
-    } catch (error) {
-      console.error('digitalizacao: falha ao aplicar campos no rascunho', {
-        processId: input.processId,
-        error: String(error),
-      })
-    }
+  const { fields, documents } = await extractDocumentsFromFiles([file])
 
-    const result = await importDocumentBundle({
+  // Best-effort: aplicar campos extraidos nao pode derrubar o anexo dos docs.
+  let hasIdentity = false
+  try {
+    const applied = await applyExtractedFieldsToDraft(input.processId, fields)
+    hasIdentity = applied.hasIdentity
+  } catch (error) {
+    console.error('digitalizacao: falha ao aplicar campos no rascunho', {
       processId: input.processId,
-      file,
-      documents,
-      actor: input.actor,
-      perms: input.perms,
+      error: String(error),
     })
+  }
 
-    // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o
-    // sync nao roda: decidimos explicitamente.
-    if (result.attached.length === 0) {
-      // Documentos reconhecidos mas nenhum anexado: registra o motivo p/ diagnostico.
-      if (result.skipped.length > 0) {
-        console.error(
-          'digitalizacao: documentos reconhecidos mas nenhum anexado',
-          {
-            processId: input.processId,
-            skipped: result.skipped,
-          },
-        )
-      }
+  const result = await importDocumentBundle({
+    processId: input.processId,
+    file,
+    documents,
+    actor: input.actor,
+    perms: input.perms,
+  })
 
-      const current = await getProcessRecordOrThrow(input.processId)
-      if (current.status === 'RASCUNHO' && hasIdentity) {
-        await db
-          .update(process)
-          .set({ status: 'CADASTRADO' })
-          .where(eq(process.id, input.processId))
-
-        await createProcessHistoryEntry({
+  // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o
+  // sync nao roda: decidimos explicitamente.
+  if (result.attached.length === 0) {
+    // Documentos reconhecidos mas nenhum anexado: registra o motivo p/ diagnostico.
+    if (result.skipped.length > 0) {
+      console.error(
+        'digitalizacao: documentos reconhecidos mas nenhum anexado',
+        {
           processId: input.processId,
-          actorUserId: input.actor.id,
-          eventType: 'STATUS_CHANGED',
-          fromStatus: 'RASCUNHO',
-          toStatus: 'CADASTRADO',
-          notes:
-            'Dados extraidos por digitalizacao; nenhum documento foi separado.',
-        })
-
-        await setSplitStatus(
-          fileRecord.id,
-          'done',
-          'Dados extraidos. Nenhum documento foi separado — anexe manualmente.',
-        )
-        return
-      }
-
-      await setSplitStatus(
-        fileRecord.id,
-        'done',
-        'Nada foi reconhecido no documento. Refaca a captura.',
+          skipped: result.skipped,
+        },
       )
-      return
     }
 
-    await setSplitStatus(fileRecord.id, 'done', result.message)
+    const current = await getProcessRecordOrThrow(input.processId)
+    if (current.status === 'RASCUNHO' && hasIdentity) {
+      await db
+        .update(process)
+        .set({ status: 'CADASTRADO' })
+        .where(eq(process.id, input.processId))
+
+      await createProcessHistoryEntry({
+        processId: input.processId,
+        actorUserId: input.actor.id,
+        eventType: 'STATUS_CHANGED',
+        fromStatus: 'RASCUNHO',
+        toStatus: 'CADASTRADO',
+        notes:
+          'Dados extraidos por digitalizacao; nenhum documento foi separado.',
+      })
+
+      return 'Dados extraidos. Nenhum documento foi separado — anexe manualmente.'
+    }
+
+    return 'Nada foi reconhecido no documento. Refaca a captura.'
+  }
+
+  return result.message
+}
+
+// Processa um job reivindicado da FILA (worker, Fase 2). Reconstroi actor/perms do
+// usuario que fez o upload (a autorizacao ja ocorreu no enqueue, na rota), roda o
+// trabalho com heartbeat do lease e grava o desfecho via primitivas da fila
+// (done | retry com backoff | dead-letter). NUNCA lanca.
+export async function processClaimedIngestion(
+  job: IngestionJob,
+): Promise<void> {
+  const [fileRecord] = await db
+    .select()
+    .from(processBatchFile)
+    .where(eq(processBatchFile.id, job.batchFileId))
+    .limit(1)
+
+  if (!fileRecord) {
+    // Linha sumiu (processo deletado entre enqueue e claim): encerra sem retry.
+    await markIngestionDone(
+      job.batchFileId,
+      job.leaseToken,
+      'Arquivo inexistente.',
+    )
+    return
+  }
+
+  // Heartbeat: renova o lease enquanto processa, para um job longo (IA) nao ser
+  // considerado orfao e reivindicado em duplicidade. O fencing token garante que,
+  // se o lease for perdido, a conclusao deste worker vira no-op (nao sobrescreve).
+  const heartbeat = setInterval(() => {
+    void renewIngestionLease(job.batchFileId, job.leaseToken)
+  }, INGESTION_HEARTBEAT_MS)
+
+  try {
+    const [uploader] = await db
+      .select({ id: user.id, role: user.role })
+      .from(user)
+      .where(eq(user.id, fileRecord.uploadedByUserId))
+      .limit(1)
+
+    if (!uploader) {
+      throw new ProcessServiceError(404, 'Usuario do upload nao encontrado.')
+    }
+
+    const perms = await resolveUserPermissions(uploader.id, uploader.role)
+    const actor = { id: uploader.id } as unknown as ProcessActor
+
+    const message = await runIngestionWork({
+      processId: fileRecord.processId,
+      fileRecord,
+      actor,
+      perms,
+    })
+    await markIngestionDone(job.batchFileId, job.leaseToken, message)
   } catch (error) {
     const message =
       error instanceof ServiceError
         ? error.message
         : 'Nao foi possivel processar o documento.'
-    console.error('Falha na ingestao digitalizacao', {
-      fileId: fileRecord.id,
+    console.error('Falha na ingestao (worker)', {
+      batchFileId: job.batchFileId,
+      attempts: job.attempts,
       error: String(error),
     })
-    await setSplitStatus(fileRecord.id, 'error', message)
+    await failIngestion(job.batchFileId, job.leaseToken, job.attempts, message)
+  } finally {
+    clearInterval(heartbeat)
   }
 }
 
@@ -686,7 +737,8 @@ async function storeIngestionFile(input: {
         mimeType: 'application/pdf',
         sizeInBytes: input.file.size,
         uploadedByUserId: input.actor.id,
-        splitStatus: 'processing',
+        // Entra na fila duravel: o worker reivindica (claim+lease) e processa.
+        splitStatus: 'queued',
         splitUpdatedAt: new Date(),
       })
       .returning()
@@ -713,14 +765,8 @@ export async function startScanIngestion(input: {
     actor: input.actor,
   })
 
-  // Dispara sem await: o trabalho continua apos a resposta HTTP.
-  void runScanIngestion({
-    processId: input.processId,
-    fileRecord,
-    actor: input.actor,
-    perms: input.perms,
-  })
-
+  // O arquivo ja entra como 'queued' (storeIngestionFile); o worker reivindica e
+  // processa em background. Retorna imediato — o front acompanha por splitStatus.
   return { batchFileId: fileRecord.id }
 }
 
@@ -760,24 +806,11 @@ export async function reprocessFailedIngestion(input: {
     )
   }
 
-  // Re-roda SEQUENCIALMENTE os que conseguir reivindicar (claim atomico).
-  void (async () => {
-    for (const fileRecord of errorFiles) {
-      if (await claimSplitProcessing(fileRecord.id)) {
-        await runScanIngestion({
-          processId: input.processId,
-          fileRecord,
-          actor: input.actor,
-          perms: input.perms,
-        })
-      }
-    }
-  })().catch((error) => {
-    console.error('Falha no reprocessamento da ingestao', {
-      processId: input.processId,
-      error: String(error),
-    })
-  })
+  // Re-enfileira os que falharam: enqueueIngestion reseta para 'queued' e zera
+  // tentativas/lease/dead-letter; o worker reivindica e processa.
+  for (const fileRecord of errorFiles) {
+    await enqueueIngestion(fileRecord.id)
+  }
 
   return { count: errorFiles.length }
 }
@@ -953,7 +986,8 @@ export async function completeDocumentImport(input: {
           mimeType: 'application/pdf',
           sizeInBytes: head.sizeInBytes,
           uploadedByUserId: input.actor.id,
-          splitStatus: 'processing',
+          // Entra na fila duravel: o worker reivindica e processa.
+          splitStatus: 'queued',
           splitUpdatedAt: new Date(),
         })
         .returning()
@@ -972,22 +1006,7 @@ export async function completeDocumentImport(input: {
     )
   }
 
-  // Coordenador SEQUENCIAL (detached) — mesma logica do multi-import.
-  void (async () => {
-    for (const fileRecord of fileRecords) {
-      await runScanIngestion({
-        processId: input.processId,
-        fileRecord,
-        actor: input.actor,
-        perms: input.perms,
-      })
-    }
-  })().catch((error) => {
-    console.error('Falha no coordenador de ingestao (import presigned)', {
-      processId: input.processId,
-      error: String(error),
-    })
-  })
+  // Os arquivos ja entram como 'queued'; o worker reivindica e processa.
 
   return { batchFileIds: fileRecords.map((record) => record.id) }
 }

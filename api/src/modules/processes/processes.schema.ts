@@ -63,7 +63,9 @@ export const process = pgTable(
     // pela analise do contrato Caixa). Habilita human-lock + proveniencia.
     ownerTypeSource: text('owner_type_source').default('human').notNull(),
     // Estado operacional (NAO evidencia) da analise do contrato Caixa:
-    // idle | processing | done | review | error. Reset no boot se 'processing'.
+    // idle | processing | done | review | error. Orfao ('processing' apos crash)
+    // volta a ser reivindicavel por staleness no claim (caixa_analysis_started_at);
+    // NAO ha reset no boot.
     caixaAnalysisStatus: text('caixa_analysis_status')
       .default('idle')
       .notNull(),
@@ -101,7 +103,9 @@ export const process = pgTable(
       .default('human')
       .notNull(),
     // Estado operacional da analise da procuracao (conjunto a partir do endereco
-    // do outorgante): idle | processing | done | review | error. Reset no boot.
+    // do outorgante): idle | processing | done | review | error. Orfao
+    // ('processing' apos crash) e reivindicavel por staleness no claim (heartbeat
+    // abaixo); NAO ha reset no boot.
     procuracaoConjuntoStatus: text('procuracao_conjunto_status')
       .default('idle')
       .notNull(),
@@ -427,10 +431,29 @@ export const processBatchFile = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
     uploadedAt: timestamp('uploaded_at').defaultNow().notNull(),
-    // Estado do desmembramento assincrono: 'idle' | 'processing' | 'done' | 'error'.
+    // Estado do desmembramento/ingestao assincrona (fila duravel):
+    // 'idle' | 'queued' | 'processing' | 'done' | 'error'. 'queued' = na fila,
+    // esperando o worker reivindicar (api/src/worker.ts). Recuperacao de orfao e do
+    // proprio worker: o claim re-reivindica 'processing' com lease expirado (campos
+    // abaixo). O fluxo legado de batch-split (claimSplitProcessing) usa 'processing'
+    // SEM lease e tem stale-reclaim proprio.
     splitStatus: text('split_status').notNull().default('idle'),
     splitMessage: text('split_message'),
     splitUpdatedAt: timestamp('split_updated_at'),
+    // Tentativas ja consumidas (incrementadas no claim). Ao atingir o maximo, o
+    // job vira dead-letter ('error' terminal) em vez de re-tentar para sempre.
+    splitAttempts: integer('split_attempts').notNull().default(0),
+    // Lease: ate quando o worker que reivindicou "segura" o job. Renovado por
+    // heartbeat durante o processamento. Em 'processing': expirou < now() => orfao,
+    // reivindicavel. Em 'queued': funciona como "elegivel a partir de" (backoff de
+    // retry); null = elegivel ja.
+    splitLeaseExpiresAt: timestamp('split_lease_expires_at'),
+    // Fencing token do claim (uuid): renovacao/conclusao so valem para o dono atual
+    // do lease — impede um worker lento/revivido sobrescrever o job ja reivindicado
+    // por outro apos a expiracao do lease.
+    splitLeaseToken: text('split_lease_token'),
+    // Marca quando o job foi para dead-letter (tentativas esgotadas). Observabilidade.
+    splitDeadLetterAt: timestamp('split_dead_letter_at'),
   },
   (table) => [
     uniqueIndex('process_batch_file_storage_object_idx').on(
@@ -440,6 +463,11 @@ export const processBatchFile = pgTable(
     index('process_batch_file_process_id_idx').on(table.processId),
     index('process_batch_file_uploaded_by_user_id_idx').on(
       table.uploadedByUserId,
+    ),
+    // Suporta o claim da fila: filtra por status e ordena por elegibilidade.
+    index('process_batch_file_split_claim_idx').on(
+      table.splitStatus,
+      table.splitLeaseExpiresAt,
     ),
   ],
 )
