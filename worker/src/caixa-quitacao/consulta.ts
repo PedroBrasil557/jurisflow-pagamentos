@@ -153,7 +153,11 @@ export async function consultarQuitacao(
   //  - #btnVoltar visivel       => o bloco "Resultado" carregou (quitado/nao-encontrado)
   //  - texto "indisponivel"     => site sobrecarregado ("tente mais tarde"): transitorio
   // Se nenhum aparecer no tempo, o resultado nao carregou (indeterminado).
-  const RESULT_TIMEOUT = 30_000
+  // 60s: o site da Caixa pode levar >30s para renderizar o resultado em execucoes
+  // lentas (visto em teste real: render de ~35s). Ser generoso aqui evita falso
+  // 'resultado_nao_carregou' (que desperdiça uma tentativa + backoff). O custo do
+  // timeout maior cai so no caminho de falha — que retenta de qualquer forma.
+  const RESULT_TIMEOUT = 60_000
   const settled = await Promise.race([
     page
       .locator(SELECTORS.voltar)
