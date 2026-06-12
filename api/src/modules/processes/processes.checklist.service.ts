@@ -885,8 +885,10 @@ async function attachChecklistFile(input: {
 // consulta de quitacao para anexar o PDF baixado da Caixa ao slot do checklist.
 // Reusa o core attachChecklistFile (ator = usuario tecnico jurisflow-bot) e
 // dispara a mesma cadeia do anexo manual (analise do titular para termos Caixa).
-// NAO sincroniza status do processo aqui — isso ocorre na proxima interacao do
-// usuario com o checklist (anexar um doc obrigatorio raramente completa tudo).
+// Reconcilia o status ao final: na automacao, o anexo de sistema (worker de
+// quitacao -> declaracao_quitacao) costuma ser o ULTIMO obrigatorio, completando a
+// documentacao — o backend e dono do avanco para DOCUMENTACAO_PRONTA, qualquer
+// origem.
 export async function attachSystemChecklistFile(input: {
   processId: string
   documentTypeKey: string
@@ -956,7 +958,26 @@ export async function attachSystemChecklistFile(input: {
     })
   }
 
+  if (didUploadFile) {
+    // Reconcilia o status: o anexo de sistema pode ter completado a documentacao
+    // obrigatoria (auto-avanco para DOCUMENTACAO_PRONTA). Ator = bot do sistema.
+    await reconcileProcessStatus(input.processId, actor)
+  }
+
   return { didUploadFile }
+}
+
+// Reconciliador de status por completude do checklist: carrega o checklist e
+// sincroniza. Ponto UNICO para "recomputar o estado do processo" a partir de
+// qualquer origem (worker de ingestao/quitacao, script de backfill, re-sync de
+// conjunto). Idempotente. O backend e dono do avanco de estado.
+export async function reconcileProcessStatus(
+  processId: string,
+  actor: ProcessActor,
+) {
+  const currentProcess = await getProcessRecordOrThrow(processId)
+  const checklist = await loadProcessChecklistData(currentProcess)
+  return syncProcessStatusAfterChecklistChange({ processId, actor, checklist })
 }
 
 export async function syncProcessStatusAfterChecklistChange(input: {
