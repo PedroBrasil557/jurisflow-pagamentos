@@ -831,7 +831,11 @@ export async function updateProcess(
   if (
     changedFields.ownerType ||
     changedFields.spouseContractSigned ||
-    changedFields.propertyPaidOff
+    changedFields.propertyPaidOff ||
+    // Vincular/mudar o conjunto altera a obrigatoriedade dos docs de conjunto e o
+    // pre-requisito de completude (resolucao humana do caso "conjunto cadastrado
+    // depois") — reconcilia o status.
+    changedFields.housingComplex
   ) {
     await ensureProcessChecklistItems(processId)
     const checklist = await getProcessChecklist(processId, actor.id, perms)

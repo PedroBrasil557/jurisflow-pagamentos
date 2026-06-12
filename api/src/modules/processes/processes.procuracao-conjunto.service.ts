@@ -316,6 +316,26 @@ async function runProcuracaoConjuntoAnalysisOnce(input: {
         })
       }
     })
+
+    // Conjunto vinculado: reconcilia o status — os docs de escopo de conjunto
+    // passam a ser herdados/obrigatorios, podendo completar a documentacao (e o
+    // PRONTA exige conjunto vinculado). Import dinamico para evitar ciclo com
+    // checklist.service. Falha aqui NAO marca a analise como erro.
+    if (outcome.apply) {
+      try {
+        const { reconcileProcessStatus } = await import(
+          './processes.checklist.service'
+        )
+        await reconcileProcessStatus(input.processId, {
+          id: SYSTEM_ACTOR_ID,
+        } as unknown as Parameters<typeof reconcileProcessStatus>[1])
+      } catch (reconcileError) {
+        console.error('Falha ao reconciliar status apos vincular conjunto', {
+          processId: input.processId,
+          error: String(reconcileError),
+        })
+      }
+    }
   } catch (error) {
     console.error('Falha na analise da procuracao', {
       processId: input.processId,

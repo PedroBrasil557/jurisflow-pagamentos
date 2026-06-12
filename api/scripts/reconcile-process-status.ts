@@ -15,7 +15,9 @@ const BOT = { id: 'jurisflow-bot' } as unknown as Parameters<
 const rows = await db
   .select({ id: process.id, status: process.status })
   .from(process)
-  .where(inArray(process.status, ['EM_DOCUMENTACAO']))
+  // Inclui DOCUMENTACAO_PRONTA: reverte os que ficaram prontos indevidamente (sem
+  // conjunto vinculado) para EM_DOCUMENTACAO.
+  .where(inArray(process.status, ['EM_DOCUMENTACAO', 'DOCUMENTACAO_PRONTA']))
 
 let advanced = 0
 for (const row of rows) {

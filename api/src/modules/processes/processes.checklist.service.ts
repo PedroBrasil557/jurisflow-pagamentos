@@ -600,6 +600,10 @@ function buildChecklistResponse(input: {
       requiredPending: requiredItems.length - requiredCompleted,
       requiredTotal: requiredItems.length,
       totalItems: items.length,
+      // O vinculo do conjunto e pre-requisito de completude: um processo nao pode
+      // ficar "documentacao pronta" sem conjunto (os docs de escopo de conjunto sao
+      // obrigatorios para a peticao). A UI usa isto para sinalizar o bloqueio.
+      housingComplexLinked: input.housingComplexId !== null,
     },
   }
 }
@@ -1022,25 +1026,35 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   // (digitalizacao por worker, anexo de doc de conjunto, upload humano), sem
   // depender do frontend. So a partir de EM_DOCUMENTACAO (predecessor legal):
   // CADASTRADO sem docs nunca tem requiredPending===0 com hasIndividualDocs.
+  //
+  // PRE-REQUISITO: conjunto VINCULADO. Sem conjunto, os docs de escopo de conjunto
+  // sao excluidos dos obrigatorios (nao ha onde anexar) — entao requiredPending
+  // pode chegar a 0 sem eles. Travar o avanco aqui impede que um processo sem
+  // conjunto fique "pronto" pulando docs obrigatorios da peticao. O caso fica em
+  // EM_DOCUMENTACAO aguardando o vinculo (procuracao no import, ou humano no edge).
   if (
     targetStatus === 'EM_DOCUMENTACAO' &&
-    input.checklist.summary.requiredPending === 0
+    input.checklist.summary.requiredPending === 0 &&
+    currentProcess.housingComplexId !== null
   ) {
     targetStatus = 'DOCUMENTACAO_PRONTA'
   }
 
-  // If DOCUMENTACAO_PRONTA but docs became pending, revert to EM_DOCUMENTACAO
+  // Sai de DOCUMENTACAO_PRONTA se a documentacao voltou a ficar pendente OU se o
+  // conjunto deixou de estar vinculado (pre-requisito): reverte para EM_DOCUMENTACAO.
   if (
     currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
-    input.checklist.summary.requiredPending > 0
+    (input.checklist.summary.requiredPending > 0 ||
+      currentProcess.housingComplexId === null)
   ) {
     targetStatus = 'EM_DOCUMENTACAO'
   }
 
-  // If DOCUMENTACAO_PRONTA and all docs are still ok, no change needed
+  // Ja PRONTA, completo E com conjunto vinculado: sem mudanca.
   if (
     currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
-    input.checklist.summary.requiredPending === 0
+    input.checklist.summary.requiredPending === 0 &&
+    currentProcess.housingComplexId !== null
   ) {
     return currentProcess
   }
