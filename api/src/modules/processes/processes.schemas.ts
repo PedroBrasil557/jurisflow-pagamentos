@@ -15,6 +15,7 @@ const maritalStatusValues = [
 const ownerTypeValues = [
   '',
   'titular_contrato_caixa',
+  'conjuge_titular_contrato_caixa',
   'nao_titular_contrato_caixa',
 ] as const
 
@@ -278,7 +279,13 @@ export const listProcessesQuerySchema = z.object({
           : Array.isArray(value)
             ? value
             : [value],
-      z.array(z.enum(['titular_contrato_caixa', 'nao_titular_contrato_caixa'])),
+      z.array(
+        z.enum([
+          'titular_contrato_caixa',
+          'conjuge_titular_contrato_caixa',
+          'nao_titular_contrato_caixa',
+        ]),
+      ),
     )
     .optional(),
   housingComplexIds: z

@@ -18,26 +18,33 @@ export type CaixaTitular = {
 export type CaixaOwnerMatch = 'cpf' | 'name' | 'none'
 
 export type CaixaOwnerResult = {
-  // A eleicao do ownerType e feita comparando o titular do PROCESSO com o titular
-  // do TERMO (o conjuge nao entra — filtrado no service). Tres desfechos:
-  // - 'titular'     => match identico (e o titular do contrato Caixa).
-  // - 'nao_titular' => diferenca CONFIRMADA (titular do processo != titular do termo).
-  // - 'review'      => INDETERMINADO (nao da pra afirmar igualdade nem diferenca).
-  result: 'titular' | 'nao_titular' | 'review'
+  // A eleicao do ownerType compara o titular do PROCESSO com as pessoas do TERMO,
+  // em duas camadas (titular e conjuge). Quatro desfechos:
+  // - 'titular'         => bate com o titular do termo (titular do contrato Caixa).
+  // - 'conjuge_titular' => bate com o conjuge (co-assinante) do termo. Tambem
+  //   adquiriu pelo contrato Caixa original, entao NAO exige contrato_compra_venda
+  //   (mesmo tratamento documental do titular).
+  // - 'nao_titular'     => diferenca CONFIRMADA (nao bate nem com titular nem com
+  //   conjuge, com CPF confirmando). Comprou de terceiro => exige compra e venda.
+  // - 'review'          => INDETERMINADO (nao da pra afirmar igualdade nem diferenca).
+  result: 'titular' | 'conjuge_titular' | 'nao_titular' | 'review'
   matchedBy: CaixaOwnerMatch
 }
 
 // Decisao DETERMINISTICA (codigo, nunca o LLM). Precisao sobre recall:
-// 1) CPF e o sinal primario — exige ambos validos (checksum) e iguais => 'titular'.
-// 2) Nome so e usado como fallback QUANDO o comprador NAO TRAZ CPF no doc => 'titular'.
-//    Se o doc traz um CPF (mesmo mascarado/parcial, ex.: "111.444.***-**" — comum
-//    por LGPD), NAO casa por nome: o CPF nao pode ser confirmado.
-// 3) Sem match, com diferenca CONFIRMADA POR CPF (o titular e algum comprador tem
-//    CPF valido e NAO batem) => 'nao_titular'.
-// 4) Qualquer outro sem-match (nome divergente sem CPF, CPF mascarado/invalido, ou
+// 1) CPF e o sinal primario — exige ambos validos (checksum) e iguais.
+// 2) Nome so e usado como fallback QUANDO a pessoa NAO TRAZ CPF no doc. Se o doc
+//    traz um CPF (mesmo mascarado/parcial, ex.: "111.444.***-**" — comum por LGPD),
+//    NAO casa por nome: o CPF nao pode ser confirmado.
+// 3) Bate com o titular do termo => 'titular'. Senao, bate com o conjuge (co-
+//    assinante) => 'conjuge_titular' (tambem adquiriu pelo contrato Caixa).
+// 4) Sem match, com diferenca CONFIRMADA POR CPF (o titular do processo e alguem do
+//    termo tem CPF valido e NAO batem) => 'nao_titular'.
+// 5) Qualquer outro sem-match (nome divergente sem CPF, CPF mascarado/invalido, ou
 //    nada comparavel) => 'review' — sinal fraco demais para impor "nao titular".
 export function compareCaixaOwner(
   compradores: CaixaBuyer[],
+  conjuges: CaixaBuyer[],
   titular: CaixaTitular,
 ): CaixaOwnerResult {
   const titularCpf = normalizeCpf(titular.cpf)
@@ -55,36 +62,55 @@ export function compareCaixaOwner(
   const buyerHasNoCpf = (buyer: CaixaBuyer): boolean =>
     !buyer.cpf || normalizeCpf(buyer.cpf).length === 0
 
-  // 1) CPF identico (primario).
-  if (titularCpfValid) {
-    for (const buyer of compradores) {
-      if (
-        buyerHasValidCpf(buyer) &&
-        normalizeCpf(buyer.cpf as string) === titularCpf
-      ) {
-        return { result: 'titular', matchedBy: 'cpf' }
+  // Compara o titular do processo contra um grupo do termo (titulares OU conjuges).
+  // CPF identico (primario) tem prioridade; nome so como fallback sem-CPF.
+  const matchAgainst = (pessoas: CaixaBuyer[]): CaixaOwnerMatch => {
+    if (titularCpfValid) {
+      for (const pessoa of pessoas) {
+        if (
+          buyerHasValidCpf(pessoa) &&
+          normalizeCpf(pessoa.cpf as string) === titularCpf
+        ) {
+          return 'cpf'
+        }
       }
     }
-  }
-
-  // 2) Nome identico (fallback) — so para compradores que NAO trazem CPF no doc.
-  if (titularName) {
-    for (const buyer of compradores) {
-      if (buyerHasNoCpf(buyer) && normalizeName(buyer.nome) === titularName) {
-        return { result: 'titular', matchedBy: 'name' }
+    if (titularName) {
+      for (const pessoa of pessoas) {
+        if (
+          buyerHasNoCpf(pessoa) &&
+          normalizeName(pessoa.nome) === titularName
+        ) {
+          return 'name'
+        }
       }
     }
+    return 'none'
   }
 
-  // Sem match identico. So afirmamos 'nao_titular' com DIFERENCA CONFIRMADA POR CPF:
-  // o titular do processo tem CPF valido E existe um comprador com CPF valido (logo
-  // os CPFs foram comparados e nao bateram). Qualquer outro caso — nome divergente
-  // sem CPF, CPF mascarado/invalido, ou nada comparavel — vai para 'review'.
-  // Motivo: nome divergente e sinal FRACO para impor uma classificacao adversa
-  // (nao_titular torna o contrato_compra_venda obrigatorio); um glitch de OCR no
-  // nome (acento, abreviacao) nao deve, sozinho, travar o processo.
-  const someBuyerHasValidCpf = compradores.some(buyerHasValidCpf)
-  if (titularCpfValid && someBuyerHasValidCpf) {
+  // 1) E o titular do termo?
+  const titularMatch = matchAgainst(compradores)
+  if (titularMatch !== 'none') {
+    return { result: 'titular', matchedBy: titularMatch }
+  }
+
+  // 2) E o conjuge (co-titular) do termo? Tambem adquiriu pelo contrato Caixa.
+  const conjugeMatch = matchAgainst(conjuges)
+  if (conjugeMatch !== 'none') {
+    return { result: 'conjuge_titular', matchedBy: conjugeMatch }
+  }
+
+  // 3) Sem match identico. So afirmamos 'nao_titular' com DIFERENCA CONFIRMADA POR
+  // CPF: o titular do processo tem CPF valido E existe alguem no termo (titular ou
+  // conjuge) com CPF valido (logo os CPFs foram comparados e nao bateram). Qualquer
+  // outro caso — nome divergente sem CPF, CPF mascarado/invalido, ou nada
+  // comparavel — vai para 'review'. Motivo: nome divergente e sinal FRACO para
+  // impor uma classificacao adversa (nao_titular torna o contrato_compra_venda
+  // obrigatorio); um glitch de OCR no nome (acento, abreviacao) nao deve, sozinho,
+  // travar o processo.
+  const someoneHasValidCpf =
+    compradores.some(buyerHasValidCpf) || conjuges.some(buyerHasValidCpf)
+  if (titularCpfValid && someoneHasValidCpf) {
     return { result: 'nao_titular', matchedBy: 'none' }
   }
 
@@ -92,6 +118,7 @@ export function compareCaixaOwner(
 }
 
 export const CAIXA_OWNER_TITULAR = 'titular_contrato_caixa'
+export const CAIXA_OWNER_CONJUGE_TITULAR = 'conjuge_titular_contrato_caixa'
 export const CAIXA_OWNER_NAO_TITULAR = 'nao_titular_contrato_caixa'
 
 export type CaixaOwnerOutcome = {
@@ -99,9 +126,19 @@ export type CaixaOwnerOutcome = {
   analysisStatus: 'done' | 'review'
   // Se deve gravar o ownerType concluido (so com CERTEZA + flag ligada + sem lock).
   apply: boolean
-  newOwnerType?: typeof CAIXA_OWNER_TITULAR | typeof CAIXA_OWNER_NAO_TITULAR
+  newOwnerType?:
+    | typeof CAIXA_OWNER_TITULAR
+    | typeof CAIXA_OWNER_CONJUGE_TITULAR
+    | typeof CAIXA_OWNER_NAO_TITULAR
   historyEvent: 'CAIXA_OWNER_AUTO_SET' | 'CAIXA_OWNER_REVIEW_REQUIRED' | null
 }
+
+// ownerType concluido por resultado da comparacao (review nunca aplica).
+const OWNER_TYPE_BY_RESULT = {
+  titular: CAIXA_OWNER_TITULAR,
+  conjuge_titular: CAIXA_OWNER_CONJUGE_TITULAR,
+  nao_titular: CAIXA_OWNER_NAO_TITULAR,
+} as const
 
 // Decide o desfecho a partir do resultado deterministico + estado atual do
 // processo + flag. PURA (sem I/O). Regras:
@@ -125,8 +162,7 @@ export function decideCaixaOwnerOutcome(input: {
     }
   }
 
-  const target =
-    input.result === 'titular' ? CAIXA_OWNER_TITULAR : CAIXA_OWNER_NAO_TITULAR
+  const target = OWNER_TYPE_BY_RESULT[input.result]
 
   if (input.currentOwnerType === target) {
     return { analysisStatus: 'done', apply: false, historyEvent: null }

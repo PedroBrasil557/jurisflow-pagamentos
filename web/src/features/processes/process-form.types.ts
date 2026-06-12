@@ -12,6 +12,7 @@ export type MaritalStatusValue =
 export type OwnerTypeValue =
   | ''
   | 'titular_contrato_caixa'
+  | 'conjuge_titular_contrato_caixa'
   | 'nao_titular_contrato_caixa'
 
 export type SelectOption = {

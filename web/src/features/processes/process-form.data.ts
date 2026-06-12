@@ -16,6 +16,10 @@ export const ownerTypeOptions = [
     label: 'Titular contrato caixa',
   },
   {
+    value: 'conjuge_titular_contrato_caixa',
+    label: 'Conjuge titular contrato caixa',
+  },
+  {
     value: 'nao_titular_contrato_caixa',
     label: 'Nao titular contrato caixa',
   },

@@ -28,6 +28,7 @@ describe('compareCaixaOwner', () => {
   test('CPF identico => titular (matchedBy cpf)', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Qualquer Nome', cpf: '111.444.777-35' })],
+      [],
       titular,
     )
     expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
@@ -36,24 +37,26 @@ describe('compareCaixaOwner', () => {
   test('CPFs validos diferentes => nao_titular, mesmo com nome igual (pai/filho)', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Jose da Silva', cpf: CPF_OUTRO })],
+      [],
       titular,
     )
     expect(r).toEqual({ result: 'nao_titular', matchedBy: 'none' })
   })
 
   test('sem CPF + nome identico (acento/caixa) => titular (matchedBy name)', () => {
-    const r = compareCaixaOwner([buyer({ nome: 'JOSÉ DA SILVA' })], titular)
+    const r = compareCaixaOwner([buyer({ nome: 'JOSÉ DA SILVA' })], [], titular)
     expect(r).toEqual({ result: 'titular', matchedBy: 'name' })
   })
 
   test('sem CPF + nome diferente => review (nome-so e sinal fraco, nao impoe nao_titular)', () => {
-    const r = compareCaixaOwner([buyer({ nome: 'Maria Souza' })], titular)
+    const r = compareCaixaOwner([buyer({ nome: 'Maria Souza' })], [], titular)
     expect(r).toEqual({ result: 'review', matchedBy: 'none' })
   })
 
   test('titular com CPF valido + comprador com CPF valido diferente => nao_titular (confirmado)', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Maria Souza', cpf: CPF_OUTRO })],
+      [],
       titular,
     )
     expect(r).toEqual({ result: 'nao_titular', matchedBy: 'none' })
@@ -65,6 +68,7 @@ describe('compareCaixaOwner', () => {
         buyer({ nome: 'Maria Souza', cpf: CPF_OUTRO }),
         buyer({ nome: 'Outro', cpf: '111.444.777-35' }),
       ],
+      [],
       titular,
     )
     expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
@@ -75,6 +79,7 @@ describe('compareCaixaOwner', () => {
   test('CPF mascarado (LGPD) + nome igual => review, nao cai no nome (D5)', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Jose da Silva', cpf: '111.444.***-**' })],
+      [],
       titular,
     )
     expect(r).toEqual({ result: 'review', matchedBy: 'none' })
@@ -83,6 +88,7 @@ describe('compareCaixaOwner', () => {
   test('CPF invalido (zeros) + nome igual => review, nao cai no nome (D5)', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Jose da Silva', cpf: '000.000.000-00' })],
+      [],
       titular,
     )
     expect(r).toEqual({ result: 'review', matchedBy: 'none' })
@@ -92,13 +98,14 @@ describe('compareCaixaOwner', () => {
   test('CPF do titular com digitos extras => nao casa por CPF nem nome (D6)', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Jose da Silva', cpf: `${CPF_TITULAR} 99887766` })],
+      [],
       titular,
     )
     expect(r).toEqual({ result: 'review', matchedBy: 'none' })
   })
 
   test('lista vazia => review', () => {
-    expect(compareCaixaOwner([], titular)).toEqual({
+    expect(compareCaixaOwner([], [], titular)).toEqual({
       result: 'review',
       matchedBy: 'none',
     })
@@ -107,9 +114,55 @@ describe('compareCaixaOwner', () => {
   test('match por CPF tem prioridade sobre divergencia de nome', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Nome Totalmente Diferente', cpf: CPF_TITULAR })],
+      [],
       titular,
     )
     expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
+  })
+
+  test('processo bate com o CONJUGE do termo (CPF) => conjuge_titular', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Outra Pessoa', cpf: CPF_OUTRO })],
+      [buyer({ nome: 'Qualquer Nome', cpf: '111.444.777-35' })],
+      titular,
+    )
+    expect(r).toEqual({ result: 'conjuge_titular', matchedBy: 'cpf' })
+  })
+
+  test('processo bate com o CONJUGE por nome (sem CPF) => conjuge_titular', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Outra Pessoa' })],
+      [buyer({ nome: 'JOSÉ DA SILVA' })],
+      titular,
+    )
+    expect(r).toEqual({ result: 'conjuge_titular', matchedBy: 'name' })
+  })
+
+  test('titular tem prioridade sobre conjuge (bate nos dois => titular)', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Jose da Silva', cpf: '111.444.777-35' })],
+      [buyer({ nome: 'Jose da Silva', cpf: '111.444.777-35' })],
+      titular,
+    )
+    expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
+  })
+
+  test('nao bate em titular nem conjuge, CPF confirmado => nao_titular', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Maria Souza', cpf: CPF_OUTRO })],
+      [buyer({ nome: 'Outro Conjuge', cpf: CPF_OUTRO })],
+      titular,
+    )
+    expect(r).toEqual({ result: 'nao_titular', matchedBy: 'none' })
+  })
+
+  test('so conjuge tem CPF valido divergente => nao_titular (confirmado pelo conjuge)', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Sem Cpf' })],
+      [buyer({ nome: 'Conjuge Outro', cpf: CPF_OUTRO })],
+      titular,
+    )
+    expect(r).toEqual({ result: 'nao_titular', matchedBy: 'none' })
   })
 })
 
@@ -189,6 +242,21 @@ describe('decideCaixaOwnerOutcome', () => {
       analysisStatus: 'done',
       apply: true,
       newOwnerType: 'nao_titular_contrato_caixa',
+      historyEvent: 'CAIXA_OWNER_AUTO_SET',
+    })
+  })
+
+  test('conjuge_titular + flag on + ownerType vazio => auto-aplica conjuge_titular', () => {
+    const o = decideCaixaOwnerOutcome({
+      result: 'conjuge_titular',
+      currentOwnerType: '',
+      ownerTypeSource: 'human',
+      autoApplyEnabled: true,
+    })
+    expect(o).toEqual({
+      analysisStatus: 'done',
+      apply: true,
+      newOwnerType: 'conjuge_titular_contrato_caixa',
       historyEvent: 'CAIXA_OWNER_AUTO_SET',
     })
   })

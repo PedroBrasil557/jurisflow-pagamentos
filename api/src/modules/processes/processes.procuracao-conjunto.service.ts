@@ -201,7 +201,8 @@ async function runProcuracaoConjuntoAnalysisOnce(input: {
     const outorgantesAsBuyers: CaixaBuyer[] = extraction.outorgantes
       .filter((o) => o.nome)
       .map((o) => ({ nome: o.nome as string, cpf: o.cpf }))
-    const ownerConfirm = compareCaixaOwner(outorgantesAsBuyers, {
+    // Sem camada de conjuge aqui: so confirmamos se o outorgante e o titular.
+    const ownerConfirm = compareCaixaOwner(outorgantesAsBuyers, [], {
       fullName: proc.fullName,
       cpf: proc.cpf,
     })

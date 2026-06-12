@@ -730,9 +730,11 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                 <ProcessRadioGroupField
                   error={errors.spouseContractSigned?.message}
                   label={
-                    values.ownerType === 'titular_contrato_caixa'
-                      ? 'Contrato com a caixa assinado junto com o conjuge?'
-                      : 'Contrato de compra e venda assinado junto com o conjuge?'
+                    // Titular e conjuge-titular adquiriram pelo contrato Caixa;
+                    // so o nao_titular assina contrato de compra e venda.
+                    values.ownerType === 'nao_titular_contrato_caixa'
+                      ? 'Contrato de compra e venda assinado junto com o conjuge?'
+                      : 'Contrato com a caixa assinado junto com o conjuge?'
                   }
                   onChange={(v) => updateValue('spouseContractSigned', v)}
                   options={[

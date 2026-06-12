@@ -8,6 +8,7 @@ import {
   getCaixaOwnerAutoApply,
 } from '../settings/settings.service'
 import {
+  CAIXA_OWNER_CONJUGE_TITULAR,
   CAIXA_OWNER_NAO_TITULAR,
   type CaixaBuyer,
   compareCaixaOwner,
@@ -183,6 +184,7 @@ async function runCaixaOwnerAnalysisOnce(input: {
 
     const byDoc: DocExtraction[] = []
     const allCompradores: CaixaBuyer[] = []
+    const allConjuges: CaixaBuyer[] = []
     const errors: string[] = []
     let model = env.anthropic.model
     let tokensInput = 0
@@ -216,13 +218,19 @@ async function runCaixaOwnerAnalysisOnce(input: {
           cpfConjuge: extraction.cpfConjuge,
           trechoFonte: extraction.trechoFonte,
         })
-        // A eleicao do ownerType compara SO o titular do processo com o titular do
-        // termo — o conjuge NAO entra (decisao de dominio: "titular do contrato"
-        // e o titular, nao o conjuge). O conjuge segue gravado em byDoc (evidencia).
+        // A eleicao compara o titular do processo contra DUAS camadas do termo: o
+        // titular (=> 'titular') e o conjuge co-assinante (=> 'conjuge_titular',
+        // que tambem adquiriu pelo contrato Caixa). Ambos seguem em byDoc (evidencia).
         if (extraction.titular) {
           allCompradores.push({
             nome: extraction.titular,
             cpf: extraction.cpfTitular,
+          })
+        }
+        if (extraction.conjuge) {
+          allConjuges.push({
+            nome: extraction.conjuge,
+            cpf: extraction.cpfConjuge,
           })
         }
       } catch (error) {
@@ -249,7 +257,7 @@ async function runCaixaOwnerAnalysisOnce(input: {
       return
     }
 
-    const comparison = compareCaixaOwner(allCompradores, {
+    const comparison = compareCaixaOwner(allCompradores, allConjuges, {
       fullName: proc.fullName,
       cpf: proc.cpf,
     })
@@ -322,7 +330,9 @@ async function runCaixaOwnerAnalysisOnce(input: {
           notes: outcome.apply
             ? outcome.newOwnerType === CAIXA_OWNER_NAO_TITULAR
               ? 'Identificado como NAO titular do contrato Caixa (titular do processo difere do titular do termo).'
-              : 'Titular do contrato Caixa confirmado automaticamente pela analise.'
+              : outcome.newOwnerType === CAIXA_OWNER_CONJUGE_TITULAR
+                ? 'Identificado como conjuge (co-titular) do contrato Caixa — adquiriu pelo contrato original.'
+                : 'Titular do contrato Caixa confirmado automaticamente pela analise.'
             : 'A analise do contrato Caixa precisa de revisao humana.',
           metadata: {
             aiAnalysisId: auditId,
