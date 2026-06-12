@@ -98,6 +98,14 @@ export class QueueMetrics extends Construct {
       ],
     });
 
+    // O alarme/Slack so existe em PROD. Fora de prod o worker desliga a noite
+    // (scale-to-0): a metrica some e o treatMissingData BREACHING dispararia todo
+    // dia de madrugada — spam. Em prod o baseline e >= 2, entao sempre ha emissor
+    // e a ausencia da metrica significa de fato "todos os workers mortos".
+    if (!env.isProd) {
+      return;
+    }
+
     // Topico de alertas + notificador Slack (Lambda inline, fora da VPC: precisa
     // de internet para o slack.com e nao toca o banco).
     const alertTopic = new Topic(this, 'AlertTopic', {
