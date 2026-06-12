@@ -7,6 +7,7 @@ import { Vpc } from './constructs/vpc';
 import { Storage } from './constructs/storage';
 import { Worker } from './constructs/worker';
 import { IngestionWorker } from './constructs/ingestion-worker';
+import { QueueMetrics } from './constructs/queue-metrics';
 
 export class JurisflowAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -35,10 +36,16 @@ export class JurisflowAppStack extends cdk.Stack {
     // que drena a fila duravel no Postgres (claim+lease, SKIP LOCKED). Substitui o
     // fire-and-forget — sem SPOF, ECS reinicia em crash, escala pela profundidade
     // da fila (Fase 3). Le/escreve no bucket de documentos via IAM role.
-    new IngestionWorker(this, 'IngestionWorker', {
+    const ingestionWorker = new IngestionWorker(this, 'IngestionWorker', {
       vpc,
       databaseUrl,
       documentsBucket,
+    });
+
+    // Autoscaling pela profundidade da fila (nao por CPU) + alarme de fila travada
+    // / workers mortos -> Slack. A metrica vem do EMF emitido pelo worker.
+    new QueueMetrics(this, 'QueueMetrics', {
+      scalableTarget: ingestionWorker.scalableTarget,
     });
 
     const { webAppUrl } = new WebApp(this, 'WebApp', { apiUrl });
