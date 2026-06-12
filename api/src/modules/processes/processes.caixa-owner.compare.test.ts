@@ -46,8 +46,16 @@ describe('compareCaixaOwner', () => {
     expect(r).toEqual({ result: 'titular', matchedBy: 'name' })
   })
 
-  test('sem CPF + nome diferente => nao_titular (diferenca confirmada)', () => {
+  test('sem CPF + nome diferente => review (nome-so e sinal fraco, nao impoe nao_titular)', () => {
     const r = compareCaixaOwner([buyer({ nome: 'Maria Souza' })], titular)
+    expect(r).toEqual({ result: 'review', matchedBy: 'none' })
+  })
+
+  test('titular com CPF valido + comprador com CPF valido diferente => nao_titular (confirmado)', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Maria Souza', cpf: CPF_OUTRO })],
+      titular,
+    )
     expect(r).toEqual({ result: 'nao_titular', matchedBy: 'none' })
   })
 

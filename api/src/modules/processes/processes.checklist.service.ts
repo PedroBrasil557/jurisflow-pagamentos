@@ -1032,8 +1032,14 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   // pode chegar a 0 sem eles. Travar o avanco aqui impede que um processo sem
   // conjunto fique "pronto" pulando docs obrigatorios da peticao. O caso fica em
   // EM_DOCUMENTACAO aguardando o vinculo (procuracao no import, ou humano no edge).
+  //
+  // So avanca a partir do status ATUAL EM_DOCUMENTACAO (predecessor legal de
+  // DOCUMENTACAO_PRONTA). Chavear no currentProcess.status — NAO no targetStatus
+  // computado — evita salto ilegal (ex.: CADASTRADO->PRONTA) ao gravar via raw
+  // update sem passar pela tabela de transicoes. Um CADASTRADO completo vai antes
+  // para EM_DOCUMENTACAO e so entao, no proximo reconcile, para PRONTA.
   if (
-    targetStatus === 'EM_DOCUMENTACAO' &&
+    currentProcess.status === 'EM_DOCUMENTACAO' &&
     input.checklist.summary.requiredPending === 0 &&
     currentProcess.housingComplexId !== null
   ) {

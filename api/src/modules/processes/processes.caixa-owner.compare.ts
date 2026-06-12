@@ -32,10 +32,10 @@ export type CaixaOwnerResult = {
 // 2) Nome so e usado como fallback QUANDO o comprador NAO TRAZ CPF no doc => 'titular'.
 //    Se o doc traz um CPF (mesmo mascarado/parcial, ex.: "111.444.***-**" — comum
 //    por LGPD), NAO casa por nome: o CPF nao pode ser confirmado.
-// 3) Sem match, mas com diferenca CONFIRMADA (CPF valido diferente, ou nome
-//    diferente sem CPF) => 'nao_titular'.
-// 4) Sem match e INDETERMINADO (nome igual mas CPF do termo ilegivel/mascarado;
-//    ou nada comparavel) => 'review' (nao afirma "nao titular" sem certeza).
+// 3) Sem match, com diferenca CONFIRMADA POR CPF (o titular e algum comprador tem
+//    CPF valido e NAO batem) => 'nao_titular'.
+// 4) Qualquer outro sem-match (nome divergente sem CPF, CPF mascarado/invalido, ou
+//    nada comparavel) => 'review' — sinal fraco demais para impor "nao titular".
 export function compareCaixaOwner(
   compradores: CaixaBuyer[],
   titular: CaixaTitular,
@@ -76,30 +76,19 @@ export function compareCaixaOwner(
     }
   }
 
-  // Sem match. Decide entre diferenca CONFIRMADA e INDETERMINADO.
-  // Indeterminado: nada comparavel no titular do processo.
-  if (!titularCpfValid && !titularName) {
-    return { result: 'review', matchedBy: 'none' }
-  }
-  // Indeterminado: nada para comparar (lista vazia).
-  if (compradores.length === 0) {
-    return { result: 'review', matchedBy: 'none' }
-  }
-  // Indeterminado: algum comprador tem o MESMO nome, mas o CPF presente no doc nao
-  // pode ser confirmado (mascarado/invalido) — pode ser a mesma pessoa. Nao da pra
-  // afirmar "nao e o titular" => revisao humana.
-  const nameMatchesButCpfUnconfirmable =
-    !!titularName &&
-    compradores.some(
-      (b) =>
-        normalizeName(b.nome) === titularName && !!b.cpf && !isValidCpf(b.cpf),
-    )
-  if (nameMatchesButCpfUnconfirmable) {
-    return { result: 'review', matchedBy: 'none' }
+  // Sem match identico. So afirmamos 'nao_titular' com DIFERENCA CONFIRMADA POR CPF:
+  // o titular do processo tem CPF valido E existe um comprador com CPF valido (logo
+  // os CPFs foram comparados e nao bateram). Qualquer outro caso — nome divergente
+  // sem CPF, CPF mascarado/invalido, ou nada comparavel — vai para 'review'.
+  // Motivo: nome divergente e sinal FRACO para impor uma classificacao adversa
+  // (nao_titular torna o contrato_compra_venda obrigatorio); um glitch de OCR no
+  // nome (acento, abreviacao) nao deve, sozinho, travar o processo.
+  const someBuyerHasValidCpf = compradores.some(buyerHasValidCpf)
+  if (titularCpfValid && someBuyerHasValidCpf) {
+    return { result: 'nao_titular', matchedBy: 'none' }
   }
 
-  // Diferenca confirmada: o titular do processo nao e o titular do termo.
-  return { result: 'nao_titular', matchedBy: 'none' }
+  return { result: 'review', matchedBy: 'none' }
 }
 
 export const CAIXA_OWNER_TITULAR = 'titular_contrato_caixa'

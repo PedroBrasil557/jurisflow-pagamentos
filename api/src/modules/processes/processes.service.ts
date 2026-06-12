@@ -32,6 +32,7 @@ import {
 import {
   ensureProcessChecklistItems,
   getProcessChecklist,
+  reconcileProcessStatus,
   syncProcessStatusAfterChecklistChange,
 } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
@@ -864,33 +865,38 @@ export async function markProcessDocumentationReady(
     })
   assertProcessAction(perms, rel, 'markDocumentationReady')
 
-  // Idempotente: o backend (syncProcessStatusAfterChecklistChange) ja auto-avanca
-  // para DOCUMENTACAO_PRONTA quando a documentacao completa. Se ja esta pronta,
-  // esta acao explicita (ou a chamada redundante do frontend) e um no-op — evita
-  // erro de transicao invalida PRONTA->PRONTA.
+  // Idempotente: o backend ja auto-avanca para DOCUMENTACAO_PRONTA quando completa.
   if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
     return currentProcess
   }
 
-  const checklist = await getProcessChecklist(processId, actor.id, perms)
+  // DELEGA ao reconciliador — fonte UNICA de verdade do "pode ser PRONTA"
+  // (documentacao obrigatoria completa E conjunto vinculado). NAO reimplementa o
+  // predicado aqui, para os dois caminhos (auto e manual) nunca divergirem.
+  const updated = await reconcileProcessStatus(processId, actor)
 
-  if (checklist.summary.requiredPending > 0) {
+  if (updated.status !== 'DOCUMENTACAO_PRONTA') {
+    // Nao avancou: explica o motivo (mesma regra do reconciliador).
+    const checklist = await getProcessChecklist(processId, actor.id, perms)
+    if (checklist.summary.requiredPending > 0) {
+      throw new ProcessServiceError(
+        409,
+        'Ainda existem documentos obrigatorios pendentes para este processo.',
+      )
+    }
+    if (updated.housingComplexId === null) {
+      throw new ProcessServiceError(
+        409,
+        'Vincule o conjunto habitacional antes de concluir a documentacao.',
+      )
+    }
     throw new ProcessServiceError(
       409,
-      'Ainda existem documentos obrigatorios pendentes para este processo.',
+      'A documentacao ainda nao pode ser concluida.',
     )
   }
 
-  return updateProcessStatus({
-    processId,
-    actor,
-    nextStatus: 'DOCUMENTACAO_PRONTA',
-    eventType: 'STATUS_CHANGED',
-    notes: 'Documentacao marcada como pronta.',
-    extraValues: {
-      documentationReadyAt: new Date(),
-    },
-  })
+  return updated
 }
 
 export async function startProcess(
