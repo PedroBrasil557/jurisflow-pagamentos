@@ -78,6 +78,7 @@ function buildDocuments(raw: RawExtraction): ExtractedDocument[] {
 
 const ID_SOURCE = 'RG/CNH'
 const ADDRESS_SOURCE = 'Comprovante'
+const CONJUGE_SOURCE = 'Termo de entrega'
 
 function confidenceLevel(value?: number): ConfidenceLevel {
   if (value == null) return 'media'
@@ -208,6 +209,69 @@ export function normalizeExtraction(raw: RawExtraction): ExtractionResult {
       if (!zip.valid) {
         warnings.push('O CEP lido nao tem 8 digitos — confira manualmente.')
       }
+    }
+  }
+
+  // Conjuge do termo de entrega: sua presenca indica contrato Caixa assinado em
+  // conjunto -> marca spouseContractSigned='sim' (condiciona rg_cpf_cnh_conjuge) e
+  // preenche os dados do conjuge. So entra com identidade minima (nome ou CPF).
+  const conjuge = raw.conjuge
+  if (conjuge && (conjuge.fullName || conjuge.cpf)) {
+    const conjugeConfidence = confidenceLevel(conjuge.confianca)
+
+    fields.push({
+      key: 'spouseContractSigned',
+      label: 'Contrato Caixa assinado com o conjuge',
+      value: 'sim',
+      confidence: conjugeConfidence,
+      valid: true,
+      source: CONJUGE_SOURCE,
+    })
+
+    if (conjuge.fullName) {
+      fields.push({
+        key: 'spouseFullName',
+        label: 'Nome do conjuge',
+        value: upper(conjuge.fullName),
+        confidence: conjugeConfidence,
+        valid: true,
+        source: CONJUGE_SOURCE,
+      })
+    }
+
+    if (conjuge.cpf) {
+      const valid = isValidCpf(conjuge.cpf)
+      fields.push({
+        key: 'spouseCpf',
+        label: 'CPF do conjuge',
+        value: formatCpf(conjuge.cpf),
+        confidence: valid ? conjugeConfidence : 'baixa',
+        valid,
+        warning: valid
+          ? undefined
+          : 'CPF do conjuge invalido (digito verificador).',
+        source: CONJUGE_SOURCE,
+      })
+      if (!valid) {
+        warnings.push(
+          'O CPF do conjuge nao passou na validacao — confira manualmente.',
+        )
+      }
+    }
+
+    if (conjuge.birthDate) {
+      const validDate = isIsoDate(conjuge.birthDate)
+      fields.push({
+        key: 'spouseBirthDate',
+        label: 'Data de nascimento do conjuge',
+        value: conjuge.birthDate,
+        confidence: validDate ? conjugeConfidence : 'baixa',
+        valid: validDate,
+        warning: validDate
+          ? undefined
+          : 'Data de nascimento do conjuge nao reconhecida — confira.',
+        source: CONJUGE_SOURCE,
+      })
     }
   }
 

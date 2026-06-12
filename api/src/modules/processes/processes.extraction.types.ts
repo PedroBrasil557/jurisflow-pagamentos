@@ -41,6 +41,16 @@ export interface RawEndereco {
   confianca?: number
 }
 
+// Conjuge extraido do TERMO DE ENTREGA/RECEBIMENTO (Caixa): presente apenas quando o
+// termo indica que o contrato foi assinado tambem pelo conjuge. Sua presenca marca
+// spouseContractSigned='sim' (condiciona o doc rg_cpf_cnh_conjuge).
+export interface RawConjuge {
+  fullName?: string
+  cpf?: string
+  birthDate?: string
+  confianca?: number
+}
+
 export interface RawPageClassification {
   pagina: number
   tipo: string
@@ -49,6 +59,7 @@ export interface RawPageClassification {
 export interface RawExtraction {
   titular?: RawTitular
   endereco?: RawEndereco
+  conjuge?: RawConjuge
   camposNaoEncontrados?: string[]
   paginas?: RawPageClassification[]
 }

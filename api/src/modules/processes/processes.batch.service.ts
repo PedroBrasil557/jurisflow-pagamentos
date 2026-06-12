@@ -482,6 +482,11 @@ const SCAN_FIELD_COLUMNS = [
   'city',
   'state',
   'zipcode',
+  // Conjuge (do termo de entrega): spouseContractSigned='sim' + dados.
+  'spouseContractSigned',
+  'spouseFullName',
+  'spouseCpf',
+  'spouseBirthDate',
 ] as const
 
 type ScanFieldColumn = (typeof SCAN_FIELD_COLUMNS)[number]
@@ -497,25 +502,34 @@ async function applyExtractedFieldsToDraft(
   const allowed = new Set<string>(SCAN_FIELD_COLUMNS)
   const update: Partial<Record<ScanFieldColumn, string>> = {}
 
+  // Colunas date (so aceitam data valida) e colunas de CPF (normalizadas).
+  const dateColumns = new Set<string>(['birthDate', 'spouseBirthDate'])
+  const cpfColumns = new Set<string>(['cpf', 'spouseCpf'])
+
   for (const field of fields) {
     if (!allowed.has(field.key)) continue
     const column = field.key as ScanFieldColumn
-    // birthDate (coluna date), cpf (identidade) e zipcode (CEP) so se forem
-    // validos — evita gravar dado invalido e promover o rascunho a CADASTRADO
-    // com lixo. O campo invalido ainda aparece na revisao com warning.
+    // Campos de data, CPF e CEP so se forem validos — evita gravar dado invalido e
+    // promover o rascunho com lixo. O campo invalido ainda aparece na revisao com
+    // warning.
     if (
-      (column === 'birthDate' || column === 'cpf' || column === 'zipcode') &&
+      (dateColumns.has(column) ||
+        cpfColumns.has(column) ||
+        column === 'zipcode') &&
       !field.valid
     ) {
       continue
     }
 
+    // Campos do titular sao notNull (default '') — vazio = ''. Campos do conjuge
+    // sao nullable — vazio = null. Trata os dois.
     const currentValue = current[column]
-    const isEmpty =
-      column === 'birthDate' ? currentValue == null : currentValue === ''
+    const isEmpty = currentValue == null || currentValue === ''
     if (!isEmpty) continue
 
-    update[column] = column === 'cpf' ? normalizeCpf(field.value) : field.value
+    update[column] = cpfColumns.has(column)
+      ? normalizeCpf(field.value)
+      : field.value
   }
 
   if (Object.keys(update).length > 0) {

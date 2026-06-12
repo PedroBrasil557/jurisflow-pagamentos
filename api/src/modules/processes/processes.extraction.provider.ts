@@ -45,6 +45,15 @@ const rawExtractionSchema = z.object({
     })
     .optional()
     .catch(undefined),
+  conjuge: z
+    .object({
+      fullName: optionalString,
+      cpf: optionalString,
+      birthDate: optionalString,
+      confianca: optionalNumber,
+    })
+    .optional()
+    .catch(undefined),
   camposNaoEncontrados: z.array(z.string()).optional().catch(undefined),
   paginas: z
     .array(
@@ -87,6 +96,8 @@ Tarefa 2 — Classifique CADA pagina do PDF em um dos tipos abaixo e devolva em 
 - certidao_casamento: certidao de casamento.
 - certidao_obito: certidao de obito.
 - outro: qualquer pagina que nao se encaixe nos tipos acima.
+
+Tarefa 3 — CONJUGE: examine o termo de entrega/recebimento do imovel (Caixa). SE o termo indicar que o imovel/contrato foi adquirido/assinado TAMBEM pelo conjuge (esposo(a)/companheiro(a)) do titular, extraia em "conjuge" os dados do conjuge: nome completo, CPF e data de nascimento (ISO yyyy-mm-dd). Preencha "conjuge" APENAS quando o termo de entrega claramente incluir o conjuge como comprador/assinante (ex.: dois adquirentes, "e seu conjuge", estado civil casado com co-titularidade). Caso contrario, NAO inclua "conjuge".
 
 Regras: NUNCA invente dados; se um campo nao estiver legivel, deixe-o de fora e liste em camposNaoEncontrados. Datas sempre em ISO yyyy-mm-dd. Atencao ao modelo novo de RG, onde o numero do topo pode ser o proprio CPF (o RG verdadeiro vem em outra linha). Classifique TODAS as paginas, sem pular nenhuma. Sempre chame a ferramenta registrar_titular.`
 
@@ -133,6 +144,21 @@ const extractionTool: Anthropic.Tool = {
           state: { type: 'string', description: 'UF (2 letras)' },
           zipcode: { type: 'string' },
           origem: { type: 'string' },
+          confianca: { type: 'number' },
+        },
+        additionalProperties: false,
+      },
+      conjuge: {
+        type: 'object',
+        description:
+          'Dados do CONJUGE, extraidos do termo de entrega/recebimento (Caixa) APENAS quando o termo indica que o contrato foi assinado tambem pelo conjuge.',
+        properties: {
+          fullName: { type: 'string', description: 'Nome completo do conjuge' },
+          cpf: { type: 'string', description: 'CPF do conjuge' },
+          birthDate: {
+            type: 'string',
+            description: 'Data de nascimento do conjuge, ISO yyyy-mm-dd',
+          },
           confianca: { type: 'number' },
         },
         additionalProperties: false,
@@ -226,7 +252,7 @@ export function createAnthropicVisionProvider(
                 ...documentBlocks,
                 {
                   type: 'text',
-                  text: 'Extraia os dados do titular e o endereco, e classifique cada pagina deste dossie por tipo de documento.',
+                  text: 'Extraia os dados do titular e o endereco, classifique cada pagina deste dossie por tipo de documento, e (se o termo de entrega da Caixa indicar contrato assinado com o conjuge) extraia os dados do conjuge.',
                 },
               ],
             },
