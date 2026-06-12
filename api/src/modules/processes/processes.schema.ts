@@ -1,6 +1,7 @@
-import { relations } from 'drizzle-orm'
+import { relations, sql } from 'drizzle-orm'
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -179,6 +180,14 @@ export const process = pgTable(
     index('process_housing_complex_id_idx').on(table.housingComplexId),
     index('process_documentation_assignee_id_idx').on(
       table.documentationAssigneeId,
+    ),
+    // Invariante do conjunto: o vinculo e tudo-ou-nada. Ou o processo aponta para
+    // um conjunto REGISTRADO (id + nome preenchidos), ou nenhum (id null + texto
+    // vazio). Proibe o estado "nome sem id" (texto livre sem registro), que
+    // quebraria a heranca de documentos de escopo de conjunto.
+    check(
+      'process_housing_complex_link_chk',
+      sql`(${table.housingComplexId} IS NULL) = (btrim(${table.housingComplex}) = '')`,
     ),
   ],
 )

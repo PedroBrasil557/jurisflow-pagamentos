@@ -281,6 +281,10 @@ async function runProcuracaoConjuntoAnalysisOnce(input: {
           .update(process)
           .set({
             housingComplex: outcome.newHousingComplex,
+            // Vincula o FK do conjunto (invariante: texto e id andam juntos,
+            // sempre apontando para um registro real). Sem isto, os documentos de
+            // escopo de conjunto (housingComplexDocumentKeys) nao sao herdados.
+            housingComplexId: matchResult.conjunto?.id ?? null,
             housingComplexSource: 'system',
             procuracaoConjuntoStatus: outcome.analysisStatus,
           })

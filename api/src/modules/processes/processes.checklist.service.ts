@@ -996,6 +996,18 @@ export async function syncProcessStatusAfterChecklistChange(input: {
     ? 'EM_DOCUMENTACAO'
     : 'CADASTRADO'
 
+  // Auto-avanco para DOCUMENTACAO_PRONTA quando a documentacao obrigatoria esta
+  // completa. O BACKEND e dono deste avanco — dispara para QUALQUER origem
+  // (digitalizacao por worker, anexo de doc de conjunto, upload humano), sem
+  // depender do frontend. So a partir de EM_DOCUMENTACAO (predecessor legal):
+  // CADASTRADO sem docs nunca tem requiredPending===0 com hasIndividualDocs.
+  if (
+    targetStatus === 'EM_DOCUMENTACAO' &&
+    input.checklist.summary.requiredPending === 0
+  ) {
+    targetStatus = 'DOCUMENTACAO_PRONTA'
+  }
+
   // If DOCUMENTACAO_PRONTA but docs became pending, revert to EM_DOCUMENTACAO
   if (
     currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
@@ -1018,32 +1030,42 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   }
 
   const extraValues: Record<string, unknown> = {}
-
-  if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+  if (targetStatus === 'DOCUMENTACAO_PRONTA') {
+    extraValues.documentationReadyAt = new Date()
+  } else if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+    // Saindo de PRONTA (documentacao voltou a ficar pendente).
     extraValues.documentationReadyAt = null
   }
 
-  const [updatedProcess] = await db
-    .update(process)
-    .set({
-      status: targetStatus,
-      ...extraValues,
-    })
-    .where(eq(process.id, input.processId))
-    .returning()
+  // update + historico na MESMA transacao: a auditoria nao pode divergir do estado.
+  const updatedProcess = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(process)
+      .set({
+        status: targetStatus,
+        ...extraValues,
+      })
+      .where(eq(process.id, input.processId))
+      .returning()
 
-  await createProcessHistoryEntry({
-    processId: input.processId,
-    actorUserId: input.actor.id,
-    eventType: 'STATUS_CHANGED',
-    fromStatus: currentProcess.status,
-    toStatus: targetStatus,
-    notes:
-      targetStatus === 'CADASTRADO'
-        ? 'Todos os documentos foram removidos.'
-        : targetStatus === 'EM_DOCUMENTACAO'
-          ? 'Documentacao voltou a ficar pendente.'
-          : undefined,
+    await createProcessHistoryEntry({
+      processId: input.processId,
+      actorUserId: input.actor.id,
+      eventType: 'STATUS_CHANGED',
+      fromStatus: currentProcess.status,
+      toStatus: targetStatus,
+      notes:
+        targetStatus === 'CADASTRADO'
+          ? 'Todos os documentos foram removidos.'
+          : targetStatus === 'DOCUMENTACAO_PRONTA'
+            ? 'Documentacao concluida automaticamente.'
+            : targetStatus === 'EM_DOCUMENTACAO'
+              ? 'Documentacao voltou a ficar pendente.'
+              : undefined,
+      executor: tx,
+    })
+
+    return updated
   })
 
   return updatedProcess

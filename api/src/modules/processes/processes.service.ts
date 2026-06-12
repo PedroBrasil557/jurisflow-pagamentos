@@ -852,12 +852,21 @@ export async function markProcessDocumentationReady(
   actor: ProcessActor,
   perms: ResolvedPermissions,
 ) {
-  const { relationship: rel } = await getProcessContextOrThrow({
-    processId,
-    userId: actor.id,
-    perms,
-  })
+  const { process: currentProcess, relationship: rel } =
+    await getProcessContextOrThrow({
+      processId,
+      userId: actor.id,
+      perms,
+    })
   assertProcessAction(perms, rel, 'markDocumentationReady')
+
+  // Idempotente: o backend (syncProcessStatusAfterChecklistChange) ja auto-avanca
+  // para DOCUMENTACAO_PRONTA quando a documentacao completa. Se ja esta pronta,
+  // esta acao explicita (ou a chamada redundante do frontend) e um no-op — evita
+  // erro de transicao invalida PRONTA->PRONTA.
+  if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+    return currentProcess
+  }
 
   const checklist = await getProcessChecklist(processId, actor.id, perms)
 
