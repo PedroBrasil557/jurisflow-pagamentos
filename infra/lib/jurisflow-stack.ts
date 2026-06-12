@@ -6,6 +6,7 @@ import { Database } from './constructs/database';
 import { Vpc } from './constructs/vpc';
 import { Storage } from './constructs/storage';
 import { Worker } from './constructs/worker';
+import { IngestionWorker } from './constructs/ingestion-worker';
 
 export class JurisflowAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -28,6 +29,16 @@ export class JurisflowAppStack extends cdk.Stack {
     new Worker(this, 'Worker', {
       vpc,
       apiUrl,
+    });
+
+    // Worker da fila de ingestao (scan/import): processo dedicado, multi-replica,
+    // que drena a fila duravel no Postgres (claim+lease, SKIP LOCKED). Substitui o
+    // fire-and-forget — sem SPOF, ECS reinicia em crash, escala pela profundidade
+    // da fila (Fase 3). Le/escreve no bucket de documentos via IAM role.
+    new IngestionWorker(this, 'IngestionWorker', {
+      vpc,
+      databaseUrl,
+      documentsBucket,
     });
 
     const { webAppUrl } = new WebApp(this, 'WebApp', { apiUrl });
