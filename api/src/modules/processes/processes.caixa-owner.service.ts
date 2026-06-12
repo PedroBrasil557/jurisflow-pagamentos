@@ -8,6 +8,7 @@ import {
   getCaixaOwnerAutoApply,
 } from '../settings/settings.service'
 import {
+  CAIXA_OWNER_NAO_TITULAR,
   type CaixaBuyer,
   compareCaixaOwner,
   decideCaixaOwnerOutcome,
@@ -215,18 +216,13 @@ async function runCaixaOwnerAnalysisOnce(input: {
           cpfConjuge: extraction.cpfConjuge,
           trechoFonte: extraction.trechoFonte,
         })
-        // Para a comparacao deterministica: titular e conjuge entram como
-        // "compradores" (basta um bater por CPF/nome -> titular do contrato).
+        // A eleicao do ownerType compara SO o titular do processo com o titular do
+        // termo — o conjuge NAO entra (decisao de dominio: "titular do contrato"
+        // e o titular, nao o conjuge). O conjuge segue gravado em byDoc (evidencia).
         if (extraction.titular) {
           allCompradores.push({
             nome: extraction.titular,
             cpf: extraction.cpfTitular,
-          })
-        }
-        if (extraction.conjuge) {
-          allCompradores.push({
-            nome: extraction.conjuge,
-            cpf: extraction.cpfConjuge,
           })
         }
       } catch (error) {
@@ -324,7 +320,9 @@ async function runCaixaOwnerAnalysisOnce(input: {
           actorUserId: SYSTEM_ACTOR_ID,
           eventType: outcome.historyEvent,
           notes: outcome.apply
-            ? 'Titular do contrato Caixa confirmado automaticamente pela analise.'
+            ? outcome.newOwnerType === CAIXA_OWNER_NAO_TITULAR
+              ? 'Identificado como NAO titular do contrato Caixa (titular do processo difere do titular do termo).'
+              : 'Titular do contrato Caixa confirmado automaticamente pela analise.'
             : 'A analise do contrato Caixa precisa de revisao humana.',
           metadata: {
             aiAnalysisId: auditId,

@@ -18,20 +18,24 @@ export type CaixaTitular = {
 export type CaixaOwnerMatch = 'cpf' | 'name' | 'none'
 
 export type CaixaOwnerResult = {
-  // Auto-aplica SO 'titular'. Tudo que nao for match identico vira 'review'
-  // (humano decide; o sistema nunca auto-aplica "nao titular").
-  result: 'titular' | 'review'
+  // A eleicao do ownerType e feita comparando o titular do PROCESSO com o titular
+  // do TERMO (o conjuge nao entra — filtrado no service). Tres desfechos:
+  // - 'titular'     => match identico (e o titular do contrato Caixa).
+  // - 'nao_titular' => diferenca CONFIRMADA (titular do processo != titular do termo).
+  // - 'review'      => INDETERMINADO (nao da pra afirmar igualdade nem diferenca).
+  result: 'titular' | 'nao_titular' | 'review'
   matchedBy: CaixaOwnerMatch
 }
 
 // Decisao DETERMINISTICA (codigo, nunca o LLM). Precisao sobre recall:
-// 1) CPF e o sinal primario — exige ambos validos (checksum) e iguais.
-// 2) Nome so e usado como fallback QUANDO o comprador NAO TRAZ CPF no doc.
+// 1) CPF e o sinal primario — exige ambos validos (checksum) e iguais => 'titular'.
+// 2) Nome so e usado como fallback QUANDO o comprador NAO TRAZ CPF no doc => 'titular'.
 //    Se o doc traz um CPF (mesmo mascarado/parcial, ex.: "111.444.***-**" — comum
-//    por LGPD), NAO casar por nome: o CPF e um sinal de identidade conflitante
-//    que invalida o match por homonimo (dois "Jose da Silva" distintos) => review.
-// 3) Varios compradores (casal): basta UM bater para ser titular.
-// 4) Nenhum match identico => 'review'.
+//    por LGPD), NAO casa por nome: o CPF nao pode ser confirmado.
+// 3) Sem match, mas com diferenca CONFIRMADA (CPF valido diferente, ou nome
+//    diferente sem CPF) => 'nao_titular'.
+// 4) Sem match e INDETERMINADO (nome igual mas CPF do termo ilegivel/mascarado;
+//    ou nada comparavel) => 'review' (nao afirma "nao titular" sem certeza).
 export function compareCaixaOwner(
   compradores: CaixaBuyer[],
   titular: CaixaTitular,
@@ -72,27 +76,52 @@ export function compareCaixaOwner(
     }
   }
 
-  return { result: 'review', matchedBy: 'none' }
+  // Sem match. Decide entre diferenca CONFIRMADA e INDETERMINADO.
+  // Indeterminado: nada comparavel no titular do processo.
+  if (!titularCpfValid && !titularName) {
+    return { result: 'review', matchedBy: 'none' }
+  }
+  // Indeterminado: nada para comparar (lista vazia).
+  if (compradores.length === 0) {
+    return { result: 'review', matchedBy: 'none' }
+  }
+  // Indeterminado: algum comprador tem o MESMO nome, mas o CPF presente no doc nao
+  // pode ser confirmado (mascarado/invalido) — pode ser a mesma pessoa. Nao da pra
+  // afirmar "nao e o titular" => revisao humana.
+  const nameMatchesButCpfUnconfirmable =
+    !!titularName &&
+    compradores.some(
+      (b) =>
+        normalizeName(b.nome) === titularName && !!b.cpf && !isValidCpf(b.cpf),
+    )
+  if (nameMatchesButCpfUnconfirmable) {
+    return { result: 'review', matchedBy: 'none' }
+  }
+
+  // Diferenca confirmada: o titular do processo nao e o titular do termo.
+  return { result: 'nao_titular', matchedBy: 'none' }
 }
 
 export const CAIXA_OWNER_TITULAR = 'titular_contrato_caixa'
+export const CAIXA_OWNER_NAO_TITULAR = 'nao_titular_contrato_caixa'
 
 export type CaixaOwnerOutcome = {
   // Estado operacional resultante (process.caixaAnalysisStatus).
   analysisStatus: 'done' | 'review'
-  // Se deve gravar ownerType = titular (so quando ha CERTEZA + flag ligada).
+  // Se deve gravar o ownerType concluido (so com CERTEZA + flag ligada + sem lock).
   apply: boolean
-  newOwnerType?: typeof CAIXA_OWNER_TITULAR
+  newOwnerType?: typeof CAIXA_OWNER_TITULAR | typeof CAIXA_OWNER_NAO_TITULAR
   historyEvent: 'CAIXA_OWNER_AUTO_SET' | 'CAIXA_OWNER_REVIEW_REQUIRED' | null
 }
 
 // Decide o desfecho a partir do resultado deterministico + estado atual do
 // processo + flag. PURA (sem I/O). Regras:
-// - 'review' => sempre revisar (nunca auto-aplica "nao titular").
-// - 'titular' ja aplicado => no-op.
-// - shadow (flag off) => mesmo com 'titular', so registra e manda revisar.
+// - 'review' (indeterminado) => sempre revisar (humano decide).
+// - resultado ja aplicado => no-op.
+// - shadow (flag off) => so registra e manda revisar.
 // - human-lock => se um humano definiu outro ownerType, nao sobrescreve: revisar.
-// - caso contrario, com a flag ligada => auto-aplica titular.
+// - caso contrario, com a flag ligada => auto-aplica o ownerType concluido
+//   (titular OU nao_titular).
 export function decideCaixaOwnerOutcome(input: {
   result: CaixaOwnerResult['result']
   currentOwnerType: string
@@ -107,7 +136,10 @@ export function decideCaixaOwnerOutcome(input: {
     }
   }
 
-  if (input.currentOwnerType === CAIXA_OWNER_TITULAR) {
+  const target =
+    input.result === 'titular' ? CAIXA_OWNER_TITULAR : CAIXA_OWNER_NAO_TITULAR
+
+  if (input.currentOwnerType === target) {
     return { analysisStatus: 'done', apply: false, historyEvent: null }
   }
 
@@ -130,7 +162,7 @@ export function decideCaixaOwnerOutcome(input: {
   return {
     analysisStatus: 'done',
     apply: true,
-    newOwnerType: CAIXA_OWNER_TITULAR,
+    newOwnerType: target,
     historyEvent: 'CAIXA_OWNER_AUTO_SET',
   }
 }
