@@ -48,7 +48,10 @@ import {
 import { process, processBatchFile } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
-type ProcessActor = NonNullable<AppBindings['Variables']['user']>
+// Estas funcoes so usam o id do ator (usuario autenticado OU bot do sistema na
+// ingestao). Tipar so o id permite passar { id } sem cast e o compilador garante
+// que ninguem leia outro campo de um ator que nao o tem.
+type ProcessActor = Pick<NonNullable<AppBindings['Variables']['user']>, 'id'>
 
 export const maxBatchFileSizeInBytes = 25 * 1024 * 1024
 
@@ -674,7 +677,7 @@ export async function processClaimedIngestion(
     }
 
     const perms = await resolveUserPermissions(uploader.id, uploader.role)
-    const actor = { id: uploader.id } as unknown as ProcessActor
+    const actor: ProcessActor = { id: uploader.id }
 
     const message = await runIngestionWork({
       processId: fileRecord.processId,
@@ -682,7 +685,19 @@ export async function processClaimedIngestion(
       actor,
       perms,
     })
-    await markIngestionDone(job.batchFileId, job.leaseToken, message)
+    const applied = await markIngestionDone(
+      job.batchFileId,
+      job.leaseToken,
+      message,
+    )
+    if (!applied) {
+      // Lease perdido enquanto processava: outro worker reivindicou o orfao e ja
+      // concluiu. Descartamos este desfecho (o fencing impediu a sobrescrita).
+      console.warn(
+        'worker: lease perdido apos concluir; desfecho descartado (outra replica assumiu)',
+        { batchFileId: job.batchFileId },
+      )
+    }
   } catch (error) {
     const message =
       error instanceof ServiceError
@@ -693,7 +708,18 @@ export async function processClaimedIngestion(
       attempts: job.attempts,
       error: String(error),
     })
-    await failIngestion(job.batchFileId, job.leaseToken, job.attempts, message)
+    const applied = await failIngestion(
+      job.batchFileId,
+      job.leaseToken,
+      job.attempts,
+      message,
+    )
+    if (!applied) {
+      console.warn(
+        'worker: lease perdido apos falha; retry/dead-letter nao aplicado (outra replica assumiu)',
+        { batchFileId: job.batchFileId },
+      )
+    }
   } finally {
     clearInterval(heartbeat)
   }

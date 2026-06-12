@@ -180,12 +180,16 @@ suite('fila de ingestao (integracao Postgres)', () => {
     const id = await insertJob()
     const job = await claimNextIngestionJob()
 
-    // Token errado: no-op (continua processing)
-    await markIngestionDone(id, 'token-errado', 'nao deveria valer')
+    // Token errado: no-op (continua processing) e RETORNA false — o caller usa
+    // isso para nao logar um 'done' falso (observabilidade) quando o lease foi
+    // perdido para outra replica.
+    expect(
+      await markIngestionDone(id, 'token-errado', 'nao deveria valer'),
+    ).toBe(false)
     expect((await getJob(id)).splitStatus).toBe('processing')
 
-    // Token certo: conclui
-    await markIngestionDone(id, job?.leaseToken ?? '', 'ok')
+    // Token certo: conclui e RETORNA true (aplicou de fato).
+    expect(await markIngestionDone(id, job?.leaseToken ?? '', 'ok')).toBe(true)
     const row = await getJob(id)
     expect(row.splitStatus).toBe('done')
     expect(row.splitLeaseToken).toBeNull()
@@ -195,12 +199,14 @@ suite('fila de ingestao (integracao Postgres)', () => {
     const id = await insertJob()
     const job = await claimNextIngestionJob() // attempts = 1
 
-    await failIngestion(
-      id,
-      job?.leaseToken ?? '',
-      job?.attempts ?? 1,
-      'transitorio',
-    )
+    expect(
+      await failIngestion(
+        id,
+        job?.leaseToken ?? '',
+        job?.attempts ?? 1,
+        'transitorio',
+      ),
+    ).toBe(true)
 
     const row = await getJob(id)
     expect(row.splitStatus).toBe('queued')
@@ -212,12 +218,14 @@ suite('fila de ingestao (integracao Postgres)', () => {
     const id = await insertJob()
     const job = await claimNextIngestionJob()
 
-    await failIngestion(
-      id,
-      job?.leaseToken ?? '',
-      INGESTION_MAX_ATTEMPTS,
-      'veneno',
-    )
+    expect(
+      await failIngestion(
+        id,
+        job?.leaseToken ?? '',
+        INGESTION_MAX_ATTEMPTS,
+        'veneno',
+      ),
+    ).toBe(true)
 
     const row = await getJob(id)
     expect(row.splitStatus).toBe('error')

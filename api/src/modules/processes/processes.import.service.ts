@@ -13,7 +13,9 @@ import { MAX_FILE_SIZE_IN_BYTES } from './processes.extraction.service'
 import type { ExtractedDocument } from './processes.extraction.types'
 import { splitPdfByDocuments } from './processes.pdf.splitter'
 
-type ProcessActor = NonNullable<AppBindings['Variables']['user']>
+// So o id do ator e usado (usuario autenticado OU bot do sistema na ingestao).
+// Tipar so o id permite { id } sem cast e impede leitura de campo inexistente.
+type ProcessActor = Pick<NonNullable<AppBindings['Variables']['user']>, 'id'>
 
 export const importBundleDocumentsSchema = z.array(
   z.object({

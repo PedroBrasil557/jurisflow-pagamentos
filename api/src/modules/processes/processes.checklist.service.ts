@@ -51,7 +51,10 @@ import {
 } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
-type ProcessActor = NonNullable<AppBindings['Variables']['user']>
+// Estas funcoes so usam o id do ator (usuario autenticado OU bot do sistema, ex.:
+// 'jurisflow-bot' no anexo da quitacao). Tipar so o id permite passar { id } sem
+// cast e o compilador garante que ninguem leia outro campo de um ator sem ele.
+type ProcessActor = Pick<NonNullable<AppBindings['Variables']['user']>, 'id'>
 type ProcessRecord = typeof process.$inferSelect
 type ChecklistFileRecord = Awaited<ReturnType<typeof listCurrentChecklistFiles>>
 type ProcessChecklistItemRecord = Awaited<
@@ -935,7 +938,7 @@ export async function attachSystemChecklistFile(input: {
   }
 
   // Apenas o id e usado por attachChecklistFile (uploadedByUserId/actorUserId).
-  const actor = { id: 'jurisflow-bot' } as unknown as ProcessActor
+  const actor: ProcessActor = { id: 'jurisflow-bot' }
 
   let didUploadFile = false
   await db.transaction(async (tx) => {

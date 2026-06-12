@@ -90,7 +90,11 @@ export async function claimNextIngestionJob(): Promise<IngestionJob | null> {
           AND (split_lease_expires_at IS NULL OR split_lease_expires_at < now())
         )
         OR (split_status = 'processing' AND split_lease_expires_at < now())
-        ORDER BY split_attempts ASC, split_updated_at ASC NULLS FIRST
+        -- FIFO por elegibilidade. NAO ordenar por split_attempts: o backoff
+        -- (split_lease_expires_at) ja espaca os retries; priorizar quem tem menos
+        -- tentativas penaliza duas vezes quem falhou por algo transitorio e, sob
+        -- carga continua de jobs novos, poderia starve um job re-tentado.
+        ORDER BY split_updated_at ASC NULLS FIRST
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )`,
@@ -141,13 +145,17 @@ export async function renewIngestionLease(
 }
 
 // Conclui com sucesso. Cercado pelo fencing token: um worker que perdeu o lease nao
-// sobrescreve o desfecho de outro.
+// sobrescreve o desfecho de outro. Retorna se REALMENTE aplicou (a linha cercada
+// casou): com multiplas replicas a re-reivindicacao de orfao e normal, entao um
+// worker pode chegar aqui ja sem o lease — nesse caso casa 0 linhas e NAO loga
+// 'done' (senao a observabilidade contaria o mesmo job duas vezes). Quem chama
+// decide o que fazer com o false.
 export async function markIngestionDone(
   batchFileId: string,
   leaseToken: string,
   message: string,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const applied = await db
     .update(processBatchFile)
     .set({
       splitStatus: 'done',
@@ -163,19 +171,27 @@ export async function markIngestionDone(
         eq(processBatchFile.splitLeaseToken, leaseToken),
       ),
     )
+    .returning({ id: processBatchFile.id })
+
+  if (applied.length === 0) {
+    return false
+  }
 
   logEvent('ingestion.job.done', { batchFileId })
+  return true
 }
 
 // Registra falha. Transitoria + tentativas restantes -> volta para 'queued' com
 // backoff. Tentativas esgotadas -> dead-letter ('error' terminal). Cercado pelo
 // fencing token. `attempts` = numero de tentativas ja consumidas (vindo do claim).
+// Retorna se REALMENTE aplicou (a linha cercada casou). Igual ao markIngestionDone:
+// um worker que perdeu o lease casa 0 linhas e NAO loga retry/dead-letter falso.
 export async function failIngestion(
   batchFileId: string,
   leaseToken: string,
   attempts: number,
   message: string,
-): Promise<void> {
+): Promise<boolean> {
   const fence = and(
     eq(processBatchFile.id, batchFileId),
     eq(processBatchFile.splitStatus, 'processing'),
@@ -183,7 +199,7 @@ export async function failIngestion(
   )
 
   if (attempts >= INGESTION_MAX_ATTEMPTS) {
-    await db
+    const applied = await db
       .update(processBatchFile)
       .set({
         splitStatus: 'error',
@@ -194,13 +210,18 @@ export async function failIngestion(
         splitUpdatedAt: new Date(),
       })
       .where(fence)
+      .returning({ id: processBatchFile.id })
+
+    if (applied.length === 0) {
+      return false
+    }
 
     logEvent('ingestion.job.dead_letter', { batchFileId, attempts })
-    return
+    return true
   }
 
   const backoffMs = computeBackoffMs(attempts)
-  await db
+  const applied = await db
     .update(processBatchFile)
     .set({
       splitStatus: 'queued',
@@ -210,10 +231,16 @@ export async function failIngestion(
       splitUpdatedAt: new Date(),
     })
     .where(fence)
+    .returning({ id: processBatchFile.id })
+
+  if (applied.length === 0) {
+    return false
+  }
 
   logEvent('ingestion.job.retry', {
     batchFileId,
     attempts,
     backoffMs,
   })
+  return true
 }
