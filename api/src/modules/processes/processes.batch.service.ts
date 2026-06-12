@@ -484,6 +484,7 @@ const SCAN_FIELD_COLUMNS = [
   'zipcode',
   // Conjuge (do termo de entrega): spouseContractSigned='sim' + dados.
   'spouseContractSigned',
+  'spouseSameAddress',
   'spouseFullName',
   'spouseCpf',
   'spouseBirthDate',

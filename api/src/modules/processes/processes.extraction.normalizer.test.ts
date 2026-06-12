@@ -19,6 +19,7 @@ describe('normalizeExtraction — conjuge (termo de entrega)', () => {
 
     expect(byKey.spouseContractSigned?.value).toBe('sim')
     expect(byKey.spouseContractSigned?.valid).toBe(true)
+    expect(byKey.spouseSameAddress?.value).toBe('sim')
     expect(byKey.spouseFullName?.value).toBe('MARIA DA SILVA')
     expect(byKey.spouseCpf?.valid).toBe(true)
     expect(byKey.spouseBirthDate?.value).toBe('1990-05-15')

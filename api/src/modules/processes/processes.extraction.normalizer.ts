@@ -228,6 +228,16 @@ export function normalizeExtraction(raw: RawExtraction): ExtractionResult {
       source: CONJUGE_SOURCE,
     })
 
+    // Conjuge no mesmo contrato Caixa -> mesmo endereco do titular (default).
+    fields.push({
+      key: 'spouseSameAddress',
+      label: 'Conjuge no mesmo endereco do titular',
+      value: 'sim',
+      confidence: conjugeConfidence,
+      valid: true,
+      source: CONJUGE_SOURCE,
+    })
+
     if (conjuge.fullName) {
       fields.push({
         key: 'spouseFullName',
