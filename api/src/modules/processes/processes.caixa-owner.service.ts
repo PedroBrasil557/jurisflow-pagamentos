@@ -336,6 +336,26 @@ async function runCaixaOwnerAnalysisOnce(input: {
         })
       }
     })
+
+    // ownerType alterado: reconcilia o status — ownerType e a condicao de
+    // obrigatoriedade do contrato_compra_venda (nao_titular). Mudar aqui muda quais
+    // docs sao obrigatorios, podendo completar OU travar a documentacao. Import
+    // dinamico para evitar ciclo com checklist.service. Falha NAO marca erro.
+    if (outcome.apply) {
+      try {
+        const { reconcileProcessStatus } = await import(
+          './processes.checklist.service'
+        )
+        await reconcileProcessStatus(input.processId, {
+          id: SYSTEM_ACTOR_ID,
+        } as unknown as Parameters<typeof reconcileProcessStatus>[1])
+      } catch (reconcileError) {
+        console.error('Falha ao reconciliar status apos definir ownerType', {
+          processId: input.processId,
+          error: String(reconcileError),
+        })
+      }
+    }
   } catch (error) {
     console.error('Falha na analise do contrato Caixa', {
       processId: input.processId,
