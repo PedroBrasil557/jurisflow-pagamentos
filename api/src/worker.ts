@@ -1,4 +1,5 @@
 import { processClaimedIngestion } from './modules/processes/processes.batch.service'
+import { emitQueueMetrics } from './modules/processes/processes.ingestion.metrics'
 import { claimNextIngestionJob } from './modules/processes/processes.ingestion.queue'
 import { closeDb } from './shared/db'
 
@@ -12,8 +13,12 @@ const POLL_MS = Number(process.env.INGESTION_POLL_MS ?? '3000')
 // Limite de concorrencia = backpressure real (o gargalo e o provider de IA:
 // rate-limit/custo). Mantido baixo de proposito.
 const CONCURRENCY = Number(process.env.INGESTION_CONCURRENCY ?? '2')
+// Intervalo de emissao da metrica de fila (EMF). Desacoplado do POLL_MS: poll e
+// curto (latencia de claim), metrica e ~1/min (evita volume desnecessario no log).
+const METRICS_INTERVAL_MS = 60_000
 
 let running = true
+let lastMetricsAt = 0
 const inFlight = new Set<Promise<void>>()
 
 // Reivindica ate encher a concorrencia; cada job roda em paralelo ate o limite.
@@ -52,6 +57,16 @@ async function loop(): Promise<void> {
         error: String(error),
       })
     }
+
+    // Emite a profundidade da fila ~1/min (throttle sobre o poll curto). Inclui
+    // depth=0: o alarme precisa da metrica presente para distinguir fila-vazia
+    // de worker-morto. Multi-replica emite o mesmo valor; o alarme usa Maximum.
+    const now = Date.now()
+    if (now - lastMetricsAt >= METRICS_INTERVAL_MS) {
+      lastMetricsAt = now
+      await emitQueueMetrics()
+    }
+
     await new Promise((resolve) => setTimeout(resolve, POLL_MS))
   }
 }
