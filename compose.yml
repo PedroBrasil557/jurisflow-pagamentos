@@ -64,6 +64,10 @@ services:
       dockerfile: Dockerfile.dev
     working_dir: /workspace/api
     command: ["bun", "run", "worker"]
+    # Reinicia automaticamente em crash (erro transitorio/OOM) — sem depender de
+    # humano. Pode escalar: `docker compose up -d --scale ingestion-worker=2`
+    # (o claim usa FOR UPDATE SKIP LOCKED, seguro com varias replicas).
+    restart: unless-stopped
     environment:
       BETTER_AUTH_SECRET: "dev-only-secret-change-me-before-production"
       DATABASE_URL: "postgresql://postgres:postgres@db:5432/app"
@@ -78,6 +82,8 @@ services:
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
       INGESTION_POLL_MS: "3000"
       INGESTION_CONCURRENCY: "2"
+      # Pool de conexoes baixo por replica (nao exaurir o Postgres ao escalar).
+      DB_POOL_MAX: "5"
     volumes:
       - ./:/workspace
       - api_node_modules:/workspace/api/node_modules

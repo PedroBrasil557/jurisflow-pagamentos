@@ -1,5 +1,6 @@
 import { processClaimedIngestion } from './modules/processes/processes.batch.service'
 import { claimNextIngestionJob } from './modules/processes/processes.ingestion.queue'
+import { closeDb } from './shared/db'
 
 // Worker dedicado da fila de ingestao (Fase 2). Processo separado da API (mesma
 // imagem/codebase), deployado como container proprio com `bun run worker`. Isola o
@@ -66,4 +67,6 @@ process.on('SIGINT', () => shutdown('SIGINT'))
 await loop()
 // Deixa os jobs em voo terminarem (gravam done/retry/dead-letter) antes de sair.
 await Promise.allSettled([...inFlight])
+// Encerra o pool de conexoes limpo (evita SIGKILL por handle aberto).
+await closeDb()
 console.log('ingestion worker: encerrado.')
