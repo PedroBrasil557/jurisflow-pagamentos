@@ -169,6 +169,13 @@
       "when": 1781226387823,
       "tag": "0023_bored_riptide",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1781295433776,
+      "tag": "0024_purple_hex",
+      "breakpoints": true
     }
   ]
 }

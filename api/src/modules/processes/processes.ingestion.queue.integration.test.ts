@@ -11,8 +11,9 @@ import { db } from '../../shared/db'
 import { user } from '../auth/auth.schema'
 import {
   claimNextIngestionJob,
+  deadLetterIngestion,
   failIngestion,
-  INGESTION_MAX_ATTEMPTS,
+  INGESTION_MAX_FAILURES,
   markIngestionDone,
   renewIngestionLease,
 } from './processes.ingestion.queue'
@@ -110,13 +111,14 @@ suite('fila de ingestao (integracao Postgres)', () => {
     return row
   }
 
-  test('claim reivindica um job queued, incrementa attempts e grava lease+token', async () => {
+  test('claim reivindica um job queued, incrementa deliveryCount e grava lease+token', async () => {
     const id = await insertJob()
 
     const job = await claimNextIngestionJob()
 
     expect(job?.batchFileId).toBe(id)
-    expect(job?.attempts).toBe(1)
+    expect(job?.deliveryCount).toBe(1)
+    expect(job?.failureCount).toBe(0)
     expect(job?.leaseToken).toBeTruthy()
 
     const row = await getJob(id)
@@ -142,13 +144,13 @@ suite('fila de ingestao (integracao Postgres)', () => {
       splitStatus: 'processing',
       splitLeaseExpiresAt: new Date(Date.now() - 1000),
       splitLeaseToken: 'token-antigo',
-      splitAttempts: 1,
+      splitDeliveryCount: 1,
     })
 
     const job = await claimNextIngestionJob()
 
     expect(job?.batchFileId).toBe(id)
-    expect(job?.attempts).toBe(2)
+    expect(job?.deliveryCount).toBe(2)
     expect(job?.leaseToken).not.toBe('token-antigo')
   })
 
@@ -157,7 +159,7 @@ suite('fila de ingestao (integracao Postgres)', () => {
       splitStatus: 'processing',
       splitLeaseExpiresAt: new Date(Date.now() + 60_000),
       splitLeaseToken: 'token-vivo',
-      splitAttempts: 1,
+      splitDeliveryCount: 1,
     })
 
     const job = await claimNextIngestionJob()
@@ -195,38 +197,76 @@ suite('fila de ingestao (integracao Postgres)', () => {
     expect(row.splitLeaseToken).toBeNull()
   })
 
-  test('failIngestion com tentativas restantes volta para queued com backoff', async () => {
+  test('failIngestion com orcamento restante volta para queued com backoff e incrementa falhas', async () => {
     const id = await insertJob()
-    const job = await claimNextIngestionJob() // attempts = 1
+    const job = await claimNextIngestionJob() // failureCount = 0
 
     expect(
       await failIngestion(
         id,
         job?.leaseToken ?? '',
-        job?.attempts ?? 1,
+        job?.failureCount ?? 0,
         'transitorio',
       ),
     ).toBe(true)
 
     const row = await getJob(id)
     expect(row.splitStatus).toBe('queued')
+    expect(row.splitFailureCount).toBe(1) // falha registrada
     expect(row.splitLeaseExpiresAt).not.toBeNull() // backoff (elegivel-a-partir-de)
     expect(row.splitDeadLetterAt).toBeNull()
   })
 
-  test('failIngestion com tentativas esgotadas vai para dead-letter (error)', async () => {
-    const id = await insertJob()
-    const job = await claimNextIngestionJob()
+  test('failIngestion com orcamento de falhas esgotado vai para dead-letter (error)', async () => {
+    // Ja falhou ate o limite-1; a proxima falha estoura o orcamento de retry.
+    const id = await insertJob({
+      splitFailureCount: INGESTION_MAX_FAILURES - 1,
+    })
+    const job = await claimNextIngestionJob() // failureCount = MAX-1
 
     expect(
       await failIngestion(
         id,
         job?.leaseToken ?? '',
-        INGESTION_MAX_ATTEMPTS,
+        job?.failureCount ?? 0,
         'veneno',
       ),
     ).toBe(true)
 
+    const row = await getJob(id)
+    expect(row.splitStatus).toBe('error')
+    expect(row.splitFailureCount).toBe(INGESTION_MAX_FAILURES)
+    expect(row.splitDeadLetterAt).not.toBeNull()
+  })
+
+  test('orfao re-reivindicado NAO consome o orcamento de falhas (so entregas)', async () => {
+    // Job entregue varias vezes por churn de infra (orfao), sem nunca falhar:
+    // failureCount fica 0, entao o orcamento de retry real permanece intacto.
+    const id = await insertJob({
+      splitStatus: 'processing',
+      splitLeaseExpiresAt: new Date(Date.now() - 1000),
+      splitLeaseToken: 'orfao',
+      splitDeliveryCount: 7,
+      splitFailureCount: 0,
+    })
+
+    const job = await claimNextIngestionJob()
+    expect(job?.deliveryCount).toBe(8) // entregas sobem
+    expect(job?.failureCount).toBe(0) // falhas intactas
+  })
+
+  test('deadLetterIngestion (backstop de entregas) poe em error e respeita o fencing', async () => {
+    const id = await insertJob()
+    const job = await claimNextIngestionJob()
+
+    // Token errado: no-op + false.
+    expect(await deadLetterIngestion(id, 'token-errado', 'x')).toBe(false)
+    expect((await getJob(id)).splitStatus).toBe('processing')
+
+    // Token certo: dead-letter terminal.
+    expect(
+      await deadLetterIngestion(id, job?.leaseToken ?? '', 'entregas demais'),
+    ).toBe(true)
     const row = await getJob(id)
     expect(row.splitStatus).toBe('error')
     expect(row.splitDeadLetterAt).not.toBeNull()

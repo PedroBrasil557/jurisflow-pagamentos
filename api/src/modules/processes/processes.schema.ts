@@ -449,9 +449,15 @@ export const processBatchFile = pgTable(
     splitStatus: text('split_status').notNull().default('idle'),
     splitMessage: text('split_message'),
     splitUpdatedAt: timestamp('split_updated_at'),
-    // Tentativas ja consumidas (incrementadas no claim). Ao atingir o maximo, o
-    // job vira dead-letter ('error' terminal) em vez de re-tentar para sempre.
-    splitAttempts: integer('split_attempts').notNull().default(0),
+    // ENTREGAS: incrementado em TODO claim (inclusive re-reivindicacao de orfao).
+    // Backstop contra crash-poison: um PDF que mata o worker (OOM) nunca chega ao
+    // failIngestion, entao so o teto de entregas (MAX_DELIVERIES, checado no claim)
+    // o poe em quarentena. (Coluna DB segue 'split_attempts' por compat de migracao.)
+    splitDeliveryCount: integer('split_attempts').notNull().default(0),
+    // FALHAS registradas: incrementado SO no failIngestion (erro capturado). E o
+    // orcamento de retry real (MAX_FAILURES) — interrupcoes de infra (crash/orfao)
+    // NAO o consomem, entao nao dead-letam um job inocente por churn de infra.
+    splitFailureCount: integer('split_failure_count').notNull().default(0),
     // Lease: ate quando o worker que reivindicou "segura" o job. Renovado por
     // heartbeat durante o processamento. Em 'processing': expirou < now() => orfao,
     // reivindicavel. Em 'queued': funciona como "elegivel a partir de" (backoff de

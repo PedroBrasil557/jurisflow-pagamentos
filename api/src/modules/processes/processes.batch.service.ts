@@ -38,9 +38,11 @@ import { extractDocumentsFromFiles } from './processes.extraction.service'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { importDocumentBundle } from './processes.import.service'
 import {
+  deadLetterIngestion,
   enqueueIngestion,
   failIngestion,
   INGESTION_HEARTBEAT_MS,
+  INGESTION_MAX_DELIVERIES,
   type IngestionJob,
   markIngestionDone,
   renewIngestionLease,
@@ -642,6 +644,25 @@ async function runIngestionWork(input: {
 export async function processClaimedIngestion(
   job: IngestionJob,
 ): Promise<void> {
+  // Backstop de ENTREGAS: reivindicado vezes demais sem concluir nem registrar
+  // falha — assinatura de crash-poison (um PDF que derruba o worker, ex.: OOM,
+  // antes do failIngestion). Dead-letter SEM processar: processar de novo
+  // re-executaria o mesmo PDF que mata o worker. Fecha o gap de re-claim infinito.
+  if (job.deliveryCount >= INGESTION_MAX_DELIVERIES) {
+    const applied = await deadLetterIngestion(
+      job.batchFileId,
+      job.leaseToken,
+      `Entregas excederam o limite (${INGESTION_MAX_DELIVERIES}) sem concluir — arquivo possivelmente derruba o worker.`,
+    )
+    if (!applied) {
+      console.warn(
+        'worker: lease perdido antes do backstop de entregas (outra replica assumiu)',
+        { batchFileId: job.batchFileId },
+      )
+    }
+    return
+  }
+
   const [fileRecord] = await db
     .select()
     .from(processBatchFile)
@@ -705,13 +726,14 @@ export async function processClaimedIngestion(
         : 'Nao foi possivel processar o documento.'
     console.error('Falha na ingestao (worker)', {
       batchFileId: job.batchFileId,
-      attempts: job.attempts,
+      deliveryCount: job.deliveryCount,
+      failureCount: job.failureCount,
       error: String(error),
     })
     const applied = await failIngestion(
       job.batchFileId,
       job.leaseToken,
-      job.attempts,
+      job.failureCount,
       message,
     )
     if (!applied) {

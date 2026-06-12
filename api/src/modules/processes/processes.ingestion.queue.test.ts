@@ -3,7 +3,8 @@ import {
   computeBackoffMs,
   INGESTION_HEARTBEAT_MS,
   INGESTION_LEASE_TTL_MS,
-  INGESTION_MAX_ATTEMPTS,
+  INGESTION_MAX_DELIVERIES,
+  INGESTION_MAX_FAILURES,
 } from './processes.ingestion.queue'
 
 describe('computeBackoffMs', () => {
@@ -32,8 +33,14 @@ describe('constantes da fila', () => {
     expect(INGESTION_HEARTBEAT_MS).toBeLessThan(INGESTION_LEASE_TTL_MS)
   })
 
-  test('max de tentativas e finito e > 1', () => {
-    expect(INGESTION_MAX_ATTEMPTS).toBeGreaterThan(1)
-    expect(Number.isFinite(INGESTION_MAX_ATTEMPTS)).toBe(true)
+  test('max de falhas e finito e > 1', () => {
+    expect(INGESTION_MAX_FAILURES).toBeGreaterThan(1)
+    expect(Number.isFinite(INGESTION_MAX_FAILURES)).toBe(true)
+  })
+
+  test('backstop de entregas e maior que o orcamento de falhas', () => {
+    // O backstop precisa folgar acima do orcamento de retry para tolerar churn de
+    // infra (re-entregas por crash/orfao) sem dead-letar um job inocente cedo.
+    expect(INGESTION_MAX_DELIVERIES).toBeGreaterThan(INGESTION_MAX_FAILURES)
   })
 })

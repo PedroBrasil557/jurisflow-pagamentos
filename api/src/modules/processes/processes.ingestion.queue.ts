@@ -16,25 +16,34 @@ import { processBatchFile } from './processes.schema'
 export const INGESTION_LEASE_TTL_MS = 5 * 60 * 1000
 // Renovacao recomendada do heartbeat (1/3 do TTL da margem a jitter de rede).
 export const INGESTION_HEARTBEAT_MS = Math.floor(INGESTION_LEASE_TTL_MS / 3)
-// Tentativas antes do dead-letter terminal. Evita re-tentar um PDF-veneno p/ sempre.
-export const INGESTION_MAX_ATTEMPTS = 5
+// Orcamento de retry para FALHAS reais (erro capturado em failIngestion). Ao
+// esgotar, dead-letter. Interrupcoes de infra (crash/orfao) NAO consomem isto.
+export const INGESTION_MAX_FAILURES = 5
+// Backstop por ENTREGAS (claims), checado no claim/worker. Pega o crash-poison: um
+// PDF que mata o worker (OOM) antes do failIngestion nunca registra falha, entao so
+// o teto de entregas o poe em quarentena. Maior que MAX_FAILURES para tolerar churn
+// de infra (crash/orfao de vizinho) sem dead-letar um job inocente cedo demais.
+export const INGESTION_MAX_DELIVERIES = 12
 
-// Backoff entre tentativas do MESMO job: base * factor^(attempts-1), com teto.
+// Backoff entre tentativas do MESMO job: base * factor^(falhas-1), com teto.
 const BACKOFF_BASE_MS = 30 * 1000
 const BACKOFF_FACTOR = 3
 const BACKOFF_CAP_MS = 10 * 60 * 1000
 
-// Atraso (ms) antes da proxima tentativa, dado o numero de tentativas ja
-// consumidas. Funcao pura — testada isoladamente.
-export function computeBackoffMs(attempts: number): number {
-  const exponent = Math.max(0, attempts - 1)
+// Atraso (ms) antes da proxima tentativa, dado o numero de FALHAS ja registradas.
+// Funcao pura — testada isoladamente.
+export function computeBackoffMs(failureCount: number): number {
+  const exponent = Math.max(0, failureCount - 1)
   return Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * BACKOFF_FACTOR ** exponent)
 }
 
 export type IngestionJob = {
   batchFileId: string
   processId: string
-  attempts: number
+  // Entregas (claims) ja consumidas — backstop contra crash-poison.
+  deliveryCount: number
+  // Falhas registradas ja consumidas — orcamento de retry real.
+  failureCount: number
   leaseToken: string
 }
 
@@ -58,7 +67,8 @@ export async function enqueueIngestion(
     .set({
       splitStatus: 'queued',
       splitMessage: null,
-      splitAttempts: 0,
+      splitDeliveryCount: 0,
+      splitFailureCount: 0,
       splitLeaseExpiresAt: null,
       splitLeaseToken: null,
       splitDeadLetterAt: null,
@@ -77,7 +87,7 @@ export async function claimNextIngestionJob(): Promise<IngestionJob | null> {
     .update(processBatchFile)
     .set({
       splitStatus: 'processing',
-      splitAttempts: sql`${processBatchFile.splitAttempts} + 1`,
+      splitDeliveryCount: sql`${processBatchFile.splitDeliveryCount} + 1`,
       splitLeaseExpiresAt: leaseIntervalSql(INGESTION_LEASE_TTL_MS),
       splitLeaseToken: leaseToken,
       splitUpdatedAt: sql`now()`,
@@ -90,10 +100,10 @@ export async function claimNextIngestionJob(): Promise<IngestionJob | null> {
           AND (split_lease_expires_at IS NULL OR split_lease_expires_at < now())
         )
         OR (split_status = 'processing' AND split_lease_expires_at < now())
-        -- FIFO por elegibilidade. NAO ordenar por split_attempts: o backoff
-        -- (split_lease_expires_at) ja espaca os retries; priorizar quem tem menos
-        -- tentativas penaliza duas vezes quem falhou por algo transitorio e, sob
-        -- carga continua de jobs novos, poderia starve um job re-tentado.
+        -- FIFO por elegibilidade. NAO ordenar por contagem de entregas/falhas: o
+        -- backoff (split_lease_expires_at) ja espaca os retries; priorizar quem tem
+        -- menos tentativas penaliza duas vezes a falha transitoria e, sob carga
+        -- continua de jobs novos, poderia starve um job re-tentado.
         ORDER BY split_updated_at ASC NULLS FIRST
         LIMIT 1
         FOR UPDATE SKIP LOCKED
@@ -102,7 +112,8 @@ export async function claimNextIngestionJob(): Promise<IngestionJob | null> {
     .returning({
       id: processBatchFile.id,
       processId: processBatchFile.processId,
-      attempts: processBatchFile.splitAttempts,
+      deliveryCount: processBatchFile.splitDeliveryCount,
+      failureCount: processBatchFile.splitFailureCount,
     })
 
   const row = claimed[0]
@@ -112,12 +123,14 @@ export async function claimNextIngestionJob(): Promise<IngestionJob | null> {
 
   logEvent('ingestion.job.claimed', {
     batchFileId: row.id,
-    attempts: row.attempts,
+    deliveryCount: row.deliveryCount,
+    failureCount: row.failureCount,
   })
   return {
     batchFileId: row.id,
     processId: row.processId,
-    attempts: row.attempts,
+    deliveryCount: row.deliveryCount,
+    failureCount: row.failureCount,
     leaseToken,
   }
 }
@@ -181,15 +194,16 @@ export async function markIngestionDone(
   return true
 }
 
-// Registra falha. Transitoria + tentativas restantes -> volta para 'queued' com
-// backoff. Tentativas esgotadas -> dead-letter ('error' terminal). Cercado pelo
-// fencing token. `attempts` = numero de tentativas ja consumidas (vindo do claim).
+// Registra uma FALHA real (erro capturado). Incrementa split_failure_count. Com
+// orcamento restante -> volta para 'queued' com backoff. Orcamento esgotado ->
+// dead-letter ('error' terminal). Cercado pelo fencing token. `failureCount` = nro
+// de falhas ja registradas ANTES desta (vindo do claim); a decisao usa failureCount+1.
 // Retorna se REALMENTE aplicou (a linha cercada casou). Igual ao markIngestionDone:
 // um worker que perdeu o lease casa 0 linhas e NAO loga retry/dead-letter falso.
 export async function failIngestion(
   batchFileId: string,
   leaseToken: string,
-  attempts: number,
+  failureCount: number,
   message: string,
 ): Promise<boolean> {
   const fence = and(
@@ -198,11 +212,14 @@ export async function failIngestion(
     eq(processBatchFile.splitLeaseToken, leaseToken),
   )
 
-  if (attempts >= INGESTION_MAX_ATTEMPTS) {
+  const nextFailureCount = failureCount + 1
+
+  if (nextFailureCount >= INGESTION_MAX_FAILURES) {
     const applied = await db
       .update(processBatchFile)
       .set({
         splitStatus: 'error',
+        splitFailureCount: sql`${processBatchFile.splitFailureCount} + 1`,
         splitMessage: message,
         splitDeadLetterAt: new Date(),
         splitLeaseExpiresAt: null,
@@ -216,15 +233,20 @@ export async function failIngestion(
       return false
     }
 
-    logEvent('ingestion.job.dead_letter', { batchFileId, attempts })
+    logEvent('ingestion.job.dead_letter', {
+      batchFileId,
+      failureCount: nextFailureCount,
+      reason: 'max_failures',
+    })
     return true
   }
 
-  const backoffMs = computeBackoffMs(attempts)
+  const backoffMs = computeBackoffMs(nextFailureCount)
   const applied = await db
     .update(processBatchFile)
     .set({
       splitStatus: 'queued',
+      splitFailureCount: sql`${processBatchFile.splitFailureCount} + 1`,
       splitMessage: message,
       splitLeaseExpiresAt: leaseIntervalSql(backoffMs),
       splitLeaseToken: null,
@@ -239,8 +261,48 @@ export async function failIngestion(
 
   logEvent('ingestion.job.retry', {
     batchFileId,
-    attempts,
+    failureCount: nextFailureCount,
     backoffMs,
+  })
+  return true
+}
+
+// Dead-letter por ESTOURO DE ENTREGAS (backstop). O job foi reivindicado vezes
+// demais sem concluir nem registrar falha — assinatura de crash-poison (um PDF que
+// mata o worker, ex.: OOM, antes de chegar ao failIngestion). Sem este teto o job
+// seria re-reivindicado para sempre, derrubando o worker a cada rodada. Cercado pelo
+// fencing token; retorna se aplicou.
+export async function deadLetterIngestion(
+  batchFileId: string,
+  leaseToken: string,
+  message: string,
+): Promise<boolean> {
+  const applied = await db
+    .update(processBatchFile)
+    .set({
+      splitStatus: 'error',
+      splitMessage: message,
+      splitDeadLetterAt: new Date(),
+      splitLeaseExpiresAt: null,
+      splitLeaseToken: null,
+      splitUpdatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(processBatchFile.id, batchFileId),
+        eq(processBatchFile.splitStatus, 'processing'),
+        eq(processBatchFile.splitLeaseToken, leaseToken),
+      ),
+    )
+    .returning({ id: processBatchFile.id })
+
+  if (applied.length === 0) {
+    return false
+  }
+
+  logEvent('ingestion.job.dead_letter', {
+    batchFileId,
+    reason: 'max_deliveries',
   })
   return true
 }
