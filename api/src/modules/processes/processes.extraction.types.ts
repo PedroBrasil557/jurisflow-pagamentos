@@ -64,10 +64,18 @@ export interface RawExtraction {
   paginas?: RawPageClassification[]
 }
 
+// Saida crua do provider + metadados da chamada (modelo resolvido e uso de
+// tokens) — necessarios para a auditoria de IA (ai_analysis), sem vazar bytes.
+export interface RawExtractionResult {
+  raw: RawExtraction
+  model: string
+  usage?: { inputTokens: number; outputTokens: number }
+}
+
 // Interface plugavel — permite trocar/empilhar provedores (Claude, etc.).
 export interface DocumentExtractionProvider {
   readonly name: string
-  extract(files: ExtractionInputFile[]): Promise<RawExtraction>
+  extract(files: ExtractionInputFile[]): Promise<RawExtractionResult>
 }
 
 // Resultado normalizado e validado, pronto para a tela de revisao.
@@ -98,3 +106,16 @@ export interface ExtractionResult {
   warnings: string[]
   documents: ExtractedDocument[]
 }
+
+// Metadados da chamada de IA usados pela auditoria (ai_analysis kind
+// document_extraction): modelo resolvido, uso de tokens e a classificacao crua
+// de TODAS as paginas (pagina -> tipo) — a evidencia do que a IA decidiu.
+export interface ExtractionMeta {
+  model: string
+  usage?: { inputTokens: number; outputTokens: number }
+  paginas: RawPageClassification[]
+}
+
+// Resultado normalizado + metadados da chamada, devolvido por
+// extractDocumentsFromFiles para quem precisa auditar a classificacao.
+export type ExtractionRunResult = ExtractionResult & { meta: ExtractionMeta }

@@ -34,6 +34,7 @@ import {
 } from './processes.access'
 import { assertChecklistUploadAllowed } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
+import { recordDocumentExtractionAudit } from './processes.extraction.audit'
 import { extractDocumentsFromFiles } from './processes.extraction.service'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { importDocumentBundle } from './processes.import.service'
@@ -387,7 +388,8 @@ async function runBatchFileSplit(input: {
     )
 
     // 1 chamada de IA: classifica as paginas (os campos titular/endereco sao ignorados aqui).
-    const { documents } = await extractDocumentsFromFiles([file])
+    const startedAt = Date.now()
+    const { documents, meta } = await extractDocumentsFromFiles([file])
 
     const result = await importDocumentBundle({
       processId: input.processId,
@@ -395,6 +397,16 @@ async function runBatchFileSplit(input: {
       documents,
       actor: input.actor,
       perms: input.perms,
+    })
+
+    // Auditoria (ai_analysis): registra a classificacao da IA + a decisao de anexo.
+    await recordDocumentExtractionAudit({
+      processId: input.processId,
+      fileId: fileRecord.id,
+      meta,
+      outcome: result,
+      durationMs: Date.now() - startedAt,
+      triggeredByUserId: input.actor.id,
     })
 
     await setSplitStatus(fileRecord.id, 'done', result.message)
@@ -575,7 +587,8 @@ async function runIngestionWork(input: {
     type: 'application/pdf',
   })
 
-  const { fields, documents } = await extractDocumentsFromFiles([file])
+  const startedAt = Date.now()
+  const { fields, documents, meta } = await extractDocumentsFromFiles([file])
 
   // Best-effort: aplicar campos extraidos nao pode derrubar o anexo dos docs.
   let hasIdentity = false
@@ -595,6 +608,17 @@ async function runIngestionWork(input: {
     documents,
     actor: input.actor,
     perms: input.perms,
+  })
+
+  // Auditoria (ai_analysis): registra a classificacao da IA + a decisao de anexo.
+  // Vale inclusive com 0 anexos — e justamente o caso de misclassificacao.
+  await recordDocumentExtractionAudit({
+    processId: input.processId,
+    fileId: fileRecord.id,
+    meta,
+    outcome: result,
+    durationMs: Date.now() - startedAt,
+    triggeredByUserId: input.actor.id,
   })
 
   // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o

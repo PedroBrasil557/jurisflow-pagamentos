@@ -5,6 +5,7 @@ import type {
   DocumentExtractionProvider,
   ExtractionInputFile,
   RawExtraction,
+  RawExtractionResult,
 } from './processes.extraction.types'
 
 // Validacao da saida do modelo (camada cliente). O input_schema da ferramenta ja
@@ -213,7 +214,9 @@ export function createAnthropicVisionProvider(
 
   return {
     name: 'anthropic-vision',
-    async extract(files: ExtractionInputFile[]): Promise<RawExtraction> {
+    async extract(
+      files: ExtractionInputFile[],
+    ): Promise<RawExtractionResult> {
       const documentBlocks: Anthropic.ContentBlockParam[] = files.map((file) =>
         file.kind === 'pdf'
           ? {
@@ -282,7 +285,15 @@ export function createAnthropicVisionProvider(
         throw new ServiceError(500, 'Resposta de extracao invalida.')
       }
 
-      return parseRawExtraction(toolUse.input)
+      return {
+        raw: parseRawExtraction(toolUse.input),
+        // Modelo RESOLVIDO (message.model), nao o alias do request.
+        model: message.model,
+        usage: {
+          inputTokens: message.usage.input_tokens,
+          outputTokens: message.usage.output_tokens,
+        },
+      }
     },
   }
 }

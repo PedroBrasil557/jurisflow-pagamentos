@@ -1,0 +1,59 @@
+import { recordAiAnalysis } from '../ai-analysis/ai-analysis.service'
+import type { ExtractionMeta } from './processes.extraction.types'
+
+// Versao do prompt/contrato de classificacao. Subir quando a Tarefa 2 do SYSTEM
+// (tipos de documento) mudar de forma relevante — permite comparar decisoes
+// entre versoes na auditoria.
+export const DOCUMENT_EXTRACTION_PROMPT_VERSION = 'document_extraction@1'
+
+// Desfecho do anexo (subconjunto do retorno de importDocumentBundle) — a DECISAO
+// deterministica derivada da classificacao: o que foi anexado e o que foi pulado.
+type ImportOutcome = {
+  attached: Array<{ documentTypeKey: string; pageCount: number }>
+  skipped: Array<{ documentTypeKey: string; reason: string }>
+}
+
+// Grava UMA linha de evidencia (ai_analysis kind document_extraction) para a
+// classificacao de paginas de um PDF de lote: o que a IA retornou (paginas ->
+// tipo) e a decisao derivada (anexado/pulado). Best-effort: a auditoria NUNCA
+// pode derrubar o anexo dos documentos — engole o erro e apenas loga.
+export async function recordDocumentExtractionAudit(input: {
+  processId: string
+  fileId: string
+  meta: ExtractionMeta
+  outcome: ImportOutcome
+  durationMs: number
+  triggeredByUserId: string | null
+}): Promise<void> {
+  try {
+    await recordAiAnalysis({
+      kind: 'document_extraction',
+      processId: input.processId,
+      // Referencia (nao os bytes) do PDF de lote classificado.
+      context: { fileId: input.fileId },
+      model: input.meta.model,
+      promptVersion: DOCUMENT_EXTRACTION_PROMPT_VERSION,
+      input: { fileId: input.fileId, pageCount: input.meta.paginas.length },
+      // Saida crua da IA: a classificacao de TODAS as paginas.
+      output: { paginas: input.meta.paginas },
+      // Decisao deterministica: o que o desmembramento anexou x pulou.
+      decision: {
+        attached: input.outcome.attached,
+        skipped: input.outcome.skipped,
+      },
+      status: 'ok',
+      tokensInput: input.meta.usage?.inputTokens ?? null,
+      tokensOutput: input.meta.usage?.outputTokens ?? null,
+      durationMs: input.durationMs,
+      // A digitalizacao/reanalise e sempre disparada por um humano (upload/clique).
+      triggerSource: 'user',
+      triggeredByUserId: input.triggeredByUserId,
+    })
+  } catch (error) {
+    console.error('document_extraction: falha ao gravar auditoria de IA', {
+      processId: input.processId,
+      fileId: input.fileId,
+      error: String(error),
+    })
+  }
+}
