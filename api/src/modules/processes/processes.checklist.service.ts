@@ -982,17 +982,23 @@ export async function reconcileProcessStatus(
   processId: string,
   actor: ProcessActor,
 ) {
-  const currentProcess = await getProcessRecordOrThrow(processId)
-  const checklist = await loadProcessChecklistData(currentProcess)
-  return syncProcessStatusAfterChecklistChange({ processId, actor, checklist })
+  // syncProcessStatusAfterChecklistChange ja le tudo fresco (status + checklist).
+  return syncProcessStatusAfterChecklistChange({ processId, actor })
 }
 
 export async function syncProcessStatusAfterChecklistChange(input: {
   actor: ProcessActor
-  checklist: Awaited<ReturnType<typeof getProcessChecklist>>
   processId: string
 }) {
   const currentProcess = await getProcessRecordOrThrow(input.processId)
+
+  // Le a completude FRESCA aqui — logo antes de decidir e escrever — em vez de
+  // confiar num checklist montado pelo caller em outro momento. Um snapshot velho
+  // podia avancar/reverter o status com base em dado que ja mudou (corrida entre
+  // reconciles concorrentes: submit do usuario, auto-apply do caixa-owner, worker
+  // da quitacao). O dano critico (iniciar processo incompleto) e fechado a parte,
+  // revalidando no startProcess; aqui mantemos o campo status convergente.
+  const checklist = await loadProcessChecklistData(currentProcess)
 
   // Only auto-sync for early/mid statuses. RASCUNHO (entrada do digitalizacao) avanca por
   // completude; EM_LOTE (legado) ainda drena por aqui.
@@ -1009,11 +1015,11 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   }
 
   // Count only from visible (filtered) checklist items
-  const visibleFileCount = input.checklist.items.reduce(
+  const visibleFileCount = checklist.items.reduce(
     (sum, item) => sum + item.currentFiles.length,
     0,
   )
-  const hasOkWithoutFile = input.checklist.items.some(
+  const hasOkWithoutFile = checklist.items.some(
     (item) => item.status === 'OK_SEM_ARQUIVO',
   )
   const hasIndividualDocs = visibleFileCount > 0 || hasOkWithoutFile
@@ -1043,7 +1049,7 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   // para EM_DOCUMENTACAO e so entao, no proximo reconcile, para PRONTA.
   if (
     currentProcess.status === 'EM_DOCUMENTACAO' &&
-    input.checklist.summary.requiredPending === 0 &&
+    checklist.summary.requiredPending === 0 &&
     currentProcess.housingComplexId !== null
   ) {
     targetStatus = 'DOCUMENTACAO_PRONTA'
@@ -1053,7 +1059,7 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   // conjunto deixou de estar vinculado (pre-requisito): reverte para EM_DOCUMENTACAO.
   if (
     currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
-    (input.checklist.summary.requiredPending > 0 ||
+    (checklist.summary.requiredPending > 0 ||
       currentProcess.housingComplexId === null)
   ) {
     targetStatus = 'EM_DOCUMENTACAO'
@@ -1062,7 +1068,7 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   // Ja PRONTA, completo E com conjunto vinculado: sem mudanca.
   if (
     currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
-    input.checklist.summary.requiredPending === 0 &&
+    checklist.summary.requiredPending === 0 &&
     currentProcess.housingComplexId !== null
   ) {
     return currentProcess
@@ -1182,11 +1188,8 @@ export async function syncProcessesForHousingComplex(input: {
     .where(eq(process.housingComplexId, input.housingComplexId))
 
   for (const { id } of processes) {
-    const currentProcess = await getProcessRecordOrThrow(id)
-    const checklist = await loadProcessChecklistData(currentProcess)
     await syncProcessStatusAfterChecklistChange({
       processId: id,
-      checklist,
       actor: input.actor,
     })
   }
@@ -1319,7 +1322,6 @@ export async function submitProcessChecklistItem(input: {
   const updatedProcess = await syncProcessStatusAfterChecklistChange({
     processId: input.processId,
     actor: input.actor,
-    checklist,
   })
 
   // Gatilho automatico: ao anexar/substituir um termo da Caixa, dispara a
@@ -1526,7 +1528,6 @@ export async function deleteChecklistFile(input: {
   const currentProcess = await syncProcessStatusAfterChecklistChange({
     processId: input.processId,
     actor: input.actor,
-    checklist,
   })
 
   return {

@@ -838,15 +838,8 @@ export async function updateProcess(
     // depois") — reconcilia o status.
     changedFields.housingComplex
   ) {
-    await ensureProcessChecklistItems(processId)
-    const checklist = await getProcessChecklist(processId, actor.id, perms)
-    const syncedProcess = await syncProcessStatusAfterChecklistChange({
-      processId,
-      actor,
-      checklist,
-    })
-
-    return syncedProcess
+    // O reconciliador le tudo fresco (status + checklist); nao monta snapshot aqui.
+    return syncProcessStatusAfterChecklistChange({ processId, actor })
   }
 
   return updatedProcess
@@ -909,12 +902,28 @@ export async function startProcess(
   },
   perms: ResolvedPermissions,
 ) {
-  const { relationship: rel } = await getProcessContextOrThrow({
-    processId,
-    userId: actor.id,
-    perms,
-  })
+  const { process: currentProcess, relationship: rel } =
+    await getProcessContextOrThrow({
+      processId,
+      userId: actor.id,
+      perms,
+    })
   assertProcessAction(perms, rel, 'startLegal')
+
+  // NAO confia no campo status (cache derivado, pode estar stale por corrida de
+  // reconcile concorrente): recomputa o invariante autoritativo AGORA. Fecha o
+  // caminho de dano "processo incompleto vira juridico" independente da causa da
+  // staleness — a transicao PRONTA->EM_PROCESSO so vale com a verdade conferida.
+  const checklist = await getProcessChecklist(processId, actor.id, perms)
+  if (
+    checklist.summary.requiredPending > 0 ||
+    currentProcess.housingComplexId === null
+  ) {
+    throw new ProcessServiceError(
+      409,
+      'A documentacao ainda nao esta completa: ha documentos obrigatorios pendentes ou o conjunto nao esta vinculado.',
+    )
+  }
 
   return updateProcessStatus({
     processId,
