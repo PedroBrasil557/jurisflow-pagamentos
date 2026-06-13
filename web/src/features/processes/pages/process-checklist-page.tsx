@@ -480,6 +480,7 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
               <div className="grid gap-4 pt-4">
                 <BatchSection
                   batchFiles={batchFiles}
+                  processId={processId}
                   canDelete={canDeleteBatchCurrentFiles}
                   canUpload={canUploadBatchCurrentFiles}
                   isUploading={uploadBatchMutation.isPending}

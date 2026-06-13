@@ -1,17 +1,29 @@
-import { Download, FileUp, Loader2, Sparkles, Trash2 } from 'lucide-react'
-import { useId, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  Download,
+  FileUp,
+  Loader2,
+  ScanSearch,
+  Sparkles,
+  Trash2,
+} from 'lucide-react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Checkbox } from '#/components/ui/checkbox'
 import { ScanButton } from '@/shared/components/document-scanner/scan-button'
 import { StatusBadge } from '@/shared/components/status-badge'
 import { formatBytes } from '@/shared/lib/format'
+import { documentExtractionListOptions } from '../services/document-extraction.queries'
 import type { ProcessBatchFile } from '../services/processes.service'
+import { DocumentClassificationDialog } from './document-classification-dialog'
 
 function BatchFileRow({
   canDelete,
   file,
   isSelected,
   isSplitting = false,
+  processId,
+  classificationAnalysisId,
   onDelete,
   onDownload,
   onSplit,
@@ -21,12 +33,15 @@ function BatchFileRow({
   file: ProcessBatchFile
   isSelected: boolean
   isSplitting?: boolean
+  processId: string
+  classificationAnalysisId: string | null
   onDelete: (fileId: string) => void
   onDownload: (fileId: string) => void
   onSplit?: (fileId: string) => void
   onToggleSelect: (fileId: string) => void
 }) {
   const isPdf = file.mimeType === 'application/pdf'
+  const [showClassification, setShowClassification] = useState(false)
 
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -42,10 +57,24 @@ function BatchFileRow({
           <p className="text-xs text-muted-foreground">
             {`${formatBytes(file.sizeInBytes)} • ${file.uploadedBy.name}`}
           </p>
+          {file.splitStatus === 'done' && file.splitMessage ? (
+            <p className="text-xs text-muted-foreground">{file.splitMessage}</p>
+          ) : null}
         </div>
       </div>
 
       <div className="flex gap-2">
+        {classificationAnalysisId ? (
+          <Button
+            onClick={() => setShowClassification(true)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <ScanSearch className="size-3.5" />
+            Ver classificação
+          </Button>
+        ) : null}
         {isPdf && onSplit ? (
           <Button
             onClick={() => onSplit(file.id)}
@@ -83,12 +112,22 @@ function BatchFileRow({
           Remover
         </Button>
       </div>
+
+      {showClassification && classificationAnalysisId ? (
+        <DocumentClassificationDialog
+          analysisId={classificationAnalysisId}
+          fileName={file.originalFileName}
+          onClose={() => setShowClassification(false)}
+          processId={processId}
+        />
+      ) : null}
     </div>
   )
 }
 
 type BatchSectionProps = {
   batchFiles: ProcessBatchFile[]
+  processId: string
   canDelete?: boolean
   canUpload?: boolean
   isUploading: boolean
@@ -102,6 +141,7 @@ type BatchSectionProps = {
 
 export function BatchSection({
   batchFiles,
+  processId,
   canDelete = true,
   canUpload = true,
   isUploading,
@@ -115,6 +155,21 @@ export function BatchSection({
   const fileInputId = useId()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set())
+
+  // Liga cada arquivo de lote a sua ultima auditoria de classificacao (pelo
+  // context.fileId). A lista vem ordenada por created_at desc, entao o primeiro
+  // match por fileId e o mais recente.
+  const classificationsQ = useQuery(documentExtractionListOptions(processId))
+  const analysisIdByFileId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const item of classificationsQ.data?.items ?? []) {
+      const fileId = item.context?.fileId
+      if (fileId && !map.has(fileId)) {
+        map.set(fileId, item.id)
+      }
+    }
+    return map
+  }, [classificationsQ.data])
 
   function handleToggleSelect(fileId: string) {
     setSelectedFileIds((prev) => {
@@ -247,10 +302,14 @@ export function BatchSection({
             {batchFiles.map((file) => (
               <BatchFileRow
                 canDelete={canDelete}
+                classificationAnalysisId={
+                  analysisIdByFileId.get(file.id) ?? null
+                }
                 file={file}
                 isSelected={selectedFileIds.has(file.id)}
                 isSplitting={splittingFileId === file.id}
                 key={file.id}
+                processId={processId}
                 onDelete={(fileId) => {
                   if (!canDelete) {
                     return
