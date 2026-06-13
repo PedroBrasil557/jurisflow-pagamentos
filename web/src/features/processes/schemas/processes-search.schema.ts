@@ -13,6 +13,7 @@ export type ProcessesSearch = {
   housingComplexIds?: string[]
   createdFrom?: string
   createdTo?: string
+  needsClassificationReview?: boolean
 }
 
 function parsePage(value: unknown): number | undefined {
@@ -77,6 +78,15 @@ function parseIsoDate(value: unknown): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : value
 }
 
+// Aceita true/'true' (a URL serializa o booleano como string).
+function parseBoolean(value: unknown): boolean | undefined {
+  if (value === true || value === 'true') {
+    return true
+  }
+
+  return undefined
+}
+
 export function parseProcessesSearch(
   search: Record<string, unknown>,
 ): ProcessesSearch {
@@ -87,6 +97,9 @@ export function parseProcessesSearch(
   const housingComplexIds = parseHousingComplexIds(search.housingComplexIds)
   const createdFrom = parseIsoDate(search.createdFrom)
   const createdTo = parseIsoDate(search.createdTo)
+  const needsClassificationReview = parseBoolean(
+    search.needsClassificationReview,
+  )
 
   return {
     ...(page ? { page } : {}),
@@ -96,5 +109,6 @@ export function parseProcessesSearch(
     ...(housingComplexIds ? { housingComplexIds } : {}),
     ...(createdFrom ? { createdFrom } : {}),
     ...(createdTo ? { createdTo } : {}),
+    ...(needsClassificationReview ? { needsClassificationReview } : {}),
   }
 }

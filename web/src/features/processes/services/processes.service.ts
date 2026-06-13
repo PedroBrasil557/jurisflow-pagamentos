@@ -169,6 +169,7 @@ export type ProcessListQuery = {
   housingComplexIds?: string[]
   createdFrom?: string
   createdTo?: string
+  needsClassificationReview?: boolean
 }
 
 export const defaultProcessPageLimit = 10
@@ -360,6 +361,9 @@ export async function fetchProcesses(
         : {}),
       ...(query.createdFrom ? { createdFrom: query.createdFrom } : {}),
       ...(query.createdTo ? { createdTo: query.createdTo } : {}),
+      ...(query.needsClassificationReview
+        ? { needsClassificationReview: 'true' }
+        : {}),
     },
   })
 

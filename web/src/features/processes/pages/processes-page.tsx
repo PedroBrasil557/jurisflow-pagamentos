@@ -56,6 +56,7 @@ type ProcessesPageProps = {
   currentHousingComplexIds: string[]
   currentCreatedFrom?: string
   currentCreatedTo?: string
+  currentNeedsClassificationReview: boolean
 }
 
 const processTableColumns: readonly DataTableColumn<ProcessListItem>[] = [
@@ -128,6 +129,7 @@ export function ProcessesPage({
   currentHousingComplexIds,
   currentCreatedFrom,
   currentCreatedTo,
+  currentNeedsClassificationReview,
 }: ProcessesPageProps) {
   const { permissions } = useSession()
   const navigate = useNavigate()
@@ -151,6 +153,7 @@ export function ProcessesPage({
       housingComplexIds: currentHousingComplexIds,
       createdFrom: currentCreatedFrom,
       createdTo: currentCreatedTo,
+      needsClassificationReview: currentNeedsClassificationReview,
     }),
   )
 
@@ -169,7 +172,8 @@ export function ProcessesPage({
     currentStatuses.length +
     currentOwnerTypes.length +
     currentHousingComplexIds.length +
-    (currentCreatedFrom || currentCreatedTo ? 1 : 0)
+    (currentCreatedFrom || currentCreatedTo ? 1 : 0) +
+    (currentNeedsClassificationReview ? 1 : 0)
 
   // Monta o objeto de search da URL a partir do estado atual + overrides,
   // descartando valores vazios para manter a URL limpa.
@@ -184,6 +188,9 @@ export function ProcessesPage({
         : {}),
       ...(currentCreatedFrom ? { createdFrom: currentCreatedFrom } : {}),
       ...(currentCreatedTo ? { createdTo: currentCreatedTo } : {}),
+      ...(currentNeedsClassificationReview
+        ? { needsClassificationReview: true }
+        : {}),
       ...overrides,
     }
 
@@ -195,6 +202,7 @@ export function ProcessesPage({
       next.housingComplexIds = merged.housingComplexIds
     if (merged.createdFrom) next.createdFrom = merged.createdFrom
     if (merged.createdTo) next.createdTo = merged.createdTo
+    if (merged.needsClassificationReview) next.needsClassificationReview = true
 
     return next
   }
@@ -208,8 +216,16 @@ export function ProcessesPage({
         housingComplexIds: value.housingComplexIds,
         createdFrom: value.createdFrom,
         createdTo: value.createdTo,
+        needsClassificationReview: value.needsClassificationReview || undefined,
         page: 1,
       }),
+    })
+  }
+
+  function handleRemoveClassificationReview() {
+    void navigate({
+      to: '/processos',
+      search: buildSearch({ needsClassificationReview: undefined, page: 1 }),
     })
   }
 
@@ -265,6 +281,7 @@ export function ProcessesPage({
         housingComplexIds: [],
         createdFrom: undefined,
         createdTo: undefined,
+        needsClassificationReview: undefined,
         page: 1,
       }),
     })
@@ -361,7 +378,9 @@ export function ProcessesPage({
         createdFrom={currentCreatedFrom}
         createdTo={currentCreatedTo}
         housingComplexes={housingComplexChips}
+        needsClassificationReview={currentNeedsClassificationReview}
         onClearAll={handleClearAllFilters}
+        onRemoveClassificationReview={handleRemoveClassificationReview}
         onRemoveHousingComplex={handleRemoveHousingComplex}
         onRemoveOwnerType={handleRemoveOwnerType}
         onRemovePeriod={handleRemovePeriod}
@@ -385,6 +404,7 @@ export function ProcessesPage({
           housingComplexIds: currentHousingComplexIds,
           createdFrom: currentCreatedFrom,
           createdTo: currentCreatedTo,
+          needsClassificationReview: currentNeedsClassificationReview,
         }}
       />
 

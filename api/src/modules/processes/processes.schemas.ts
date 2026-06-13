@@ -301,6 +301,12 @@ export const listProcessesQuerySchema = z.object({
     .optional(),
   createdFrom: z.coerce.date().optional(),
   createdTo: z.coerce.date().optional(),
+  // Query param chega como string — coerco explicito ('true'/'false'); ausente vira
+  // false. NAO usar z.coerce.boolean (qualquer string nao-vazia viraria true).
+  needsClassificationReview: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 })

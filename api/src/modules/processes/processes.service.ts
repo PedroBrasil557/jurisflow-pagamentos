@@ -353,6 +353,42 @@ async function updateProcessStatus(input: {
   })
 }
 
+// "Revisar classificacao": existe uma auditoria document_extraction com algo que
+// pede acao humana —
+//  (a) um doc reconhecido pulou um item de checklist OBRIGATORIO+ATIVO ainda
+//      PENDENTE (skip benigno — ex.: compra_venda do titular, que nem existe no
+//      checklist dele — nao casa);
+//  (b) ha pagina classificada como nao_identificado; ou
+//  (c) a IA OMITIU paginas (totalPages real > classifiedPages).
+// Derivado, sem estado novo, e AUTO-CURA: anexou o doc -> item deixa de ser
+// PENDENTE -> o processo sai do filtro. Auditorias antigas (@1, sem totalPages)
+// nao disparam (c) por causa do coalesce.
+function buildClassificationReviewFilter() {
+  return sql`EXISTS (
+    SELECT 1 FROM ai_analysis a
+    WHERE a.process_id = ${process.id}
+      AND a.kind = 'document_extraction'
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(coalesce(a.decision->'skipped', '[]'::jsonb)) s
+          JOIN process_document pd ON pd.process_id = a.process_id
+          JOIN process_document_type dt ON dt.id = pd.document_type_id
+          WHERE dt.key = s->>'documentTypeKey'
+            AND dt.is_required AND dt.is_active
+            AND pd.status = 'PENDENTE'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(coalesce(a.output->'paginas', '[]'::jsonb)) pg
+          WHERE pg->>'tipo' = 'nao_identificado'
+        )
+        OR coalesce((a.input->>'totalPages')::int, 0)
+             > coalesce((a.input->>'classifiedPages')::int, 0)
+      )
+  )`
+}
+
 export async function listProcesses(
   query: ListProcessesQuery,
   userId: string,
@@ -401,6 +437,10 @@ export async function listProcesses(
         ilike(process.housingComplex, searchTerm),
       ),
     )
+  }
+
+  if (query.needsClassificationReview) {
+    filters.push(buildClassificationReviewFilter())
   }
 
   const whereClause = filters.length > 0 ? and(...filters) : undefined

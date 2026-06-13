@@ -20,10 +20,12 @@ type ProcessFilterChipsProps = {
   housingComplexes: HousingComplexChip[]
   createdFrom?: string
   createdTo?: string
+  needsClassificationReview: boolean
   onRemoveStatus: (status: ProcessStatusValue) => void
   onRemoveOwnerType: (ownerType: OwnerTypeValue) => void
   onRemoveHousingComplex: (id: string) => void
   onRemovePeriod: () => void
+  onRemoveClassificationReview: () => void
   onClearAll: () => void
 }
 
@@ -49,10 +51,12 @@ export function ProcessFilterChips({
   housingComplexes,
   createdFrom,
   createdTo,
+  needsClassificationReview,
   onRemoveStatus,
   onRemoveOwnerType,
   onRemoveHousingComplex,
   onRemovePeriod,
+  onRemoveClassificationReview,
   onClearAll,
 }: ProcessFilterChipsProps) {
   const period = periodLabel(createdFrom, createdTo)
@@ -60,7 +64,8 @@ export function ProcessFilterChips({
     statuses.length > 0 ||
     ownerTypes.length > 0 ||
     housingComplexes.length > 0 ||
-    period !== null
+    period !== null ||
+    needsClassificationReview
 
   if (!hasFilters) {
     return null
@@ -117,6 +122,20 @@ export function ProcessFilterChips({
             aria-label="Remover filtro de período"
             className="rounded-sm text-muted-foreground hover:text-foreground"
             onClick={onRemovePeriod}
+            type="button"
+          >
+            <X className="size-3.5" />
+          </button>
+        </Badge>
+      ) : null}
+
+      {needsClassificationReview ? (
+        <Badge className="gap-1 pr-1" variant="secondary">
+          Revisar classificação
+          <button
+            aria-label="Remover filtro Revisar classificação"
+            className="rounded-sm text-muted-foreground hover:text-foreground"
+            onClick={onRemoveClassificationReview}
             type="button"
           >
             <X className="size-3.5" />

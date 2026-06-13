@@ -29,10 +29,12 @@ export async function recordAiAnalysis(
 }
 
 // Colunas nao-PII para a LISTA (output/input/decision contem dados pessoais e so
-// aparecem no detalhe).
+// aparecem no detalhe). `context` e apenas referencia (fileId/revision/sha) — sem
+// PII — e permite ligar a analise ao arquivo de lote na UI.
 const listColumns = {
   id: aiAnalysis.id,
   kind: aiAnalysis.kind,
+  context: aiAnalysis.context,
   status: aiAnalysis.status,
   confidence: aiAnalysis.confidence,
   model: aiAnalysis.model,

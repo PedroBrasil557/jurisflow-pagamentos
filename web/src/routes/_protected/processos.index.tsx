@@ -16,6 +16,9 @@ function ProcessesRoute() {
       currentCreatedFrom={search.createdFrom}
       currentCreatedTo={search.createdTo}
       currentHousingComplexIds={search.housingComplexIds ?? []}
+      currentNeedsClassificationReview={
+        search.needsClassificationReview ?? false
+      }
       currentOwnerTypes={search.ownerTypes ?? []}
       currentPage={search.page ?? 1}
       currentSearch={search.search ?? ''}
