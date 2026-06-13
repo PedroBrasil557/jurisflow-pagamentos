@@ -36,6 +36,7 @@ import { assertChecklistUploadAllowed } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
 import { recordDocumentExtractionAudit } from './processes.extraction.audit'
 import { extractDocumentsFromFiles } from './processes.extraction.service'
+import { countPdfPages } from './processes.pdf.splitter'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { importDocumentBundle } from './processes.import.service'
 import {
@@ -403,6 +404,7 @@ async function runBatchFileSplit(input: {
     await recordDocumentExtractionAudit({
       processId: input.processId,
       fileId: fileRecord.id,
+      totalPages: await countPdfPages(bytes),
       meta,
       outcome: result,
       durationMs: Date.now() - startedAt,
@@ -615,6 +617,7 @@ async function runIngestionWork(input: {
   await recordDocumentExtractionAudit({
     processId: input.processId,
     fileId: fileRecord.id,
+    totalPages: await countPdfPages(bytes),
     meta,
     outcome: result,
     durationMs: Date.now() - startedAt,

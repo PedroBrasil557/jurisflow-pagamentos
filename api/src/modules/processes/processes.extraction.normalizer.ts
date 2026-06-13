@@ -32,7 +32,9 @@ const documentLabelByKey = new Map(
 )
 
 // Agrupa a classificacao por pagina em documentos (1 por tipo), na ordem dos
-// tipos do checklist. Descarta 'outro' e tipos desconhecidos.
+// tipos do checklist. Descarta 'nao_identificado' e tipos fora do checklist —
+// essas paginas nao sao anexadas automaticamente (tratadas por anexo manual);
+// a auditoria as registra para revisao.
 function buildDocuments(raw: RawExtraction): ExtractedDocument[] {
   const pagesByKey = new Map<string, Set<number>>()
 

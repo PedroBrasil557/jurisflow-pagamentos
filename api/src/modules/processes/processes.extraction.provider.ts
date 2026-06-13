@@ -96,7 +96,7 @@ Tarefa 2 — Classifique CADA pagina do PDF em um dos tipos abaixo e devolva em 
 - declaracao_hipossuficiencia: "DECLARACAO DE HIPOSSUFICIENCIA E ISENCAO DE IRPF", com "declaro sob as penas da lei" e pedido de Justica Gratuita.
 - certidao_casamento: certidao de casamento.
 - certidao_obito: certidao de obito.
-- outro: qualquer pagina que nao se encaixe nos tipos acima.
+- nao_identificado: pagina que NAO corresponde a nenhum tipo acima. NAO force um tipo so para encaixar — se a pagina nao e claramente um dos tipos, use nao_identificado. Essas paginas serao tratadas por anexo manual; nunca sao anexadas automaticamente.
 
 Tarefa 3 — CONJUGE: examine o termo de entrega/recebimento do imovel (Caixa). SE o termo indicar que o imovel/contrato foi adquirido/assinado TAMBEM pelo conjuge (esposo(a)/companheiro(a)) do titular, extraia em "conjuge" os dados do conjuge: nome completo, CPF e data de nascimento (ISO yyyy-mm-dd). Preencha "conjuge" APENAS quando o termo de entrega claramente incluir o conjuge como comprador/assinante (ex.: dois adquirentes, "e seu conjuge", estado civil casado com co-titularidade). Caso contrario, NAO inclua "conjuge".
 
@@ -192,7 +192,7 @@ const extractionTool: Anthropic.Tool = {
                 'rg_cpf_cnh_conjuge',
                 'certidao_casamento',
                 'certidao_obito',
-                'outro',
+                'nao_identificado',
               ],
             },
           },

@@ -4,7 +4,7 @@ import type { ExtractionMeta } from './processes.extraction.types'
 // Versao do prompt/contrato de classificacao. Subir quando a Tarefa 2 do SYSTEM
 // (tipos de documento) mudar de forma relevante — permite comparar decisoes
 // entre versoes na auditoria.
-export const DOCUMENT_EXTRACTION_PROMPT_VERSION = 'document_extraction@1'
+export const DOCUMENT_EXTRACTION_PROMPT_VERSION = 'document_extraction@2'
 
 // Desfecho do anexo (subconjunto do retorno de importDocumentBundle) — a DECISAO
 // deterministica derivada da classificacao: o que foi anexado e o que foi pulado.
@@ -20,6 +20,7 @@ type ImportOutcome = {
 export async function recordDocumentExtractionAudit(input: {
   processId: string
   fileId: string
+  totalPages: number
   meta: ExtractionMeta
   outcome: ImportOutcome
   durationMs: number
@@ -33,7 +34,14 @@ export async function recordDocumentExtractionAudit(input: {
       context: { fileId: input.fileId },
       model: input.meta.model,
       promptVersion: DOCUMENT_EXTRACTION_PROMPT_VERSION,
-      input: { fileId: input.fileId, pageCount: input.meta.paginas.length },
+      // totalPages = paginas REAIS do PDF; classifiedPages = quantas a IA devolveu.
+      // A diferenca expoe paginas OMITIDAS pela IA (total - classificadas). As
+      // paginas nao_identificado vivem em output.paginas (nem anexam nem pulam).
+      input: {
+        fileId: input.fileId,
+        totalPages: input.totalPages,
+        classifiedPages: input.meta.paginas.length,
+      },
       // Saida crua da IA: a classificacao de TODAS as paginas.
       output: { paginas: input.meta.paginas },
       // Decisao deterministica: o que o desmembramento anexou x pulou.

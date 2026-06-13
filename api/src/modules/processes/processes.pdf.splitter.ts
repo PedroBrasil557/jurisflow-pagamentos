@@ -9,6 +9,18 @@ export interface SplitDocument {
   bytes: Uint8Array
 }
 
+// Total REAL de paginas do PDF. Best-effort para a auditoria (compara com as
+// paginas classificadas pela IA para expor omissoes): retorna 0 se o PDF nao
+// puder ser lido — nunca lanca, nao pode derrubar o anexo.
+export async function countPdfPages(pdfBytes: Uint8Array): Promise<number> {
+  try {
+    const source = await PDFDocument.load(pdfBytes)
+    return source.getPageCount()
+  } catch {
+    return 0
+  }
+}
+
 // Desmembra o PDF empacotado em um PDF por tipo de documento, conforme as
 // paginas classificadas. Paginas fora do intervalo real sao ignoradas.
 export async function splitPdfByDocuments(
