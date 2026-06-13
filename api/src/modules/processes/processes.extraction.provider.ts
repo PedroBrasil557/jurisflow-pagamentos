@@ -84,15 +84,15 @@ const SYSTEM = `Voce e um extrator de dados de documentos brasileiros para um si
 O arquivo enviado e um PDF unico que reune VARIOS documentos do titular, um apos o outro.
 
 Tarefa 1 — Extraia os dados do TITULAR a partir do RG ou CNH e o ENDERECO a partir do comprovante de residencia (conta de luz/agua).
-Tarefa 2 — Classifique CADA pagina do PDF em um dos tipos abaixo e devolva em "paginas" (numero da pagina 1-based + tipo):
-- procuracao_advogado: procuracao para o advogado.
-- rg_cpf_cnh: RG, CPF ou CNH (documento de identidade do TITULAR).
-- comprovante_endereco: comprovante de residencia/endereco (conta de luz, agua, etc.).
-- termo_entrega_recebimento_imovel: termo de entrega/recebimento do imovel pela instituicao bancaria (Caixa).
-- declaracao_hipossuficiencia: declaracao de hipossuficiencia.
-- contrato_honorarios_advocaticios: contrato de honorarios advocaticios.
-- contrato_compra_venda: contrato de compra e venda do imovel.
-- rg_cpf_cnh_conjuge: RG, CPF ou CNH do CONJUGE (companheiro(a)/esposo(a) do titular). Use apenas quando houver indicacao clara de que o documento e do conjuge; na duvida, classifique como rg_cpf_cnh.
+Tarefa 2 — Classifique CADA pagina do PDF em um dos tipos abaixo e devolva em "paginas" (numero da pagina 1-based + tipo). Classifique pela ESTRUTURA e pelas PARTES do documento (quem e o vendedor, quem outorga, qual o objeto), NUNCA por uma palavra isolada:
+- rg_cpf_cnh: documento de identidade do TITULAR (RG, CPF ou CNH). Inclui o modelo novo CIN ("REPUBLICA FEDERATIVA DO BRASIL / GOVERNO FEDERAL", com QR code e "Registro Geral - CPF / Personal Number") — nesse modelo o numero do topo pode ser o proprio CPF.
+- rg_cpf_cnh_conjuge: o mesmo documento de identidade, mas do CONJUGE (esposo(a)/companheiro(a)) do titular. Use apenas quando houver indicacao clara de que e do conjuge; na duvida, classifique como rg_cpf_cnh.
+- comprovante_endereco: conta de consumo que prova residencia — energia (ex.: Neoenergia/Coelba, "DANFE ... ENERGIA ELETRICA") ou agua/esgoto (ex.: SAAE, "CONTA DE CONSUMO DE AGUA/ESGOTO"). Pode estar em nome de terceiro/co-morador (ex.: co-titular do imovel), nao necessariamente do titular.
+- termo_entrega_recebimento_imovel: documento da CAIXA que comprova a entrega/titularidade do imovel no programa habitacional. O titulo comeca com "TERMO DE RECEBIMENTO DE IMOVEL" (variacoes reais: "– PAR E PMCMV", "– PMCMV – FAIXA 1", "– PMCMV – RECURSOS FAR") e ha o logo CAIXA ECONOMICA FEDERAL. A parte VENDEDORA (rotulada VENDEDOR, ou VENDEDOR/CEDENTE/DOADOR, ou VENDEDOR/CREDOR FIDUCIARIO) e uma INSTITUICAO: "FUNDO DE ARRENDAMENTO RESIDENCIAL - FAR", representada pela Caixa Economica Federal. ATENCAO: o corpo deste termo cita "INSTRUMENTO PARTICULAR DE VENDA E COMPRA", "COMPRA DE IMOVEL", "DOACAO COM ENCARGO", "ALIENACAO FIDUCIARIA" e "MINHA CASA MINHA VIDA" — essas expressoes NAO o transformam em contrato_compra_venda. Se o vendedor e a FAR/Caixa, e SEMPRE termo_entrega_recebimento_imovel.
+- contrato_compra_venda: contrato de compra e venda do imovel entre PARTICULARES, em que o VENDEDOR e uma PESSOA FISICA (identificada por CPF) — tipicamente uma revenda do imovel ja regularizado. NAO tem o titulo "TERMO DE RECEBIMENTO DE IMOVEL" e o vendedor NAO e a FAR/Caixa. Pode mencionar PMCMV/Caixa/alienacao fiduciaria apenas como historico do imovel — isso, sozinho, nao o torna termo_entrega.
+- procuracao_advogado: procuracao para o advogado. Titulo "PROCURACAO AD JUDICIA ET EXTRA", com OUTORGANTE (cliente) e OUTORGADO (advogado) e uma secao PODERES. Outorga PODERES de representacao — nao define remuneracao.
+- contrato_honorarios_advocaticios: "CONTRATO DE PRESTACAO DE SERVICOS ADVOCATICIOS", com CONTRATANTE (cliente) e CONTRATADO (advogado) e clausulas de HONORARIOS (regime de exito, sucumbencia). ATENCAO: tem a palavra "CONTRATO" mas o objeto e servico juridico — NAO confundir com contrato_compra_venda, que transmite o imovel.
+- declaracao_hipossuficiencia: "DECLARACAO DE HIPOSSUFICIENCIA E ISENCAO DE IRPF", com "declaro sob as penas da lei" e pedido de Justica Gratuita.
 - certidao_casamento: certidao de casamento.
 - certidao_obito: certidao de obito.
 - outro: qualquer pagina que nao se encaixe nos tipos acima.
