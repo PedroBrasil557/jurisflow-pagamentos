@@ -1,0 +1,202 @@
+import { and, desc, eq } from 'drizzle-orm'
+import { db } from '../../../shared/db'
+import { aiAnalysis } from '../../ai-analysis/ai-analysis.schema'
+import {
+  process,
+  processBatchFile,
+  processDocument,
+  processDocumentFile,
+  processDocumentType,
+} from '../processes.schema'
+import { DOC } from './derive'
+import type { CompraVenda, Fact, Person, ProcessFacts } from './facts.types'
+
+// gatherFacts: UNICO ponto que LE o mundo. Projeta colunas/audits/checklist nos
+// fatos com ciclo de vida. Impuro; deriveProcessState (puro) consome a saida.
+
+const ready = <T>(value: T): Fact<T> => ({ state: 'ready', value })
+const absent = <T>(): Fact<T> => ({ state: 'absent' })
+const pending = <T>(): Fact<T> => ({ state: 'pending' })
+const failed = <T>(): Fact<T> => ({ state: 'failed' })
+
+type Paginas = { paginas?: Array<{ pagina: number; tipo: string }> }
+type Decision = {
+  attached?: Array<{ documentTypeKey: string }>
+  skipped?: Array<{ documentTypeKey: string }>
+}
+// Saida do extractCaixaOwner (kind caixa_owner): por doc, o titular do termo
+// (1o comprador) e o conjuge (2o comprador / co-comprador).
+type CaixaByDoc = {
+  byDoc?: Array<{
+    titular?: string | null
+    cpfTitular?: string | null
+    conjuge?: string | null
+    cpfConjuge?: string | null
+  }>
+}
+
+export async function gatherFacts(
+  processId: string,
+): Promise<ProcessFacts | null> {
+  const [proc] = await db
+    .select({
+      status: process.status,
+      housingComplexId: process.housingComplexId,
+      fullName: process.fullName,
+      cpf: process.cpf,
+      rg: process.rg,
+      birthDate: process.birthDate,
+      caixaAnalysisStatus: process.caixaAnalysisStatus,
+    })
+    .from(process)
+    .where(eq(process.id, processId))
+    .limit(1)
+
+  if (!proc) {
+    return null
+  }
+
+  const [batchFiles, docExtractions, caixaAudits, checklist] =
+    await Promise.all([
+      db
+        .select({ splitStatus: processBatchFile.splitStatus })
+        .from(processBatchFile)
+        .where(eq(processBatchFile.processId, processId)),
+      db
+        .select({ output: aiAnalysis.output, decision: aiAnalysis.decision })
+        .from(aiAnalysis)
+        .where(
+          and(
+            eq(aiAnalysis.processId, processId),
+            eq(aiAnalysis.kind, 'document_extraction'),
+          ),
+        )
+        .orderBy(desc(aiAnalysis.createdAt)),
+      db
+        .select({ output: aiAnalysis.output })
+        .from(aiAnalysis)
+        .where(
+          and(
+            eq(aiAnalysis.processId, processId),
+            eq(aiAnalysis.kind, 'caixa_owner'),
+          ),
+        )
+        .orderBy(desc(aiAnalysis.createdAt))
+        .limit(1),
+      db
+        .select({
+          key: processDocumentType.key,
+          docStatus: processDocument.status,
+          fileId: processDocumentFile.id,
+        })
+        .from(processDocument)
+        .innerJoin(
+          processDocumentType,
+          eq(processDocument.documentTypeId, processDocumentType.id),
+        )
+        .leftJoin(
+          processDocumentFile,
+          and(
+            eq(processDocumentFile.processDocumentId, processDocument.id),
+            eq(processDocumentFile.isCurrent, true),
+          ),
+        )
+        .where(eq(processDocument.processId, processId)),
+    ])
+
+  // ── attachedTypes + hasOkWithoutFile ──
+  const attachedTypes = new Set<string>()
+  let hasOkWithoutFile = false
+  for (const row of checklist) {
+    if (row.fileId) {
+      attachedTypes.add(row.key)
+    }
+    if (row.docStatus === 'OK_SEM_ARQUIVO') {
+      hasOkWithoutFile = true
+    }
+  }
+
+  // ── classifiedTypes (tipos que a IA reconheceu) + ciclo de vida ──
+  const classifiedSet = new Set<string>(attachedTypes)
+  for (const a of docExtractions) {
+    const out = (a.output ?? {}) as Paginas
+    for (const p of out.paginas ?? []) {
+      if (p.tipo && p.tipo !== 'nao_identificado') {
+        classifiedSet.add(p.tipo)
+      }
+    }
+    const dec = (a.decision ?? {}) as Decision
+    for (const x of dec.attached ?? []) classifiedSet.add(x.documentTypeKey)
+    for (const x of dec.skipped ?? []) classifiedSet.add(x.documentTypeKey)
+  }
+  // Classificacao sempre SABE o conjunto atual de tipos presentes (= anexados +
+  // o que a IA reconheceu). So fica 'pending' quando um scan esta em voo (vamos
+  // saber mais ja-ja). Nunca 'absent' — no minimo um conjunto vazio.
+  const inFlightSplit = batchFiles.some((b) =>
+    ['idle', 'queued', 'processing'].includes(b.splitStatus),
+  )
+  const classifiedTypes: Fact<Set<string>> = inFlightSplit
+    ? pending()
+    : ready(classifiedSet)
+
+  // ── titularProcesso (valor do documento oficial, ja salvo na linha) ──
+  const titularProcesso: Fact<Person[]> = proc.cpf?.trim()
+    ? ready([
+        {
+          nome: proc.fullName,
+          cpf: proc.cpf,
+          rg: proc.rg || undefined,
+          nascimento: proc.birthDate || undefined,
+        },
+      ])
+    : absent()
+
+  // ── termoCompradores (do caixa_owner audit) ──
+  const termoClassified = classifiedSet.has(DOC.termoEntrega)
+  const caixaOut = (caixaAudits[0]?.output ?? null) as CaixaByDoc | null
+  let termoCompradores: Fact<Person[]>
+  if (proc.caixaAnalysisStatus === 'processing') {
+    termoCompradores = pending()
+  } else if (proc.caixaAnalysisStatus === 'error') {
+    termoCompradores = failed()
+  } else if (caixaOut?.byDoc?.length) {
+    const compradores: Person[] = []
+    const seen = new Set<string>()
+    for (const d of caixaOut.byDoc) {
+      if (d.titular && d.cpfTitular && !seen.has(d.cpfTitular)) {
+        seen.add(d.cpfTitular)
+        compradores.push({ nome: d.titular, cpf: d.cpfTitular })
+      }
+      if (d.conjuge && d.cpfConjuge && !seen.has(d.cpfConjuge)) {
+        seen.add(d.cpfConjuge)
+        compradores.push({ nome: d.conjuge, cpf: d.cpfConjuge })
+      }
+    }
+    termoCompradores = compradores.length ? ready(compradores) : absent()
+  } else {
+    termoCompradores = termoClassified ? pending() : absent()
+  }
+
+  // ── compraVenda / outorgantes: extracao por papel ainda nao implementada
+  // (Fase 3). Marca pending quando o doc foi classificado mas as partes nao
+  // foram extraidas; absent quando nem ha o documento. NAO bloqueia a conclusao
+  // do ownerType (deriveOwner le compraVenda de forma suave).
+  const compraVenda: Fact<CompraVenda> = classifiedSet.has(DOC.compraVenda)
+    ? pending()
+    : absent()
+  const outorgantes: Fact<Person[]> = classifiedSet.has(DOC.procuracao)
+    ? pending()
+    : absent()
+
+  return {
+    classifiedTypes,
+    attachedTypes,
+    hasOkWithoutFile,
+    outorgantes,
+    titularProcesso,
+    termoCompradores,
+    compraVenda,
+    housingComplexLinked: proc.housingComplexId !== null,
+    currentStatus: proc.status,
+  }
+}

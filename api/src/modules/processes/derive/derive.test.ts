@@ -205,6 +205,22 @@ describe('deriveProcessState — 2.2 ramo compra e venda', () => {
     expect(d.reviewFlags.join(' ')).toContain('fora do prazo')
     expect(d.status).toBe('EM_DOCUMENTACAO')
   })
+
+  test('compra_venda classificada mas partes ainda nao extraidas -> nao_titular, quitacao null (nao espera)', () => {
+    const classified = new Set([...ALL_BASE, DOC.compraVenda])
+    const attached = new Set([...ALL_BASE, DOC.compraVenda])
+    const d = deriveProcessState(
+      facts({
+        classifiedTypes: ready(classified),
+        attachedTypes: attached,
+        termoCompradores: absent<Person[]>(),
+        compraVenda: pending<CompraVenda>(),
+      }),
+    )
+    expect(d.readiness).toBe('ready') // NAO bloqueia por causa da extracao das partes
+    expect(d.ownerType.value).toBe('nao_titular_contrato_caixa')
+    expect(d.quitacaoSubject).toBeNull()
+  })
 })
 
 describe('deriveProcessState — readiness (timing)', () => {

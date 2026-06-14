@@ -97,7 +97,7 @@ function toBuyer(p: Person): CaixaBuyer {
 
 function has(facts: ProcessFacts, key: string): boolean {
   const classified = req(facts.classifiedTypes, 'classificando')
-  return classified.has(key)
+  return classified?.has(key) ?? false
 }
 
 // ── deriveOwner: ownerType (rotulo) + titular do contrato Caixa (quitacao) ─────
@@ -126,16 +126,19 @@ function deriveOwner(facts: ProcessFacts): {
   const hasCompraVenda = has(facts, DOC.compraVenda)
   const hasTermo = has(facts, DOC.termoEntrega)
 
-  // Ramo compra e venda: nao_titular; titular Caixa = vendedor.
+  // Ramo compra e venda: a CLASSIFICACAO ja basta para concluir nao_titular —
+  // nao espera a extracao das partes (NAO faz req()). So o quitacaoSubject
+  // (vendedor) depende da extracao; fica null ate estar 'ready'.
   if (hasCompraVenda) {
-    const cv = req(facts.compraVenda, 'lendo compra e venda')
+    const cv =
+      facts.compraVenda.state === 'ready' ? facts.compraVenda.value : undefined
     return {
       ownerType: {
         value: 'nao_titular_contrato_caixa',
         origin: 'derived',
         reason: 'contrato de compra e venda particular',
       },
-      quitacaoSubject: cv.vendedores[0] ?? null,
+      quitacaoSubject: cv?.vendedores[0] ?? null,
     }
   }
 
