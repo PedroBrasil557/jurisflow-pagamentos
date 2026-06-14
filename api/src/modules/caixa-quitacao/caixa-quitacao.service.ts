@@ -1,8 +1,9 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import { logErrorEvent, logEvent } from '../../shared/observability/log'
 import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
+import { aiAnalysis } from '../ai-analysis/ai-analysis.schema'
 import { attachSystemChecklistFile } from '../processes/processes.checklist.service'
 import { process } from '../processes/processes.schema'
 
@@ -112,7 +113,36 @@ export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
     .returning({ id: process.id, cpf: process.cpf })
 
   const row = claimed[0]
-  return row ? { processId: row.id, cpf: row.cpf } : null
+  if (!row) return null
+  // A consulta de quitacao e do TITULAR DO CONTRATO CAIXA (v3): no caso nao_titular
+  // e o VENDEDOR do contrato de compra e venda, NAO o titular do processo. O
+  // quitacaoSubject derivado vem da evidencia process_derivation; fallback ao cpf
+  // do processo (caso titular, em que coincidem).
+  const subjectCpf = await resolveQuitacaoSubjectCpf(row.id)
+  return { processId: row.id, cpf: subjectCpf ?? row.cpf }
+}
+
+// Le o CPF do sujeito da quitacao (titular do contrato Caixa) da ultima evidencia
+// process_derivation. Retorna normalizado e valido, ou null (usa o cpf do processo).
+async function resolveQuitacaoSubjectCpf(
+  processId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ decision: aiAnalysis.decision })
+    .from(aiAnalysis)
+    .where(
+      and(
+        eq(aiAnalysis.processId, processId),
+        eq(aiAnalysis.kind, 'process_derivation'),
+      ),
+    )
+    .orderBy(desc(aiAnalysis.createdAt))
+    .limit(1)
+  const subject = (
+    row?.decision as { quitacaoSubject?: { cpf?: string } } | null
+  )?.quitacaoSubject
+  const cpf = subject?.cpf ? normalizeCpf(subject.cpf) : null
+  return cpf && isValidCpf(cpf) ? cpf : null
 }
 
 export type QuitacaoResultInput = {
