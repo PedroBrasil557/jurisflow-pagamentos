@@ -178,7 +178,7 @@ export const processStatusLabels = {
   RASCUNHO: 'Rascunho',
   CADASTRADO: 'Cadastrado',
   EM_LOTE: 'Em lote',
-  EM_DOCUMENTACAO: 'Em documentacao',
+  EM_DOCUMENTACAO: 'Documentacao pendente',
   DOCUMENTACAO_PRONTA: 'Documentacao pronta',
   EM_PROCESSO: 'Em processo',
   FINALIZADO: 'Finalizado',
