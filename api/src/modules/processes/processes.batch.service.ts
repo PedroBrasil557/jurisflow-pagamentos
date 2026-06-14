@@ -412,13 +412,15 @@ async function runBatchFileSplit(input: {
       triggeredByUserId: input.actor.id,
     })
 
-    // SHADOW (v3): grava evidencia da derivacao; NAO altera estado. Best-effort.
+    await setSplitStatus(fileRecord.id, 'done', result.message)
+
+    // Reconcilia ownerType + status APOS o split virar 'done': se rodasse antes,
+    // gatherFacts veria o split 'processing' (classifiedTypes=pending) e concluiria
+    // 'undetermined' — sem nada re-disparar depois (era a causa do ownerType vazio).
     void reconcileOwnerType({
       processId: input.processId,
       triggeredByUserId: input.actor.id,
     })
-
-    await setSplitStatus(fileRecord.id, 'done', result.message)
   } catch (error) {
     const message =
       error instanceof ServiceError
@@ -631,11 +633,10 @@ async function runIngestionWork(input: {
     triggeredByUserId: input.actor.id,
   })
 
-  // SHADOW (v3): grava evidencia da derivacao; NAO altera estado. Best-effort.
-  void reconcileOwnerType({
-    processId: input.processId,
-    triggeredByUserId: input.actor.id,
-  })
+  // NOTA: a reconciliacao de ownerType/status NAO roda aqui — o split ainda esta
+  // 'processing' (o caller so marca 'done' depois). Roda em processClaimedIngestion
+  // APOS markIngestionDone, senao gatherFacts veria classifiedTypes=pending e
+  // concluiria 'undetermined' (ownerType vazio) sem nada re-disparar.
 
   // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o
   // sync nao roda: decidimos explicitamente.
@@ -758,6 +759,14 @@ export async function processClaimedIngestion(
         'worker: lease perdido apos concluir; desfecho descartado (outra replica assumiu)',
         { batchFileId: job.batchFileId },
       )
+    } else {
+      // Split DURAVELMENTE 'done': agora o reconcile ve classifiedTypes=ready e
+      // conclui o ownerType (ex.: nao_titular por contrato de compra e venda). Roda
+      // aqui — fora de runIngestionWork — para nao correr com o split 'processing'.
+      void reconcileOwnerType({
+        processId: fileRecord.processId,
+        triggeredByUserId: actor.id,
+      })
     }
   } catch (error) {
     const message =
