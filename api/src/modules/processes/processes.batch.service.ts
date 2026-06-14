@@ -28,6 +28,7 @@ import {
   resolveUserPermissions,
 } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
+import { reconcileProcessShadow } from './derive/reconcile'
 import {
   getProcessContextOrThrow,
   getProcessRecordOrThrow,
@@ -36,7 +37,6 @@ import { assertChecklistUploadAllowed } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
 import { recordDocumentExtractionAudit } from './processes.extraction.audit'
 import { extractDocumentsFromFiles } from './processes.extraction.service'
-import { countPdfPages } from './processes.pdf.splitter'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { importDocumentBundle } from './processes.import.service'
 import {
@@ -49,6 +49,7 @@ import {
   markIngestionDone,
   renewIngestionLease,
 } from './processes.ingestion.queue'
+import { countPdfPages } from './processes.pdf.splitter'
 import { process, processBatchFile } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
@@ -411,6 +412,9 @@ async function runBatchFileSplit(input: {
       triggeredByUserId: input.actor.id,
     })
 
+    // SHADOW (v3): grava evidencia da derivacao; NAO altera estado. Best-effort.
+    void reconcileProcessShadow(input.processId)
+
     await setSplitStatus(fileRecord.id, 'done', result.message)
   } catch (error) {
     const message =
@@ -623,6 +627,9 @@ async function runIngestionWork(input: {
     durationMs: Date.now() - startedAt,
     triggeredByUserId: input.actor.id,
   })
+
+  // SHADOW (v3): grava evidencia da derivacao; NAO altera estado. Best-effort.
+  void reconcileProcessShadow(input.processId)
 
   // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o
   // sync nao roda: decidimos explicitamente.

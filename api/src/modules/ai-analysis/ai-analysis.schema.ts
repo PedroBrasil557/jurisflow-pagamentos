@@ -24,6 +24,9 @@ export type AiAnalysisKind =
   | 'caixa_owner'
   | 'document_extraction'
   | 'procuracao_conjunto'
+  // Derivacao deterministica do estado do processo (v3): ownerType + status +
+  // requiredDocs a partir dos fatos. Nao e chamada de IA (model='derive').
+  | 'process_derivation'
 
 // Referencia (nao os bytes) do artefato analisado — permite provar qual versao
 // do arquivo gerou a decisao mesmo se o objeto for movido/substituido.

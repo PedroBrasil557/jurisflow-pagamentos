@@ -108,7 +108,7 @@ function deriveOwner(facts: ProcessFacts): {
   ownerType: Derived['ownerType']
   quitacaoSubject: Person | null
 } {
-  const titulares = req(facts.titularProcesso, 'titular')
+  const titulares = req(facts.titularProcesso, 'titular') ?? []
   const titular = titulares[0]
 
   // Sem identidade do titular ainda -> nao da pra concluir.
@@ -144,7 +144,7 @@ function deriveOwner(facts: ProcessFacts): {
 
   // Ramo termo: match do titular contra os compradores do termo.
   if (hasTermo) {
-    const compradores = req(facts.termoCompradores, 'lendo termo')
+    const compradores = req(facts.termoCompradores, 'lendo termo') ?? []
     const r = compareCaixaOwner(compradores.map(toBuyer), [], {
       fullName: titular.nome,
       cpf: titular.cpf,
