@@ -120,7 +120,7 @@ export type ProcuracaoConjuntoOutcome = {
 }
 
 // Decide o desfecho a partir do match determinístico + estado atual + flag. PURA.
-// Espelha decideCaixaOwnerOutcome. Regras:
+// Mesmo padrao do auto-apply gated por flag/human-lock. Regras:
 // - sem match inequivoco => sempre revisar (nunca chuta — risco juridico).
 // - ja e o conjunto casado => no-op.
 // - shadow (flag off) => so registra e revisar.

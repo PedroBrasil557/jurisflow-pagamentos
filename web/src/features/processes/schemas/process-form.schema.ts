@@ -14,7 +14,6 @@ const maritalStatusValues = [
 const ownerTypeValues = [
   '',
   'titular_contrato_caixa',
-  'conjuge_titular_contrato_caixa',
   'nao_titular_contrato_caixa',
 ] as const
 

@@ -145,7 +145,7 @@ function deriveOwner(facts: ProcessFacts): {
   // Ramo termo: match do titular contra os compradores do termo.
   if (hasTermo) {
     const compradores = req(facts.termoCompradores, 'lendo termo') ?? []
-    const r = compareCaixaOwner(compradores.map(toBuyer), [], {
+    const r = compareCaixaOwner(compradores.map(toBuyer), {
       fullName: titular.nome,
       cpf: titular.cpf,
     })

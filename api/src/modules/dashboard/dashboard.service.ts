@@ -18,7 +18,6 @@ const statusLabels: Record<string, string> = {
 
 const ownerTypeLabels: Record<string, string> = {
   titular_contrato_caixa: 'Titular contrato caixa',
-  conjuge_titular_contrato_caixa: 'Conjuge titular contrato caixa',
   nao_titular_contrato_caixa: 'Nao titular contrato caixa',
 }
 

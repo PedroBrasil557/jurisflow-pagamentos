@@ -193,7 +193,6 @@ export const processStatusOptions = (
 
 export const ownerTypeLabels = {
   titular_contrato_caixa: 'Titular contrato caixa',
-  conjuge_titular_contrato_caixa: 'Conjuge titular contrato caixa',
   nao_titular_contrato_caixa: 'Nao titular contrato caixa',
 } as const
 

@@ -176,6 +176,13 @@
       "when": 1781295433776,
       "tag": "0024_purple_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1781462636155,
+      "tag": "0025_lonely_namora",
+      "breakpoints": true
     }
   ]
 }
