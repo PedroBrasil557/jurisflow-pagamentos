@@ -28,7 +28,7 @@ import {
   resolveUserPermissions,
 } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
-import { reconcileProcessShadow } from './derive/reconcile'
+import { reconcileOwnerType } from './derive/reconcile'
 import {
   getProcessContextOrThrow,
   getProcessRecordOrThrow,
@@ -413,7 +413,10 @@ async function runBatchFileSplit(input: {
     })
 
     // SHADOW (v3): grava evidencia da derivacao; NAO altera estado. Best-effort.
-    void reconcileProcessShadow(input.processId)
+    void reconcileOwnerType({
+      processId: input.processId,
+      triggeredByUserId: input.actor.id,
+    })
 
     await setSplitStatus(fileRecord.id, 'done', result.message)
   } catch (error) {
@@ -629,7 +632,10 @@ async function runIngestionWork(input: {
   })
 
   // SHADOW (v3): grava evidencia da derivacao; NAO altera estado. Best-effort.
-  void reconcileProcessShadow(input.processId)
+  void reconcileOwnerType({
+    processId: input.processId,
+    triggeredByUserId: input.actor.id,
+  })
 
   // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o
   // sync nao roda: decidimos explicitamente.

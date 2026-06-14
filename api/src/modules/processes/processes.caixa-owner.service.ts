@@ -3,19 +3,9 @@ import { env } from '../../shared/config/env'
 import { db } from '../../shared/db'
 import { getStorageObjectBytes } from '../../shared/storage/s3'
 import { recordAiAnalysis } from '../ai-analysis/ai-analysis.service'
-import {
-  getAnthropicApiKey,
-  getCaixaOwnerAutoApply,
-} from '../settings/settings.service'
-import {
-  CAIXA_OWNER_CONJUGE_TITULAR,
-  CAIXA_OWNER_NAO_TITULAR,
-  type CaixaBuyer,
-  compareCaixaOwner,
-  decideCaixaOwnerOutcome,
-} from './processes.caixa-owner.compare'
+import { getAnthropicApiKey } from '../settings/settings.service'
+import { reconcileOwnerType } from './derive/reconcile'
 import { extractCaixaOwner } from './processes.caixa-owner.helper'
-import { createProcessHistoryEntry } from './processes.history.service'
 import {
   process,
   processDocument,
@@ -29,8 +19,6 @@ const CAIXA_DOC_KEYS = [
   'declaracao_quitacao',
 ] as const
 
-// Usuario tecnico (seedado na migracao) — ator das acoes automaticas.
-const SYSTEM_ACTOR_ID = 'jurisflow-bot'
 const PROMPT_VERSION = 'caixa_owner@2'
 // Apos isso, um 'processing' e considerado orfao (crash/restart) e pode ser
 // re-reivindicado — mesmo padrao da consulta de quitacao.
@@ -180,11 +168,7 @@ async function runCaixaOwnerAnalysisOnce(input: {
       return
     }
 
-    const autoApplyEnabled = await getCaixaOwnerAutoApply()
-
     const byDoc: DocExtraction[] = []
-    const allCompradores: CaixaBuyer[] = []
-    const allConjuges: CaixaBuyer[] = []
     const errors: string[] = []
     let model = env.anthropic.model
     let tokensInput = 0
@@ -218,21 +202,8 @@ async function runCaixaOwnerAnalysisOnce(input: {
           cpfConjuge: extraction.cpfConjuge,
           trechoFonte: extraction.trechoFonte,
         })
-        // A eleicao compara o titular do processo contra DUAS camadas do termo: o
-        // titular (=> 'titular') e o conjuge co-assinante (=> 'conjuge_titular',
-        // que tambem adquiriu pelo contrato Caixa). Ambos seguem em byDoc (evidencia).
-        if (extraction.titular) {
-          allCompradores.push({
-            nome: extraction.titular,
-            cpf: extraction.cpfTitular,
-          })
-        }
-        if (extraction.conjuge) {
-          allConjuges.push({
-            nome: extraction.conjuge,
-            cpf: extraction.cpfConjuge,
-          })
-        }
+        // Os dados do termo (titular/conjuge = 1o/2o comprador) seguem em byDoc,
+        // que vira a evidencia caixa_owner e alimenta o fato termoCompradores.
       } catch (error) {
         errors.push(
           `${file.documentKey}: ${error instanceof Error ? error.message : 'falha'}`,
@@ -257,113 +228,40 @@ async function runCaixaOwnerAnalysisOnce(input: {
       return
     }
 
-    const comparison = compareCaixaOwner(allCompradores, allConjuges, {
-      fullName: proc.fullName,
-      cpf: proc.cpf,
-    })
-    const outcome = decideCaixaOwnerOutcome({
-      result: comparison.result,
-      currentOwnerType: proc.ownerType,
-      ownerTypeSource: proc.ownerTypeSource,
-      autoApplyEnabled,
-    })
-
-    await db.transaction(async (tx) => {
-      const auditId = await recordAiAnalysis(
-        {
-          kind: 'caixa_owner',
-          processId: input.processId,
-          context: {
-            documentKey: byDoc[0].documentKey,
-            fileId: byDoc[0].fileId,
-            revision: byDoc[0].revision,
-          },
-          model,
-          promptVersion: PROMPT_VERSION,
-          input: {
-            titular: { fullName: proc.fullName, cpf: proc.cpf },
-            docs: byDoc.map((d) => ({
-              documentKey: d.documentKey,
-              fileId: d.fileId,
-              revision: d.revision,
-            })),
-            autoApplyEnabled,
-          },
-          output: { byDoc, partialErrors: errors.length ? errors : undefined },
-          decision: {
-            result: comparison.result,
-            matchedBy: comparison.matchedBy,
-            apply: outcome.apply,
-            newOwnerType: outcome.newOwnerType ?? null,
-          },
-          status: 'ok',
-          tokensInput: tokensInput || null,
-          tokensOutput: tokensOutput || null,
-          durationMs: Date.now() - startedAt,
-          triggerSource,
-          triggeredByUserId: input.triggeredByUserId,
-        },
-        tx,
-      )
-
-      if (outcome.apply && outcome.newOwnerType) {
-        await tx
-          .update(process)
-          .set({
-            ownerType: outcome.newOwnerType,
-            ownerTypeSource: 'system',
-            caixaAnalysisStatus: outcome.analysisStatus,
-          })
-          .where(eq(process.id, input.processId))
-      } else {
-        await tx
-          .update(process)
-          .set({ caixaAnalysisStatus: outcome.analysisStatus })
-          .where(eq(process.id, input.processId))
-      }
-
-      if (outcome.historyEvent) {
-        await createProcessHistoryEntry({
-          processId: input.processId,
-          actorUserId: SYSTEM_ACTOR_ID,
-          eventType: outcome.historyEvent,
-          notes: outcome.apply
-            ? outcome.newOwnerType === CAIXA_OWNER_NAO_TITULAR
-              ? 'Identificado como NAO titular do contrato Caixa (titular do processo difere do titular do termo).'
-              : outcome.newOwnerType === CAIXA_OWNER_CONJUGE_TITULAR
-                ? 'Identificado como conjuge (co-titular) do contrato Caixa — adquiriu pelo contrato original.'
-                : 'Titular do contrato Caixa confirmado automaticamente pela analise.'
-            : 'A analise do contrato Caixa precisa de revisao humana.',
-          metadata: {
-            aiAnalysisId: auditId,
-            fromOwnerType: proc.ownerType,
-            toOwnerType: outcome.newOwnerType ?? proc.ownerType,
-            matchedBy: comparison.matchedBy,
-          },
-          executor: tx,
-        })
-      }
+    // Evidencia da EXTRACAO do termo (alimenta o fato termoCompradores do v3). A
+    // DECISAO do ownerType e do status e delegada ao reconciliador v3
+    // (reconcileOwnerType) — fonte unica, modelo de 2 estados e quitacao correta.
+    await recordAiAnalysis({
+      kind: 'caixa_owner',
+      processId: input.processId,
+      context: {
+        documentKey: byDoc[0].documentKey,
+        fileId: byDoc[0].fileId,
+        revision: byDoc[0].revision,
+      },
+      model,
+      promptVersion: PROMPT_VERSION,
+      input: {
+        titular: { fullName: proc.fullName, cpf: proc.cpf },
+        docs: byDoc.map((d) => ({
+          documentKey: d.documentKey,
+          fileId: d.fileId,
+          revision: d.revision,
+        })),
+      },
+      output: { byDoc, partialErrors: errors.length ? errors : undefined },
+      status: 'ok',
+      tokensInput: tokensInput || null,
+      tokensOutput: tokensOutput || null,
+      durationMs: Date.now() - startedAt,
+      triggerSource,
+      triggeredByUserId: input.triggeredByUserId,
     })
 
-    // ownerType alterado: reconcilia o status — ownerType e a condicao de
-    // obrigatoriedade do contrato_compra_venda (nao_titular). Mudar aqui muda quais
-    // docs sao obrigatorios, podendo completar OU travar a documentacao. Import
-    // dinamico para evitar ciclo com checklist.service. Falha NAO marca erro.
-    if (outcome.apply) {
-      try {
-        const { reconcileProcessStatus } = await import(
-          './processes.checklist.service'
-        )
-        await reconcileProcessStatus(input.processId, {
-          id: SYSTEM_ACTOR_ID,
-        } as unknown as Parameters<typeof reconcileProcessStatus>[1])
-      } catch (reconcileError) {
-        console.error('Falha ao reconciliar status apos definir ownerType', {
-          processId: input.processId,
-          error: String(reconcileError),
-        })
-      }
-    }
+    await reconcileOwnerType({
+      processId: input.processId,
+      triggeredByUserId: input.triggeredByUserId,
+    })
   } catch (error) {
     console.error('Falha na analise do contrato Caixa', {
       processId: input.processId,
