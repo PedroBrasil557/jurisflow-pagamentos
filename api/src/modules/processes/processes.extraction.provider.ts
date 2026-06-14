@@ -16,6 +16,16 @@ import type {
 const optionalString = z.string().optional().catch(undefined)
 const optionalNumber = z.number().optional().catch(undefined)
 
+// Pessoa (parte de documento): outorgante, comprador, vendedor.
+const rawPersonSchema = z
+  .object({
+    nome: optionalString,
+    cpf: optionalString,
+    rg: optionalString,
+    nascimento: optionalString,
+  })
+  .catch({})
+
 const rawExtractionSchema = z.object({
   titular: z
     .object({
@@ -55,6 +65,15 @@ const rawExtractionSchema = z.object({
     })
     .optional()
     .catch(undefined),
+  outorgantes: z.array(rawPersonSchema).optional().catch(undefined),
+  compraVenda: z
+    .object({
+      vendedores: z.array(rawPersonSchema).optional().catch(undefined),
+      compradores: z.array(rawPersonSchema).optional().catch(undefined),
+      dataAssinatura: optionalString,
+    })
+    .optional()
+    .catch(undefined),
   camposNaoEncontrados: z.array(z.string()).optional().catch(undefined),
   paginas: z
     .array(
@@ -90,6 +109,7 @@ Tarefa 2 — Classifique CADA pagina do PDF em um dos tipos abaixo e devolva em 
 - rg_cpf_cnh_conjuge: o mesmo documento de identidade, mas do CONJUGE (esposo(a)/companheiro(a)) do titular. Use apenas quando houver indicacao clara de que e do conjuge; na duvida, classifique como rg_cpf_cnh.
 - comprovante_endereco: conta de consumo que prova residencia — energia (ex.: Neoenergia/Coelba, "DANFE ... ENERGIA ELETRICA") ou agua/esgoto (ex.: SAAE, "CONTA DE CONSUMO DE AGUA/ESGOTO"). Pode estar em nome de terceiro/co-morador (ex.: co-titular do imovel), nao necessariamente do titular.
 - termo_entrega_recebimento_imovel: documento da CAIXA que comprova a entrega/titularidade do imovel no programa habitacional. O titulo comeca com "TERMO DE RECEBIMENTO DE IMOVEL" (variacoes reais: "– PAR E PMCMV", "– PMCMV – FAIXA 1", "– PMCMV – RECURSOS FAR") e ha o logo CAIXA ECONOMICA FEDERAL. A parte VENDEDORA (rotulada VENDEDOR, ou VENDEDOR/CEDENTE/DOADOR, ou VENDEDOR/CREDOR FIDUCIARIO) e uma INSTITUICAO: "FUNDO DE ARRENDAMENTO RESIDENCIAL - FAR", representada pela Caixa Economica Federal. ATENCAO: o corpo deste termo cita "INSTRUMENTO PARTICULAR DE VENDA E COMPRA", "COMPRA DE IMOVEL", "DOACAO COM ENCARGO", "ALIENACAO FIDUCIARIA" e "MINHA CASA MINHA VIDA" — essas expressoes NAO o transformam em contrato_compra_venda. Se o vendedor e a FAR/Caixa, e SEMPRE termo_entrega_recebimento_imovel.
+- termo_quitacao: documento da CAIXA que comprova a QUITACAO do financiamento do imovel (titulo com "QUITACAO"/"TERMO DE QUITACAO"). Prova alternativa do vinculo do imovel com a Caixa (quando nao ha o termo de entrega).
 - contrato_compra_venda: contrato de compra e venda do imovel entre PARTICULARES, em que o VENDEDOR e uma PESSOA FISICA (identificada por CPF) — tipicamente uma revenda do imovel ja regularizado. NAO tem o titulo "TERMO DE RECEBIMENTO DE IMOVEL" e o vendedor NAO e a FAR/Caixa. Pode mencionar PMCMV/Caixa/alienacao fiduciaria apenas como historico do imovel — isso, sozinho, nao o torna termo_entrega.
 - procuracao_advogado: procuracao para o advogado. Titulo "PROCURACAO AD JUDICIA ET EXTRA", com OUTORGANTE (cliente) e OUTORGADO (advogado) e uma secao PODERES. Outorga PODERES de representacao — nao define remuneracao.
 - contrato_honorarios_advocaticios: "CONTRATO DE PRESTACAO DE SERVICOS ADVOCATICIOS", com CONTRATANTE (cliente) e CONTRATADO (advogado) e clausulas de HONORARIOS (regime de exito, sucumbencia). ATENCAO: tem a palavra "CONTRATO" mas o objeto e servico juridico — NAO confundir com contrato_compra_venda, que transmite o imovel.
@@ -99,6 +119,10 @@ Tarefa 2 — Classifique CADA pagina do PDF em um dos tipos abaixo e devolva em 
 - nao_identificado: pagina que NAO corresponde a nenhum tipo acima. NAO force um tipo so para encaixar — se a pagina nao e claramente um dos tipos, use nao_identificado. Essas paginas serao tratadas por anexo manual; nunca sao anexadas automaticamente.
 
 Tarefa 3 — CONJUGE: examine o termo de entrega/recebimento do imovel (Caixa). SE o termo indicar que o imovel/contrato foi adquirido/assinado TAMBEM pelo conjuge (esposo(a)/companheiro(a)) do titular, extraia em "conjuge" os dados do conjuge: nome completo, CPF e data de nascimento (ISO yyyy-mm-dd). Preencha "conjuge" APENAS quando o termo de entrega claramente incluir o conjuge como comprador/assinante (ex.: dois adquirentes, "e seu conjuge", estado civil casado com co-titularidade). Caso contrario, NAO inclua "conjuge".
+
+Tarefa 4 — OUTORGANTES: da PROCURACAO, extraia em "outorgantes" os dados pessoais (nome, cpf, rg, nascimento) de CADA outorgante (o(s) cliente(s) que outorga(m) poderes ao advogado). Sao o(s) titular(es) do processo.
+
+Tarefa 5 — COMPRA E VENDA: SE houver "contrato_compra_venda", extraia em "compraVenda": os "vendedores" (dados pessoais), os "compradores" (dados pessoais) e a "dataAssinatura" (ISO yyyy-mm-dd) do contrato. Se nao houver contrato de compra e venda, NAO inclua "compraVenda".
 
 Regras: NUNCA invente dados; se um campo nao estiver legivel, deixe-o de fora e liste em camposNaoEncontrados. Datas sempre em ISO yyyy-mm-dd. Atencao ao modelo novo de RG, onde o numero do topo pode ser o proprio CPF (o RG verdadeiro vem em outra linha). Classifique TODAS as paginas, sem pular nenhuma. Sempre chame a ferramenta registrar_titular.`
 
@@ -164,6 +188,59 @@ const extractionTool: Anthropic.Tool = {
         },
         additionalProperties: false,
       },
+      outorgantes: {
+        type: 'array',
+        description:
+          'Outorgante(s) da PROCURACAO = titular(es) do processo. Dados pessoais de cada um.',
+        items: {
+          type: 'object',
+          properties: {
+            nome: { type: 'string' },
+            cpf: { type: 'string' },
+            rg: { type: 'string' },
+            nascimento: { type: 'string', description: 'ISO yyyy-mm-dd' },
+          },
+          additionalProperties: false,
+        },
+      },
+      compraVenda: {
+        type: 'object',
+        description:
+          'Partes do CONTRATO DE COMPRA E VENDA particular (quando houver).',
+        properties: {
+          vendedores: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                nome: { type: 'string' },
+                cpf: { type: 'string' },
+                rg: { type: 'string' },
+                nascimento: { type: 'string', description: 'ISO yyyy-mm-dd' },
+              },
+              additionalProperties: false,
+            },
+          },
+          compradores: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                nome: { type: 'string' },
+                cpf: { type: 'string' },
+                rg: { type: 'string' },
+                nascimento: { type: 'string', description: 'ISO yyyy-mm-dd' },
+              },
+              additionalProperties: false,
+            },
+          },
+          dataAssinatura: {
+            type: 'string',
+            description: 'Data de assinatura do contrato, ISO yyyy-mm-dd',
+          },
+        },
+        additionalProperties: false,
+      },
       camposNaoEncontrados: {
         type: 'array',
         items: { type: 'string' },
@@ -186,6 +263,7 @@ const extractionTool: Anthropic.Tool = {
                 'rg_cpf_cnh',
                 'comprovante_endereco',
                 'termo_entrega_recebimento_imovel',
+                'termo_quitacao',
                 'declaracao_hipossuficiencia',
                 'contrato_honorarios_advocaticios',
                 'contrato_compra_venda',
@@ -214,9 +292,7 @@ export function createAnthropicVisionProvider(
 
   return {
     name: 'anthropic-vision',
-    async extract(
-      files: ExtractionInputFile[],
-    ): Promise<RawExtractionResult> {
+    async extract(files: ExtractionInputFile[]): Promise<RawExtractionResult> {
       const documentBlocks: Anthropic.ContentBlockParam[] = files.map((file) =>
         file.kind === 'pdf'
           ? {

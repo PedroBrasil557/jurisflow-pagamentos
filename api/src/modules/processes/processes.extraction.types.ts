@@ -56,10 +56,29 @@ export interface RawPageClassification {
   tipo: string
 }
 
+// Dados pessoais de uma PARTE (outorgante da procuracao, comprador/vendedor do
+// contrato de compra e venda). Usado pela derivacao de ownerType/quitacao (v3).
+export interface RawPerson {
+  nome?: string
+  cpf?: string
+  rg?: string
+  nascimento?: string // ISO yyyy-mm-dd
+}
+
+export interface RawCompraVenda {
+  vendedores?: RawPerson[]
+  compradores?: RawPerson[]
+  dataAssinatura?: string // ISO yyyy-mm-dd
+}
+
 export interface RawExtraction {
   titular?: RawTitular
   endereco?: RawEndereco
   conjuge?: RawConjuge
+  // Outorgantes da PROCURACAO = titular(es) do processo (ancora de QUEM).
+  outorgantes?: RawPerson[]
+  // Partes + data do CONTRATO DE COMPRA E VENDA particular.
+  compraVenda?: RawCompraVenda
   camposNaoEncontrados?: string[]
   paginas?: RawPageClassification[]
 }
@@ -114,6 +133,9 @@ export interface ExtractionMeta {
   model: string
   usage?: { inputTokens: number; outputTokens: number }
   paginas: RawPageClassification[]
+  // Extracao por papel (v3) — alimenta os fatos da derivacao via auditoria.
+  outorgantes?: RawPerson[]
+  compraVenda?: RawCompraVenda
 }
 
 // Resultado normalizado + metadados da chamada, devolvido por

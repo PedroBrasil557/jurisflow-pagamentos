@@ -42,8 +42,14 @@ export async function recordDocumentExtractionAudit(input: {
         totalPages: input.totalPages,
         classifiedPages: input.meta.paginas.length,
       },
-      // Saida crua da IA: a classificacao de TODAS as paginas.
-      output: { paginas: input.meta.paginas },
+      // Saida crua da IA: classificacao das paginas + extracao por papel (v3:
+      // outorgantes da procuracao e partes do contrato de compra e venda) — fonte
+      // dos fatos da derivacao de ownerType/quitacao.
+      output: {
+        paginas: input.meta.paginas,
+        outorgantes: input.meta.outorgantes,
+        compraVenda: input.meta.compraVenda,
+      },
       // Decisao deterministica: o que o desmembramento anexou x pulou.
       decision: {
         attached: input.outcome.attached,

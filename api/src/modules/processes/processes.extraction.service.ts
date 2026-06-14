@@ -75,6 +75,12 @@ export async function extractDocumentsFromFiles(
 
   return {
     ...normalizeExtraction(raw),
-    meta: { model, usage, paginas: raw.paginas ?? [] },
+    meta: {
+      model,
+      usage,
+      paginas: raw.paginas ?? [],
+      outorgantes: raw.outorgantes,
+      compraVenda: raw.compraVenda,
+    },
   }
 }

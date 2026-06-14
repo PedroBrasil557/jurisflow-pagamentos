@@ -19,11 +19,33 @@ const absent = <T>(): Fact<T> => ({ state: 'absent' })
 const pending = <T>(): Fact<T> => ({ state: 'pending' })
 const failed = <T>(): Fact<T> => ({ state: 'failed' })
 
-type Paginas = { paginas?: Array<{ pagina: number; tipo: string }> }
+type RawP = { nome?: string; cpf?: string; rg?: string; nascimento?: string }
+type DocOutput = {
+  paginas?: Array<{ pagina: number; tipo: string }>
+  outorgantes?: RawP[]
+  compraVenda?: {
+    vendedores?: RawP[]
+    compradores?: RawP[]
+    dataAssinatura?: string
+  }
+}
 type Decision = {
   attached?: Array<{ documentTypeKey: string }>
   skipped?: Array<{ documentTypeKey: string }>
 }
+
+function toPerson(r: RawP | undefined): Person | null {
+  const cpf = r?.cpf?.trim()
+  if (!cpf) return null
+  return {
+    nome: r?.nome ?? '',
+    cpf,
+    rg: r?.rg || undefined,
+    nascimento: r?.nascimento || undefined,
+  }
+}
+const toPersons = (rs: RawP[] | undefined): Person[] =>
+  (rs ?? []).map(toPerson).filter((p): p is Person => p !== null)
 // Saida do extractCaixaOwner (kind caixa_owner): por doc, o titular do termo
 // (1o comprador) e o conjuge (2o comprador / co-comprador).
 type CaixaByDoc = {
@@ -119,7 +141,7 @@ export async function gatherFacts(
   // ── classifiedTypes (tipos que a IA reconheceu) + ciclo de vida ──
   const classifiedSet = new Set<string>(attachedTypes)
   for (const a of docExtractions) {
-    const out = (a.output ?? {}) as Paginas
+    const out = (a.output ?? {}) as DocOutput
     for (const p of out.paginas ?? []) {
       if (p.tipo && p.tipo !== 'nao_identificado') {
         classifiedSet.add(p.tipo)
@@ -177,16 +199,35 @@ export async function gatherFacts(
     termoCompradores = termoClassified ? pending() : absent()
   }
 
-  // ── compraVenda / outorgantes: extracao por papel ainda nao implementada
-  // (Fase 3). Marca pending quando o doc foi classificado mas as partes nao
-  // foram extraidas; absent quando nem ha o documento. NAO bloqueia a conclusao
-  // do ownerType (deriveOwner le compraVenda de forma suave).
-  const compraVenda: Fact<CompraVenda> = classifiedSet.has(DOC.compraVenda)
-    ? pending()
-    : absent()
-  const outorgantes: Fact<Person[]> = classifiedSet.has(DOC.procuracao)
-    ? pending()
-    : absent()
+  // ── compraVenda / outorgantes: extracao por papel (Fase 3) ──
+  // Le do audit document_extraction mais recente que contenha o campo. 'pending'
+  // quando o doc foi classificado mas ainda nao extraido (ex.: audit antigo);
+  // 'absent' quando nem ha o documento. NAO bloqueia o ownerType (leitura suave).
+  let rawCompraVenda: DocOutput['compraVenda']
+  let rawOutorgantes: RawP[] | undefined
+  for (const a of docExtractions) {
+    const out = (a.output ?? {}) as DocOutput
+    if (!rawCompraVenda && out.compraVenda) rawCompraVenda = out.compraVenda
+    if (!rawOutorgantes && out.outorgantes?.length) {
+      rawOutorgantes = out.outorgantes
+    }
+  }
+
+  const compraVenda: Fact<CompraVenda> = rawCompraVenda
+    ? ready({
+        vendedores: toPersons(rawCompraVenda.vendedores),
+        compradores: toPersons(rawCompraVenda.compradores),
+        dataAssinatura: rawCompraVenda.dataAssinatura,
+      })
+    : classifiedSet.has(DOC.compraVenda)
+      ? pending()
+      : absent()
+
+  const outorgantes: Fact<Person[]> = rawOutorgantes
+    ? ready(toPersons(rawOutorgantes))
+    : classifiedSet.has(DOC.procuracao)
+      ? pending()
+      : absent()
 
   return {
     classifiedTypes,
