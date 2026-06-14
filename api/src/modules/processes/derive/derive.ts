@@ -296,16 +296,21 @@ export function deriveProcessState(facts: ProcessFacts): Derived {
     }
   } catch (e) {
     if (e instanceof Pending) {
-      // Algum job exigido esta em voo -> NAO decide. Status segue derivado so
-      // pela completude atual (estados iniciais reconciliam livres); nunca avanca
-      // para PRONTA com fato pendente.
+      // Algum job exigido esta em voo -> NAO decide. Nunca AVANCA para PRONTA com
+      // fato pendente; mas tambem nao REVERTE PRONTA por causa de um job transitorio
+      // (anti-flapping): um PRONTA so cai quando a documentacao fica genuinamente
+      // incompleta (fato 'ready'/'absent', nao 'pending'). O reconciliador e
+      // level-triggered: re-dispara quando o fato assenta e decide corretamente.
       const hasIndividualDocs =
         facts.attachedTypes.size > 0 || facts.hasOkWithoutFile
-      const status = deriveStatus({
-        currentStatus: facts.currentStatus,
-        hasIndividualDocs,
-        documentationComplete: false,
-      })
+      const status =
+        facts.currentStatus === 'DOCUMENTACAO_PRONTA'
+          ? 'DOCUMENTACAO_PRONTA'
+          : deriveStatus({
+              currentStatus: facts.currentStatus,
+              hasIndividualDocs,
+              documentationComplete: false,
+            })
       return {
         readiness: 'pending',
         pendingOn: e.on,

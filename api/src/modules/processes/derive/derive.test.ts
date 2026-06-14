@@ -234,6 +234,28 @@ describe('deriveProcessState — readiness (timing)', () => {
     expect(d.status).not.toBe('DOCUMENTACAO_PRONTA')
   })
 
+  test('PRONTA com fato em voo -> HOLD PRONTA (nao reverte por job transitorio)', () => {
+    const d = deriveProcessState(
+      facts({
+        currentStatus: 'DOCUMENTACAO_PRONTA',
+        classifiedTypes: pending<Set<string>>(),
+      }),
+    )
+    expect(d.readiness).toBe('pending')
+    expect(d.status).toBe('DOCUMENTACAO_PRONTA') // anti-flapping
+  })
+
+  test('EM_DOCUMENTACAO com fato em voo + docs -> permanece EM_DOCUMENTACAO (nao avanca)', () => {
+    const d = deriveProcessState(
+      facts({
+        currentStatus: 'EM_DOCUMENTACAO',
+        classifiedTypes: pending<Set<string>>(),
+      }),
+    )
+    expect(d.readiness).toBe('pending')
+    expect(d.status).toBe('EM_DOCUMENTACAO')
+  })
+
   test('sem termo e sem compra e venda -> undetermined (aguarda)', () => {
     const classified = new Set(ALL_BASE) // sem documento do imovel
     const attached = new Set(ALL_BASE)

@@ -36,7 +36,18 @@ export const defaultProcessDocumentTypes = [
     label: 'Termo de entrega/recebimento do imovel pela instituicao bancaria',
     sortOrder: 40,
     displayNumber: '4',
-    isRequired: true,
+    isRequired: false,
+    allowsMultipleFiles: false,
+  },
+  {
+    // Prova ALTERNATIVA do vinculo do imovel com a Caixa (OR com o termo de
+    // entrega). isRequired:false porque a obrigatoriedade e do GRUPO (ver
+    // VINCULO_IMOVEL_KEYS em buildChecklistResponse): basta uma das duas provas.
+    key: 'termo_quitacao',
+    label: 'Termo de quitacao do imovel',
+    sortOrder: 45,
+    displayNumber: '4.1',
+    isRequired: false,
     allowsMultipleFiles: false,
   },
   {

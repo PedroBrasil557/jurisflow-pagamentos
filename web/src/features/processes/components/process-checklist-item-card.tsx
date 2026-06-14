@@ -39,6 +39,14 @@ function getChecklistItemSecondaryLabel(item: ProcessChecklistItem) {
     return 'Ok sem arquivo'
   }
 
+  // Grupo-OR (vinculo do imovel): obrigatorio como grupo, mas qualquer uma das
+  // provas basta. Sem irmao satisfeito -> obrigatorio; com irmao -> alternativo.
+  if (item.orGroup) {
+    return item.orGroup.satisfied
+      ? 'Alternativo — vinculo ja comprovado'
+      : 'Obrigatorio — anexe este ou o equivalente'
+  }
+
   return item.documentType.isRequired ? 'Pendente' : 'Documento opcional'
 }
 

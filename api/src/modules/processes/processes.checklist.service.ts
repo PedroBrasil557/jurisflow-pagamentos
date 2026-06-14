@@ -30,6 +30,8 @@ import {
   isCaixaOwnerDocKey,
   startCaixaOwnerAnalysis,
 } from './processes.caixa-owner.service'
+import { deriveProcessState } from './derive/derive'
+import { gatherFacts } from './derive/facts.gather'
 import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
@@ -500,6 +502,14 @@ type ChecklistResponseFile = {
   downloadUrl: string | null
 }
 
+// Provas alternativas do vinculo do imovel com a Caixa (grupo-OR): basta UMA.
+const VINCULO_IMOVEL_KEYS = new Set<string>([
+  'termo_entrega_recebimento_imovel',
+  'termo_quitacao',
+])
+
+type ChecklistOrGroup = { key: string; satisfied: boolean }
+
 function buildChecklistResponse(input: {
   checklistItems: Awaited<ReturnType<typeof listChecklistItems>>
   currentFiles: ChecklistFileRecord
@@ -578,30 +588,55 @@ function buildChecklistResponse(input: {
         number: documentDisplayNumberByKey.get(key) ?? null,
         scope,
       },
+      // Grupo-OR (vinculo do imovel): preenchido apos a contagem (abaixo).
+      orGroup: null as ChecklistOrGroup | null,
       currentFiles,
     }
   })
 
-  // Itens de conjunto sem conjunto vinculado nao contam como obrigatorios (nao ha
-  // como anexar) — ficam visiveis/pendentes com aviso, mas nao travam a completude.
-  const requiredItems = items.filter(
-    (item) =>
-      item.documentType.isRequired &&
-      !(item.scope === 'housing_complex' && !item.housingComplexLinked),
-  )
-  const requiredCompleted = requiredItems.filter((item) =>
+  const isPresent = (item: (typeof items)[number]) =>
     getChecklistPresenceStatus({
       currentFileCount: item.currentFiles.length,
       status: item.status,
-    }),
-  ).length
+    })
+
+  // Vinculo do imovel com a Caixa: GRUPO-OR. termo_entrega OU termo_quitacao
+  // satisfaz UM unico slot obrigatorio (provas alternativas — ver
+  // processes.documents.ts). Conta-se como 1 obrigatorio a parte (nao por item),
+  // satisfeito se qualquer uma das provas estiver presente.
+  const vinculoItems = items.filter((item) =>
+    VINCULO_IMOVEL_KEYS.has(item.documentType.key),
+  )
+  const vinculoSatisfied = vinculoItems.some(isPresent)
+
+  // Marca os itens do grupo-OR para a UI exibir como alternativos ("anexe um dos
+  // dois"): obrigatorio enquanto NENHUM presente; nao-bloqueante quando o irmao
+  // satisfaz. Mantem o badge coerente com summary.requiredPending.
+  for (const item of vinculoItems) {
+    item.orGroup = { key: 'vinculo_imovel', satisfied: vinculoSatisfied }
+  }
+
+  // Itens de conjunto sem conjunto vinculado nao contam como obrigatorios (nao ha
+  // como anexar) — ficam visiveis/pendentes com aviso, mas nao travam a completude.
+  // O vinculo do imovel sai da contagem por-item (entra como 1 slot-OR abaixo).
+  const requiredItems = items.filter(
+    (item) =>
+      item.documentType.isRequired &&
+      !VINCULO_IMOVEL_KEYS.has(item.documentType.key) &&
+      !(item.scope === 'housing_complex' && !item.housingComplexLinked),
+  )
+  const requiredCompletedItems = requiredItems.filter(isPresent).length
+
+  // + 1 obrigatorio (slot-OR do vinculo); + 1 completo se satisfeito.
+  const requiredTotal = requiredItems.length + 1
+  const requiredCompleted = requiredCompletedItems + (vinculoSatisfied ? 1 : 0)
 
   return {
     items,
     summary: {
       requiredCompleted,
-      requiredPending: requiredItems.length - requiredCompleted,
-      requiredTotal: requiredItems.length,
+      requiredPending: requiredTotal - requiredCompleted,
+      requiredTotal,
       totalItems: items.length,
       // O vinculo do conjunto e pre-requisito de completude: um processo nao pode
       // ficar "documentacao pronta" sem conjunto (os docs de escopo de conjunto sao
@@ -1030,48 +1065,64 @@ export async function syncProcessStatusAfterChecklistChange(input: {
     ? 'EM_DOCUMENTACAO'
     : 'CADASTRADO'
 
-  // Auto-avanco para DOCUMENTACAO_PRONTA quando a documentacao obrigatoria esta
-  // completa. O BACKEND e dono deste avanco — dispara para QUALQUER origem
-  // (digitalizacao por worker, anexo de doc de conjunto, upload humano), sem
-  // depender do frontend. So a partir de EM_DOCUMENTACAO (predecessor legal):
-  // CADASTRADO sem docs nunca tem requiredPending===0 com hasIndividualDocs.
+  // v3 — gates do derive (alem da completude do checklist). O checklist segue a
+  // FONTE da completude documental (todos os obrigatorios atuais). O derive
+  // adiciona:
+  //  - readiness: nao DECIDE com um job exigido em voo (input-complete). Hold,
+  //    nao reverte (anti-flapping) — quando o fato assenta, o reconcile re-dispara.
+  //  - reviewFlags: bloqueia/reverte PRONTA por validacao de negocio (ex.: data de
+  //    assinatura do contrato de compra e venda fora do prazo legal). reviewFlags
+  //    so e nao-vazio com fatos 'ready', entao reverter por ele nao causa flapping.
+  // Best-effort: se a derivacao falhar, mantem o comportamento antigo (so checklist).
+  let reviewBlocked = false
+  let readinessPending = false
+  try {
+    const facts = await gatherFacts(input.processId)
+    if (facts) {
+      const derived = deriveProcessState(facts)
+      reviewBlocked = derived.reviewFlags.length > 0
+      readinessPending = derived.readiness === 'pending'
+    }
+  } catch (error) {
+    console.error('sync status: falha ao derivar gates (segue so checklist)', {
+      processId: input.processId,
+      error: String(error),
+    })
+  }
+
+  // Completude documental IGNORANDO readiness: todos os obrigatorios anexados +
+  // conjunto vinculado + sem reviewFlag bloqueante. Governa o HOLD do PRONTA — um
+  // job transitorio (readiness pending) NAO derruba um PRONTA ja completo.
+  const completeIgnoringReadiness =
+    checklist.summary.requiredPending === 0 &&
+    currentProcess.housingComplexId !== null &&
+    !reviewBlocked
+
+  // Para AVANCAR (EM_DOC -> PRONTA) tambem exige nenhum job exigido em voo: nao
+  // decide PRONTA antes da extracao/classificacao assentar (input-complete).
+  const canAdvanceToReady = completeIgnoringReadiness && !readinessPending
+
+  // Auto-avanco para DOCUMENTACAO_PRONTA. O BACKEND e dono deste avanco — dispara
+  // para QUALQUER origem (digitalizacao por worker, anexo de doc de conjunto, upload
+  // humano), sem depender do frontend. So a partir de EM_DOCUMENTACAO (predecessor
+  // legal): CADASTRADO sem docs nunca tem requiredPending===0 com hasIndividualDocs.
   //
   // PRE-REQUISITO: conjunto VINCULADO. Sem conjunto, os docs de escopo de conjunto
-  // sao excluidos dos obrigatorios (nao ha onde anexar) — entao requiredPending
-  // pode chegar a 0 sem eles. Travar o avanco aqui impede que um processo sem
-  // conjunto fique "pronto" pulando docs obrigatorios da peticao. O caso fica em
-  // EM_DOCUMENTACAO aguardando o vinculo (procuracao no import, ou humano no edge).
-  //
-  // So avanca a partir do status ATUAL EM_DOCUMENTACAO (predecessor legal de
-  // DOCUMENTACAO_PRONTA). Chavear no currentProcess.status — NAO no targetStatus
-  // computado — evita salto ilegal (ex.: CADASTRADO->PRONTA) ao gravar via raw
-  // update sem passar pela tabela de transicoes. Um CADASTRADO completo vai antes
-  // para EM_DOCUMENTACAO e so entao, no proximo reconcile, para PRONTA.
-  if (
-    currentProcess.status === 'EM_DOCUMENTACAO' &&
-    checklist.summary.requiredPending === 0 &&
-    currentProcess.housingComplexId !== null
-  ) {
+  // sao excluidos dos obrigatorios (nao ha onde anexar) — entao requiredPending pode
+  // chegar a 0 sem eles. Travar o avanco aqui impede um processo sem conjunto ficar
+  // "pronto" pulando docs obrigatorios da peticao.
+  if (currentProcess.status === 'EM_DOCUMENTACAO' && canAdvanceToReady) {
     targetStatus = 'DOCUMENTACAO_PRONTA'
   }
 
-  // Sai de DOCUMENTACAO_PRONTA se a documentacao voltou a ficar pendente OU se o
-  // conjunto deixou de estar vinculado (pre-requisito): reverte para EM_DOCUMENTACAO.
-  if (
-    currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
-    (checklist.summary.requiredPending > 0 ||
-      currentProcess.housingComplexId === null)
-  ) {
-    targetStatus = 'EM_DOCUMENTACAO'
-  }
-
-  // Ja PRONTA, completo E com conjunto vinculado: sem mudanca.
-  if (
-    currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
-    checklist.summary.requiredPending === 0 &&
-    currentProcess.housingComplexId !== null
-  ) {
-    return currentProcess
+  // Ja em DOCUMENTACAO_PRONTA: mantem se ainda completo (ignorando readiness —
+  // anti-flapping); reverte para EM_DOCUMENTACAO so quando a completude 'ready'
+  // quebra (faltou doc obrigatorio, conjunto desvinculado, ou reviewFlag de negocio
+  // como a data do contrato de compra e venda fora do prazo).
+  if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+    targetStatus = completeIgnoringReadiness
+      ? 'DOCUMENTACAO_PRONTA'
+      : 'EM_DOCUMENTACAO'
   }
 
   // If already at the right status, no change
