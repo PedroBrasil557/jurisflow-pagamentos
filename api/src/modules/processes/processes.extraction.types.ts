@@ -79,6 +79,13 @@ export interface RawExtraction {
   outorgantes?: RawPerson[]
   // Partes + data do CONTRATO DE COMPRA E VENDA particular.
   compraVenda?: RawCompraVenda
+  // Compradores do TERMO da Caixa, em ordem ([0]=titular do termo, [1]=co-comprador).
+  // Alimenta o fato termoCompradores (v3) — absorve a antiga analise caixa-owner.
+  termoCompradores?: RawPerson[]
+  // Endereco do OUTORGANTE na procuracao (texto completo + cidade), para casar o
+  // conjunto habitacional. Absorve a antiga analise procuracao-conjunto.
+  procuracaoEndereco?: string
+  procuracaoCidade?: string
   camposNaoEncontrados?: string[]
   paginas?: RawPageClassification[]
 }
@@ -136,6 +143,9 @@ export interface ExtractionMeta {
   // Extracao por papel (v3) — alimenta os fatos da derivacao via auditoria.
   outorgantes?: RawPerson[]
   compraVenda?: RawCompraVenda
+  termoCompradores?: RawPerson[]
+  procuracaoEndereco?: string
+  procuracaoCidade?: string
 }
 
 // Resultado normalizado + metadados da chamada, devolvido por

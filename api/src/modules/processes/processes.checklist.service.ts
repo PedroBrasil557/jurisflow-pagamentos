@@ -22,16 +22,12 @@ import {
   assertProcessAction,
 } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
+import { deriveProcessState } from './derive/derive'
+import { gatherFacts } from './derive/facts.gather'
 import {
   getProcessContextOrThrow,
   getProcessRecordOrThrow,
 } from './processes.access'
-import {
-  isCaixaOwnerDocKey,
-  startCaixaOwnerAnalysis,
-} from './processes.caixa-owner.service'
-import { deriveProcessState } from './derive/derive'
-import { gatherFacts } from './derive/facts.gather'
 import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
@@ -42,9 +38,9 @@ import {
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
 import {
-  isProcuracaoDocKey,
-  startProcuracaoConjuntoAnalysis,
-} from './processes.procuracao-conjunto.service'
+  isReextractDocKey,
+  reextractDocAndReconcile,
+} from './processes.reextract.service'
 import {
   process,
   processDocument,
@@ -986,17 +982,14 @@ export async function attachSystemChecklistFile(input: {
     didUploadFile = result.didUploadFile
   })
 
-  if (didUploadFile && isCaixaOwnerDocKey(input.documentTypeKey)) {
-    // Fire-and-forget: nunca deixar a Promise rejeitar sem tratamento (o claim
-    // faz I/O no banco) — uma rejeicao nao capturada vira unhandledRejection.
-    startCaixaOwnerAnalysis({
+  if (didUploadFile && isReextractDocKey(input.documentTypeKey)) {
+    // Re-extracao por papel (UMA chamada de IA) + reconciliacao, em background. O
+    // doc chegou avulso (anexo de sistema/RPA), sem passar pela extracao do lote —
+    // entao extraimos aqui para alimentar os fatos (termoCompradores/conjunto).
+    void reextractDocAndReconcile({
       processId: input.processId,
+      documentTypeKey: input.documentTypeKey,
       triggeredByUserId: null,
-    }).catch((error) => {
-      console.error(
-        '[caixa-owner] falha ao disparar analise (anexo de sistema):',
-        error,
-      )
     })
   }
 
@@ -1375,27 +1368,15 @@ export async function submitProcessChecklistItem(input: {
     actor: input.actor,
   })
 
-  // Gatilho automatico: ao anexar/substituir um termo da Caixa, dispara a
-  // analise do titular do contrato em background (nao bloqueia a resposta).
-  if (didUploadFile && isCaixaOwnerDocKey(checklistItem.documentType.key)) {
-    // Fire-and-forget protegido: rejeicao do claim/dispatch nao pode escapar
-    // como unhandledRejection (nao ha handler global).
-    startCaixaOwnerAnalysis({
+  // Gatilho automatico: ao anexar/substituir um termo da Caixa OU a procuracao
+  // (upload manual, fora do lote), re-extrai por papel (UMA chamada de IA, que ja
+  // traz termoCompradores + endereco) e reconcilia, em background — nao bloqueia a
+  // resposta. Substitui as antigas analises caixa-owner e procuracao-conjunto.
+  if (didUploadFile && isReextractDocKey(checklistItem.documentType.key)) {
+    void reextractDocAndReconcile({
       processId: input.processId,
+      documentTypeKey: checklistItem.documentType.key,
       triggeredByUserId: input.actor.id,
-    }).catch((error) => {
-      console.error('[caixa-owner] falha ao disparar analise:', error)
-    })
-  }
-
-  // Gatilho automatico: ao anexar a procuracao, dispara a analise do conjunto
-  // (a partir do endereco do outorgante) em background.
-  if (didUploadFile && isProcuracaoDocKey(checklistItem.documentType.key)) {
-    startProcuracaoConjuntoAnalysis({
-      processId: input.processId,
-      triggeredByUserId: input.actor.id,
-    }).catch((error) => {
-      console.error('[procuracao-conjunto] falha ao disparar analise:', error)
     })
   }
 

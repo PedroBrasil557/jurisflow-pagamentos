@@ -74,6 +74,9 @@ const rawExtractionSchema = z.object({
     })
     .optional()
     .catch(undefined),
+  termoCompradores: z.array(rawPersonSchema).optional().catch(undefined),
+  procuracaoEndereco: optionalString,
+  procuracaoCidade: optionalString,
   camposNaoEncontrados: z.array(z.string()).optional().catch(undefined),
   paginas: z
     .array(
@@ -123,6 +126,10 @@ Tarefa 3 — CONJUGE: examine o termo de entrega/recebimento do imovel (Caixa). 
 Tarefa 4 — OUTORGANTES: da PROCURACAO, extraia em "outorgantes" os dados pessoais (nome, cpf, rg, nascimento) de CADA outorgante (o(s) cliente(s) que outorga(m) poderes ao advogado). Sao o(s) titular(es) do processo.
 
 Tarefa 5 — COMPRA E VENDA: SE houver "contrato_compra_venda", extraia em "compraVenda": os "vendedores" (dados pessoais), os "compradores" (dados pessoais) e a "dataAssinatura" (ISO yyyy-mm-dd) do contrato. Se nao houver contrato de compra e venda, NAO inclua "compraVenda".
+
+Tarefa 6 — COMPRADORES DO TERMO DA CAIXA: SE houver "termo_entrega_recebimento_imovel" ou "termo_quitacao", extraia em "termoCompradores" a lista dos compradores/beneficiarios do contrato habitacional, EM ORDEM: o primeiro item e o TITULAR do contrato (comprador/beneficiario principal), o segundo (se houver) e o CONJUGE/co-comprador. De cada um, registre nome, cpf, rg e nascimento (ISO yyyy-mm-dd) EXATAMENTE como aparecem. Registre apenas o que estiver LITERALMENTE escrito; nao invente nem deduza. Estes sao os compradores PELA Caixa (a parte vendedora e a FAR/Caixa — NAO a inclua). Se nao houver termo, NAO inclua "termoCompradores".
+
+Tarefa 7 — ENDERECO DA PROCURACAO: SE houver "procuracao_advogado", extraia em "procuracaoEndereco" o endereco de residencia do OUTORGANTE (o cliente que concede a procuracao, NUNCA o advogado/outorgado), COMPLETO e EXATAMENTE como escrito, INCLUINDO o nome do residencial/conjunto/condominio se mencionado; e em "procuracaoCidade" a cidade desse endereco. Se nao houver procuracao ou o endereco nao aparecer, NAO inclua esses campos.
 
 Regras: NUNCA invente dados; se um campo nao estiver legivel, deixe-o de fora e liste em camposNaoEncontrados. Datas sempre em ISO yyyy-mm-dd. Atencao ao modelo novo de RG, onde o numero do topo pode ser o proprio CPF (o RG verdadeiro vem em outra linha). Classifique TODAS as paginas, sem pular nenhuma. Sempre chame a ferramenta registrar_titular.`
 
@@ -240,6 +247,30 @@ const extractionTool: Anthropic.Tool = {
           },
         },
         additionalProperties: false,
+      },
+      termoCompradores: {
+        type: 'array',
+        description:
+          'Compradores do TERMO da Caixa (entrega/quitacao), EM ORDEM: [0]=titular do contrato, [1]=conjuge/co-comprador. NAO inclua a parte vendedora (FAR/Caixa).',
+        items: {
+          type: 'object',
+          properties: {
+            nome: { type: 'string' },
+            cpf: { type: 'string' },
+            rg: { type: 'string' },
+            nascimento: { type: 'string', description: 'ISO yyyy-mm-dd' },
+          },
+          additionalProperties: false,
+        },
+      },
+      procuracaoEndereco: {
+        type: 'string',
+        description:
+          'Endereco de residencia do OUTORGANTE na procuracao, COMPLETO e como escrito, incluindo o residencial/conjunto/condominio se mencionado. NUNCA o endereco do advogado.',
+      },
+      procuracaoCidade: {
+        type: 'string',
+        description: 'Cidade do endereco do outorgante na procuracao.',
       },
       camposNaoEncontrados: {
         type: 'array',

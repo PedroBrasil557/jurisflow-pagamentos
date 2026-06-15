@@ -1,6 +1,12 @@
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../../../shared/db'
 import { aiAnalysis } from '../../ai-analysis/ai-analysis.schema'
+import { housingComplex } from '../../housing-complexes/housing-complexes.schema'
+import { compareCaixaOwner } from '../processes.caixa-owner.compare'
+import {
+  type ConjuntoMatchResult,
+  matchConjuntoInAddress,
+} from '../processes.procuracao-conjunto.compare'
 import {
   process,
   processBatchFile,
@@ -17,7 +23,6 @@ import type { CompraVenda, Fact, Person, ProcessFacts } from './facts.types'
 const ready = <T>(value: T): Fact<T> => ({ state: 'ready', value })
 const absent = <T>(): Fact<T> => ({ state: 'absent' })
 const pending = <T>(): Fact<T> => ({ state: 'pending' })
-const failed = <T>(): Fact<T> => ({ state: 'failed' })
 
 type RawP = { nome?: string; cpf?: string; rg?: string; nascimento?: string }
 type DocOutput = {
@@ -28,6 +33,9 @@ type DocOutput = {
     compradores?: RawP[]
     dataAssinatura?: string
   }
+  termoCompradores?: RawP[]
+  procuracaoEndereco?: string
+  procuracaoCidade?: string
 }
 type Decision = {
   attached?: Array<{ documentTypeKey: string }>
@@ -78,7 +86,7 @@ export async function gatherFacts(
     return null
   }
 
-  const [batchFiles, docExtractions, caixaAudits, checklist] =
+  const [batchFiles, docExtractions, caixaAudits, checklist, conjuntos] =
     await Promise.all([
       db
         .select({ splitStatus: processBatchFile.splitStatus })
@@ -124,6 +132,14 @@ export async function gatherFacts(
           ),
         )
         .where(eq(processDocument.processId, processId)),
+      // Conjuntos cadastrados — para casar o endereco da procuracao (match puro).
+      db
+        .select({
+          id: housingComplex.id,
+          name: housingComplex.name,
+          city: housingComplex.city,
+        })
+        .from(housingComplex),
     ])
 
   // ── attachedTypes + hasOkWithoutFile ──
@@ -173,14 +189,58 @@ export async function gatherFacts(
       ])
     : absent()
 
-  // ── termoCompradores (do caixa_owner audit) ──
-  const termoClassified = classifiedSet.has(DOC.termoEntrega)
+  // ── compraVenda / outorgantes / termoCompradores / endereco: por papel ──
+  // Le do audit document_extraction mais recente que contenha cada campo. NAO
+  // bloqueia o ownerType (leitura suave).
+  let rawCompraVenda: DocOutput['compraVenda']
+  let rawOutorgantes: RawP[] | undefined
+  let rawProcuracaoEndereco: string | undefined
+  let rawProcuracaoCidade: string | undefined
+  // termoCompradores e UNIAO entre audits: os compradores podem estar espalhados em
+  // docs diferentes (termo_entrega tem o CPF; a declaracao de quitacao pode so ter o
+  // nome). Dedup por nome normalizado, ELEVANDO a versao que tem CPF — reproduz o
+  // comportamento da antiga analise caixa-owner, que lia todos os termos juntos.
+  const termoMerged: RawP[] = []
+  for (const a of docExtractions) {
+    const out = (a.output ?? {}) as DocOutput
+    if (!rawCompraVenda && out.compraVenda) rawCompraVenda = out.compraVenda
+    if (!rawOutorgantes && out.outorgantes?.length) {
+      rawOutorgantes = out.outorgantes
+    }
+    if (!rawProcuracaoEndereco && out.procuracaoEndereco) {
+      rawProcuracaoEndereco = out.procuracaoEndereco
+      rawProcuracaoCidade = out.procuracaoCidade
+    }
+    for (const t of out.termoCompradores ?? []) {
+      if (!t.nome) continue
+      const key = t.nome.trim().toUpperCase()
+      const idx = termoMerged.findIndex(
+        (x) => (x.nome ?? '').trim().toUpperCase() === key,
+      )
+      if (idx === -1) {
+        termoMerged.push(t)
+      } else if (!termoMerged[idx].cpf && t.cpf) {
+        termoMerged[idx] = t // upgrade: prioriza a versao com CPF
+      }
+    }
+  }
+  const rawTermoCompradores = termoMerged.length ? termoMerged : undefined
+
+  // ── termoCompradores ── FONTE PRIMARIA: document_extraction (v3, extracao por
+  // papel). Fallback: audit caixa_owner legado (dupla fonte na transicao). Ciclo de
+  // vida chaveado por inFlightSplit (NAO mais por caixaAnalysisStatus, que virou
+  // estado de exibicao derivado). [0]=titular do termo, [1]=co-comprador.
+  const termoClassified =
+    classifiedSet.has(DOC.termoEntrega) || classifiedSet.has(DOC.termoQuitacao)
   const caixaOut = (caixaAudits[0]?.output ?? null) as CaixaByDoc | null
   let termoCompradores: Fact<Person[]>
-  if (proc.caixaAnalysisStatus === 'processing') {
+  if (rawTermoCompradores?.length) {
+    const compradores = toPersons(rawTermoCompradores)
+    termoCompradores = compradores.length ? ready(compradores) : absent()
+  } else if (proc.caixaAnalysisStatus === 'processing') {
+    // TRANSICAO (remover na Fase 4): enquanto a analise caixa-owner ainda roda,
+    // 'processing' = job em voo -> nao concluir com o caixa_owner ainda incompleto.
     termoCompradores = pending()
-  } else if (proc.caixaAnalysisStatus === 'error') {
-    termoCompradores = failed()
   } else if (caixaOut?.byDoc?.length) {
     const compradores: Person[] = []
     const seen = new Set<string>()
@@ -195,22 +255,10 @@ export async function gatherFacts(
       }
     }
     termoCompradores = compradores.length ? ready(compradores) : absent()
+  } else if (inFlightSplit) {
+    termoCompradores = pending()
   } else {
     termoCompradores = termoClassified ? pending() : absent()
-  }
-
-  // ── compraVenda / outorgantes: extracao por papel (Fase 3) ──
-  // Le do audit document_extraction mais recente que contenha o campo. 'pending'
-  // quando o doc foi classificado mas ainda nao extraido (ex.: audit antigo);
-  // 'absent' quando nem ha o documento. NAO bloqueia o ownerType (leitura suave).
-  let rawCompraVenda: DocOutput['compraVenda']
-  let rawOutorgantes: RawP[] | undefined
-  for (const a of docExtractions) {
-    const out = (a.output ?? {}) as DocOutput
-    if (!rawCompraVenda && out.compraVenda) rawCompraVenda = out.compraVenda
-    if (!rawOutorgantes && out.outorgantes?.length) {
-      rawOutorgantes = out.outorgantes
-    }
   }
 
   const compraVenda: Fact<CompraVenda> = rawCompraVenda
@@ -229,6 +277,37 @@ export async function gatherFacts(
       ? pending()
       : absent()
 
+  // ── conjuntoMatch ── casa o endereco da procuracao com o cadastro (match PURO,
+  // deterministico). So confia no endereco se o OUTORGANTE for o titular do processo
+  // (gate reaproveitado do antigo procuracao-conjunto). O auto-apply fica no reconcile.
+  const outorgantesPersons = rawOutorgantes ? toPersons(rawOutorgantes) : []
+  const ownerConfirmed =
+    !!proc.cpf?.trim() && outorgantesPersons.length > 0
+      ? compareCaixaOwner(
+          outorgantesPersons.map((p) => ({ nome: p.nome, cpf: p.cpf })),
+          { fullName: proc.fullName, cpf: proc.cpf },
+        ).result === 'titular'
+      : false
+
+  let conjuntoMatch: Fact<ConjuntoMatchResult>
+  if (rawProcuracaoEndereco) {
+    conjuntoMatch = ready(
+      ownerConfirmed
+        ? matchConjuntoInAddress(
+            {
+              addressText: rawProcuracaoEndereco,
+              addressCity: rawProcuracaoCidade,
+            },
+            conjuntos,
+          )
+        : { result: 'review', matchedBy: 'none' },
+    )
+  } else if (classifiedSet.has(DOC.procuracao)) {
+    conjuntoMatch = pending()
+  } else {
+    conjuntoMatch = absent()
+  }
+
   return {
     classifiedTypes,
     attachedTypes,
@@ -238,6 +317,7 @@ export async function gatherFacts(
     termoCompradores,
     compraVenda,
     housingComplexLinked: proc.housingComplexId !== null,
+    conjuntoMatch,
     currentStatus: proc.status,
   }
 }

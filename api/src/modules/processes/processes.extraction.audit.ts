@@ -4,7 +4,7 @@ import type { ExtractionMeta } from './processes.extraction.types'
 // Versao do prompt/contrato de classificacao. Subir quando a Tarefa 2 do SYSTEM
 // (tipos de documento) mudar de forma relevante — permite comparar decisoes
 // entre versoes na auditoria.
-export const DOCUMENT_EXTRACTION_PROMPT_VERSION = 'document_extraction@2'
+export const DOCUMENT_EXTRACTION_PROMPT_VERSION = 'document_extraction@3'
 
 // Desfecho do anexo (subconjunto do retorno de importDocumentBundle) — a DECISAO
 // deterministica derivada da classificacao: o que foi anexado e o que foi pulado.
@@ -49,6 +49,9 @@ export async function recordDocumentExtractionAudit(input: {
         paginas: input.meta.paginas,
         outorgantes: input.meta.outorgantes,
         compraVenda: input.meta.compraVenda,
+        termoCompradores: input.meta.termoCompradores,
+        procuracaoEndereco: input.meta.procuracaoEndereco,
+        procuracaoCidade: input.meta.procuracaoCidade,
       },
       // Decisao deterministica: o que o desmembramento anexou x pulou.
       decision: {

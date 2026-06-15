@@ -42,7 +42,6 @@ import {
   startScanIngestion,
   uploadBatchFiles,
 } from './processes.batch.service'
-import { startCaixaOwnerAnalysis } from './processes.caixa-owner.service'
 import {
   deleteChecklistFile,
   downloadAllChecklistFiles,
@@ -56,7 +55,10 @@ import {
   generateProcessPdf,
   listProcessPdfModels,
 } from './processes.pdf.service'
-import { startProcuracaoConjuntoAnalysis } from './processes.procuracao-conjunto.service'
+import {
+  reanalyzeCaixaOwner,
+  reanalyzeProcuracaoConjunto,
+} from './processes.reextract.service'
 import {
   cancelProcessPayloadSchema,
   completeImportBodySchema,
@@ -852,7 +854,7 @@ export const processRoutes = new Hono<AppBindings>()
         // Acao com custo (IA): exige a permissao de gerir documentacao, nao so
         // visibilidade do processo.
         assertCan(perms, 'uploadChecklist')
-        const result = await startCaixaOwnerAnalysis({
+        const result = await reanalyzeCaixaOwner({
           processId,
           triggeredByUserId: currentUser.id,
         })
@@ -872,7 +874,7 @@ export const processRoutes = new Hono<AppBindings>()
         const { processId } = c.req.valid('param')
         await getProcessById(processId, currentUser.id, perms)
         assertCan(perms, 'uploadChecklist')
-        const result = await startProcuracaoConjuntoAnalysis({
+        const result = await reanalyzeProcuracaoConjunto({
           processId,
           triggeredByUserId: currentUser.id,
         })

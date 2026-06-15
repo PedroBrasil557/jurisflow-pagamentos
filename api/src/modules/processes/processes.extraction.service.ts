@@ -81,6 +81,9 @@ export async function extractDocumentsFromFiles(
       paginas: raw.paginas ?? [],
       outorgantes: raw.outorgantes,
       compraVenda: raw.compraVenda,
+      termoCompradores: raw.termoCompradores,
+      procuracaoEndereco: raw.procuracaoEndereco,
+      procuracaoCidade: raw.procuracaoCidade,
     },
   }
 }

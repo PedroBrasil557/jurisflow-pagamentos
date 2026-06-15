@@ -4,8 +4,12 @@ import {
   type RecordAiAnalysisInput,
   recordAiAnalysis,
 } from '../../ai-analysis/ai-analysis.service'
-import { getCaixaOwnerAutoApply } from '../../settings/settings.service'
+import {
+  getCaixaOwnerAutoApply,
+  getProcuracaoConjuntoAutoApply,
+} from '../../settings/settings.service'
 import { createProcessHistoryEntry } from '../processes.history.service'
+import { decideProcuracaoConjuntoOutcome } from '../processes.procuracao-conjunto.compare'
 import { process } from '../processes.schema'
 import { deriveProcessState } from './derive'
 import { gatherFacts } from './facts.gather'
@@ -64,6 +68,12 @@ function factsSnapshot(f: ProcessFacts) {
     },
     outorgantes: { state: f.outorgantes.state, value: persons(f.outorgantes) },
     housingComplexLinked: f.housingComplexLinked,
+    conjuntoMatch: {
+      state: f.conjuntoMatch.state,
+      result: f.conjuntoMatch.value?.result,
+      conjunto: f.conjuntoMatch.value?.conjunto?.name,
+      matchedBy: f.conjuntoMatch.value?.matchedBy,
+    },
     currentStatus: f.currentStatus,
   }
 }
@@ -189,6 +199,8 @@ export async function reconcileOwnerType(input: {
       .select({
         ownerType: process.ownerType,
         ownerTypeSource: process.ownerTypeSource,
+        housingComplex: process.housingComplex,
+        housingComplexSource: process.housingComplexSource,
       })
       .from(process)
       .where(eq(process.id, processId))
@@ -230,8 +242,17 @@ export async function reconcileOwnerType(input: {
         .where(eq(process.id, processId))
     }
 
-    // Status: motor existente (fiel) — le o ownerType atualizado para a ativacao
-    // condicional. Import dinamico para evitar ciclo com checklist.service.
+    // ── Conjunto habitacional (absorve a antiga analise procuracao-conjunto) ──
+    // Decide/aplica a partir do fato conjuntoMatch (match puro feito em gatherFacts),
+    // gated por flag + human-lock. ANTES do reconcileProcessStatus: vincular o
+    // conjunto muda os docs de escopo de conjunto (herdados) e e pre-requisito de PRONTA.
+    await applyConjuntoMatch(processId, r.facts.conjuntoMatch, {
+      housingComplex: proc.housingComplex,
+      housingComplexSource: proc.housingComplexSource,
+    })
+
+    // Status: motor existente (fiel) — le o ownerType/conjunto atualizados para a
+    // ativacao condicional. Import dinamico para evitar ciclo com checklist.service.
     const { reconcileProcessStatus } = await import(
       '../processes.checklist.service'
     )
@@ -244,4 +265,63 @@ export async function reconcileOwnerType(input: {
       error: String(error),
     })
   }
+}
+
+// Aplica o conjunto habitacional sugerido pelo endereco da procuracao (fato
+// conjuntoMatch). PURA exceto o write: reusa decideProcuracaoConjuntoOutcome (flag +
+// human-lock). So escreve a coluna procuracaoConjuntoStatus quando ha um match
+// CONCLUIDO ('ready'); pending/absent nao mexem (card fica 'idle'). Best-effort.
+async function applyConjuntoMatch(
+  processId: string,
+  conjuntoMatch: ProcessFacts['conjuntoMatch'],
+  proc: { housingComplex: string; housingComplexSource: string },
+): Promise<void> {
+  if (conjuntoMatch.state !== 'ready' || !conjuntoMatch.value) {
+    return
+  }
+  const autoApply = await getProcuracaoConjuntoAutoApply()
+  const outcome = decideProcuracaoConjuntoOutcome({
+    matchResult: conjuntoMatch.value,
+    currentHousingComplex: proc.housingComplex,
+    housingComplexSource: proc.housingComplexSource,
+    autoApplyEnabled: autoApply,
+  })
+
+  await db.transaction(async (tx) => {
+    if (outcome.apply && outcome.newHousingComplex) {
+      await tx
+        .update(process)
+        .set({
+          housingComplex: outcome.newHousingComplex,
+          housingComplexId: conjuntoMatch.value?.conjunto?.id ?? null,
+          housingComplexSource: 'system',
+          procuracaoConjuntoStatus: outcome.analysisStatus,
+        })
+        .where(eq(process.id, processId))
+    } else {
+      await tx
+        .update(process)
+        .set({ procuracaoConjuntoStatus: outcome.analysisStatus })
+        .where(eq(process.id, processId))
+    }
+
+    if (outcome.historyEvent) {
+      await createProcessHistoryEntry({
+        processId,
+        actorUserId: SYSTEM_ACTOR_ID,
+        eventType: outcome.historyEvent,
+        notes: outcome.apply
+          ? 'Conjunto preenchido automaticamente a partir da procuracao.'
+          : outcome.divergence
+            ? 'A procuracao indica um conjunto diferente do informado — conferir.'
+            : 'A analise da procuracao precisa de revisao humana.',
+        metadata: {
+          fromHousingComplex: proc.housingComplex,
+          toHousingComplex: outcome.newHousingComplex ?? proc.housingComplex,
+          matchedBy: conjuntoMatch.value?.matchedBy,
+        },
+        executor: tx,
+      })
+    }
+  })
 }

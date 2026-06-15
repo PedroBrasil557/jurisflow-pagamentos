@@ -1,3 +1,4 @@
+import type { ConjuntoMatchResult } from '../processes.procuracao-conjunto.compare'
 import type { ProcessStatus } from '../processes.status'
 
 // ── Fato com CICLO DE VIDA (dataflow input-complete) ──────────────────────────
@@ -47,6 +48,10 @@ export type ProcessFacts = {
 
   // Pre-requisito de DOCUMENTACAO_PRONTA (job procuracao->conjunto).
   housingComplexLinked: boolean
+  // Conjunto habitacional sugerido pelo endereco da procuracao (match
+  // deterministico, ja gated por outorgante==titular em gatherFacts). O auto-apply
+  // e decidido no reconcile (flag + human-lock). 'absent' sem procuracao/endereco.
+  conjuntoMatch: Fact<ConjuntoMatchResult>
 
   // Status atual (sempre conhecido — nao e um fato com ciclo de vida).
   currentStatus: ProcessStatus

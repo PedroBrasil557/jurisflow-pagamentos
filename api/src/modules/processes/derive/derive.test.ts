@@ -28,6 +28,7 @@ function facts(overrides: Partial<ProcessFacts> = {}): ProcessFacts {
     termoCompradores: ready([titularA]),
     compraVenda: absent<CompraVenda>(),
     housingComplexLinked: true,
+    conjuntoMatch: absent(),
     currentStatus: 'EM_DOCUMENTACAO',
     ...overrides,
   }
