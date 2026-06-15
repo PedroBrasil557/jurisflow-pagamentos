@@ -69,6 +69,16 @@ export type RequiredDoc = {
   becauseOf: string // proveniencia: por que e exigido (rastreabilidade)
 }
 
+// Pendencia de revisao que BLOQUEIA o avanco para DOCUMENTACAO_PRONTA. Objeto (nao
+// string) para a UI exibir titulo + detalhe + ligar ao documento de origem (docKey).
+export type ReviewFlag = {
+  code: 'compra_venda_fora_do_prazo' | 'owner_type_ambiguo'
+  titulo: string
+  detalhe: string
+  // Documento do checklist relacionado (para o "eco" na linha). Sem docKey = so banner.
+  docKey?: string
+}
+
 // ── Saida da derivacao (tudo coerente, do MESMO conjunto de fatos) ────────────
 export type Derived = {
   readiness: 'ready' | 'pending'
@@ -85,5 +95,5 @@ export type Derived = {
   requiredDocs: RequiredDoc[]
   status: ProcessStatus
   // Pendencias/validacoes que o usuario precisa resolver (bloqueiam PRONTA).
-  reviewFlags: string[]
+  reviewFlags: ReviewFlag[]
 }

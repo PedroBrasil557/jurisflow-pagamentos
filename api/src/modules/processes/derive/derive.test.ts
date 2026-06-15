@@ -203,7 +203,9 @@ describe('deriveProcessState — 2.2 ramo compra e venda', () => {
 
   test('data de assinatura <= 26/09/2023 -> reviewFlag + bloqueia PRONTA', () => {
     const d = deriveProcessState(compraVendaFacts('2023-09-26'))
-    expect(d.reviewFlags.join(' ')).toContain('fora do prazo')
+    expect(d.reviewFlags.map((f) => f.code)).toContain(
+      'compra_venda_fora_do_prazo',
+    )
     expect(d.status).toBe('EM_DOCUMENTACAO')
   })
 

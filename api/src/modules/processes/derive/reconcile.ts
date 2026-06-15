@@ -18,7 +18,13 @@ import { decideProcuracaoConjuntoOutcome } from '../processes.procuracao-conjunt
 import { process } from '../processes.schema'
 import { deriveProcessState } from './derive'
 import { gatherFacts } from './facts.gather'
-import type { Derived, Fact, Person, ProcessFacts } from './facts.types'
+import type {
+  Derived,
+  Fact,
+  Person,
+  ProcessFacts,
+  ReviewFlag,
+} from './facts.types'
 
 export const PROCESS_DERIVATION_VERSION = 'process_derivation@1'
 // Ator das acoes automaticas (usuario tecnico seedado na migracao).
@@ -33,7 +39,7 @@ export type Divergence = {
   statusDerived: string
   statusDiverged: boolean
   readiness: string
-  reviewFlags: string[]
+  reviewFlags: ReviewFlag[]
 }
 
 const persons = (f: Fact<Person[]>) =>

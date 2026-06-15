@@ -24,6 +24,7 @@ import {
 import type { ResolvedPermissions } from '../permissions/permissions.types'
 import { deriveProcessState } from './derive/derive'
 import { gatherFacts } from './derive/facts.gather'
+import type { ReviewFlag } from './derive/facts.types'
 import {
   getProcessContextOrThrow,
   getProcessRecordOrThrow,
@@ -1035,34 +1036,45 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   //  - reviewFlags: bloqueia/reverte PRONTA por validacao de negocio (ex.: data de
   //    assinatura do contrato de compra e venda fora do prazo legal). reviewFlags
   //    so e nao-vazio com fatos 'ready', entao reverter por ele nao causa flapping.
-  // Best-effort: se a derivacao falhar, mantem o comportamento antigo (so checklist).
+  // FAIL-CLOSED: se a derivacao dos gates falhar (ex.: hiccup no banco), NAO
+  // assume que esta liberado — segura (nao promove para PRONTA). gatesEvaluated=false
+  // bloqueia o avanco, mas NAO reverte um PRONTA existente (anti-flapping): um erro
+  // transitorio nao pode nem liberar um processo que viola a regra legal, nem
+  // derrubar um que ja estava ok. O proximo reconcile reavalia.
   let reviewBlocked = false
   let readinessPending = false
+  let gatesEvaluated = false
   try {
     const facts = await gatherFacts(input.processId)
     if (facts) {
       const derived = deriveProcessState(facts)
       reviewBlocked = derived.reviewFlags.length > 0
       readinessPending = derived.readiness === 'pending'
+      gatesEvaluated = true
+    } else {
+      gatesEvaluated = true // processo sem fatos -> nada a bloquear
     }
   } catch (error) {
-    console.error('sync status: falha ao derivar gates (segue so checklist)', {
+    console.error('sync status: falha ao derivar gates (FAIL-CLOSED: segura)', {
       processId: input.processId,
       error: String(error),
     })
   }
 
-  // Completude documental IGNORANDO readiness: todos os obrigatorios anexados +
-  // conjunto vinculado + sem reviewFlag bloqueante. Governa o HOLD do PRONTA — um
-  // job transitorio (readiness pending) NAO derruba um PRONTA ja completo.
-  const completeIgnoringReadiness =
+  // Completude documental (so checklist + conjunto — sempre conhecida).
+  const checklistComplete =
     checklist.summary.requiredPending === 0 &&
-    currentProcess.housingComplexId !== null &&
-    !reviewBlocked
+    currentProcess.housingComplexId !== null
 
-  // Para AVANCAR (EM_DOC -> PRONTA) tambem exige nenhum job exigido em voo: nao
-  // decide PRONTA antes da extracao/classificacao assentar (input-complete).
-  const canAdvanceToReady = completeIgnoringReadiness && !readinessPending
+  // AVANCAR para PRONTA exige: gates AVALIADOS (fail-closed) + completo + sem
+  // reviewFlag bloqueante + nenhum job exigido em voo (input-complete).
+  const canAdvanceToReady =
+    gatesEvaluated && checklistComplete && !reviewBlocked && !readinessPending
+
+  // PRONTA segue valido se ainda completo e SEM reviewFlag CONHECIDO. Se os gates
+  // nao foram avaliados, mantem (nao reverte por incerteza — anti-flapping).
+  const prontaStillValid =
+    checklistComplete && !(gatesEvaluated && reviewBlocked)
 
   // Auto-avanco para DOCUMENTACAO_PRONTA. O BACKEND e dono deste avanco — dispara
   // para QUALQUER origem (digitalizacao por worker, anexo de doc de conjunto, upload
@@ -1077,14 +1089,12 @@ export async function syncProcessStatusAfterChecklistChange(input: {
     targetStatus = 'DOCUMENTACAO_PRONTA'
   }
 
-  // Ja em DOCUMENTACAO_PRONTA: mantem se ainda completo (ignorando readiness —
-  // anti-flapping); reverte para EM_DOCUMENTACAO so quando a completude 'ready'
-  // quebra (faltou doc obrigatorio, conjunto desvinculado, ou reviewFlag de negocio
-  // como a data do contrato de compra e venda fora do prazo).
+  // Ja em DOCUMENTACAO_PRONTA: mantem se ainda valido (anti-flapping); reverte para
+  // EM_DOCUMENTACAO so quando a completude 'ready' quebra (faltou doc obrigatorio,
+  // conjunto desvinculado, ou reviewFlag CONHECIDO como a data do contrato fora do
+  // prazo). Gate nao avaliado -> mantem (nao reverte por incerteza).
   if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
-    targetStatus = completeIgnoringReadiness
-      ? 'DOCUMENTACAO_PRONTA'
-      : 'EM_DOCUMENTACAO'
+    targetStatus = prontaStillValid ? 'DOCUMENTACAO_PRONTA' : 'EM_DOCUMENTACAO'
   }
 
   // If already at the right status, no change
@@ -1198,7 +1208,24 @@ export async function getProcessChecklist(
     })
   assertCanAccessChecklist(perms, relationship)
 
-  return loadProcessChecklistData(currentProcess)
+  const checklist = await loadProcessChecklistData(currentProcess)
+
+  // Pendencias bloqueantes (reviewFlags) para o banner "para concluir, resolva".
+  // Derive ao vivo (fresco). Best-effort: na falha, banner vazio (nao quebra a tela).
+  let reviewFlags: ReviewFlag[] = []
+  try {
+    const facts = await gatherFacts(processId)
+    if (facts) {
+      reviewFlags = deriveProcessState(facts).reviewFlags
+    }
+  } catch (error) {
+    console.error('getProcessChecklist: falha ao derivar reviewFlags', {
+      processId,
+      error: String(error),
+    })
+  }
+
+  return { ...checklist, reviewFlags }
 }
 
 // Re-sincroniza o status de todos os processos de um conjunto. Chamado quando um

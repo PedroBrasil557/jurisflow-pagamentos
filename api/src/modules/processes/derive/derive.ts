@@ -3,7 +3,13 @@ import {
   compareCaixaOwner,
 } from '../processes.caixa-owner.compare'
 import type { ProcessStatus } from '../processes.status'
-import type { Derived, OwnerType, Person, ProcessFacts } from './facts.types'
+import type {
+  Derived,
+  OwnerType,
+  Person,
+  ProcessFacts,
+  ReviewFlag,
+} from './facts.types'
 
 // ── Tipos de documento (fonte da verdade das regras) ──────────────────────────
 export const DOC = {
@@ -233,26 +239,43 @@ function deriveRequiredDocs(
   return reqs
 }
 
+// Data ISO yyyy-mm-dd -> dd/mm/yyyy (para exibicao). Best-effort.
+function formatDateBr(iso: string): string {
+  const [y, m, d] = iso.split('-')
+  return y && m && d ? `${d}/${m}/${y}` : iso
+}
+
 // ── Validacoes -> reviewFlags (bloqueiam avanco para PRONTA) ──────────────────
 function deriveReviewFlags(
   facts: ProcessFacts,
   owner: Derived['ownerType'],
-): string[] {
-  const flags: string[] = []
+): ReviewFlag[] {
+  const flags: ReviewFlag[] = []
 
   // Data de assinatura da compra e venda: deve ser POSTERIOR a data minima.
   if (facts.compraVenda.state === 'ready') {
     const data = facts.compraVenda.value?.dataAssinatura
     if (data && data <= COMPRA_VENDA_DATA_MINIMA) {
-      flags.push(
-        `contrato de compra e venda assinado ate ${COMPRA_VENDA_DATA_MINIMA} — fora do prazo`,
-      )
+      flags.push({
+        code: 'compra_venda_fora_do_prazo',
+        titulo: 'Contrato de compra e venda fora do prazo legal',
+        detalhe: `Assinado em ${formatDateBr(data)} — precisa ser posterior a ${formatDateBr(
+          COMPRA_VENDA_DATA_MINIMA,
+        )} (Portaria MCID nº 1.248/2023).`,
+        docKey: DOC.compraVenda,
+      })
     }
   }
 
   // Indeterminado/revisao -> sinaliza para o humano.
   if (owner.origin === 'review') {
-    flags.push('tipo de proprietario ambiguo — revisar')
+    flags.push({
+      code: 'owner_type_ambiguo',
+      titulo: 'Tipo de proprietário ambíguo',
+      detalhe:
+        owner.reason ||
+        'Não foi possível confirmar se o titular consta no termo da Caixa.',
+    })
   }
 
   return flags
