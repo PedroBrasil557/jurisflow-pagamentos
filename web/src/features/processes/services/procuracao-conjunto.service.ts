@@ -22,7 +22,8 @@ export async function fetchProcuracaoAnalyses(
 ): Promise<ListAnalysesResponse> {
   const response = await aiAnalysesRoute.$get({
     param: { processId },
-    query: { kind: 'procuracao_conjunto', limit: '5' },
+    // v3: a decisao do conjunto vive na evidencia unica process_derivation.
+    query: { kind: 'process_derivation', limit: '5' },
   })
 
   if (!response.ok) {

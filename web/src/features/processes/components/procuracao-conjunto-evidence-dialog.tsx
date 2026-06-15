@@ -4,20 +4,19 @@ import { AppDialog } from '@/shared/components/app-dialog'
 import { StatusBadge } from '@/shared/components/status-badge'
 import { procuracaoAnalysisDetailOptions } from '../services/procuracao-conjunto.queries'
 
-type DecisionShape = {
-  result?: string
-  matchedBy?: string
-  conjunto?: string | null
-  apply?: boolean
-  divergence?: boolean
-}
 type Outorgante = { nome?: string | null; cpf?: string | null }
-type OutputShape = {
-  outorgantes?: Outorgante[]
-  endereco?: string | null
-  cidade?: string | null
-  trechoFonte?: string | null
-  ownerConfirmed?: boolean
+// Evidencia process_derivation (v3): o conjunto vem do fato conjuntoMatch.
+type ConjuntoMatchShape = {
+  state?: string
+  result?: string
+  conjunto?: string | null
+  matchedBy?: string
+}
+type InputShape = {
+  facts?: {
+    conjuntoMatch?: ConjuntoMatchShape
+    outorgantes?: { state?: string; value?: Outorgante[] }
+  }
 }
 
 type Props = {
@@ -35,9 +34,10 @@ export function ProcuracaoConjuntoEvidenceDialog({
     procuracaoAnalysisDetailOptions(processId, analysisId),
   )
   const analysis = detailQ.data?.analysis
-  const decision = (analysis?.decision ?? {}) as DecisionShape
-  const output = (analysis?.output ?? {}) as OutputShape
-  const outorgantes = output.outorgantes ?? []
+  const input = ((analysis as { input?: unknown })?.input ?? {}) as InputShape
+  const conjuntoMatch = input.facts?.conjuntoMatch
+  const outorgantes = input.facts?.outorgantes?.value ?? []
+  const isMatch = conjuntoMatch?.result === 'match'
 
   return (
     <AppDialog
@@ -45,7 +45,7 @@ export function ProcuracaoConjuntoEvidenceDialog({
       maxWidth="2xl"
       onClose={onClose}
       open
-      title="Evidencia da analise da procuracao"
+      title="Evidencia do conjunto (procuracao)"
       variant="info"
     >
       {detailQ.isLoading ? (
@@ -53,30 +53,15 @@ export function ProcuracaoConjuntoEvidenceDialog({
       ) : analysis ? (
         <div className="grid gap-4 text-sm">
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge
-              tone={
-                decision.divergence
-                  ? 'warning'
-                  : decision.result === 'match'
-                    ? 'success'
-                    : 'warning'
-              }
-            >
-              {decision.divergence
-                ? 'Divergencia'
-                : decision.result === 'match'
-                  ? 'Conjunto identificado'
-                  : 'Revisar'}
+            <StatusBadge tone={isMatch ? 'success' : 'warning'}>
+              {isMatch ? 'Conjunto identificado' : 'Em revisao'}
             </StatusBadge>
-            {decision.matchedBy && decision.matchedBy !== 'none' ? (
+            {conjuntoMatch?.matchedBy && conjuntoMatch.matchedBy !== 'none' ? (
               <span className="text-muted-foreground">
                 Casado por{' '}
-                {decision.matchedBy === 'name+city' ? 'nome + cidade' : 'nome'}
-              </span>
-            ) : null}
-            {output.ownerConfirmed === false ? (
-              <span className="text-amber-600">
-                Outorgante nao confere com o titular do processo
+                {conjuntoMatch.matchedBy === 'name+city'
+                  ? 'nome + cidade'
+                  : 'nome'}
               </span>
             ) : null}
           </div>
@@ -84,11 +69,9 @@ export function ProcuracaoConjuntoEvidenceDialog({
           <div className="rounded-lg border border-border p-3">
             <div className="grid grid-cols-[6rem_1fr] gap-2">
               <span className="text-muted-foreground">Conjunto:</span>
-              <span className="font-medium">{decision.conjunto || '—'}</span>
-              <span className="text-muted-foreground">Endereco:</span>
-              <span>{output.endereco || '—'}</span>
-              <span className="text-muted-foreground">Cidade:</span>
-              <span>{output.cidade || '—'}</span>
+              <span className="font-medium">
+                {conjuntoMatch?.conjunto || '—'}
+              </span>
             </div>
 
             {outorgantes.length > 0 ? (
@@ -107,17 +90,10 @@ export function ProcuracaoConjuntoEvidenceDialog({
                 ))}
               </div>
             ) : null}
-
-            {output.trechoFonte ? (
-              <p className="mt-3 border-t border-border pt-3 text-muted-foreground italic">
-                "{output.trechoFonte}"
-              </p>
-            ) : null}
           </div>
 
           <div className="text-muted-foreground text-xs">
-            Modelo: {analysis.model} · Tokens: {analysis.tokensInput ?? 0}{' '}
-            entrada / {analysis.tokensOutput ?? 0} saida
+            Modelo: {analysis.model}
           </div>
         </div>
       ) : (
