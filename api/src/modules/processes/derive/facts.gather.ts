@@ -54,8 +54,9 @@ function toPerson(r: RawP | undefined): Person | null {
 }
 const toPersons = (rs: RawP[] | undefined): Person[] =>
   (rs ?? []).map(toPerson).filter((p): p is Person => p !== null)
-// Saida do extractCaixaOwner (kind caixa_owner): por doc, o titular do termo
-// (1o comprador) e o conjuge (2o comprador / co-comprador).
+// Audit LEGADO kind caixa_owner (analise removida na v3): por doc, o titular do
+// termo (1o comprador) e o conjuge (2o comprador). Lido so como FALLBACK para
+// processos antigos cujo document_extraction ainda nao traz termoCompradores.
 type CaixaByDoc = {
   byDoc?: Array<{
     titular?: string | null
@@ -76,7 +77,6 @@ export async function gatherFacts(
       cpf: process.cpf,
       rg: process.rg,
       birthDate: process.birthDate,
-      caixaAnalysisStatus: process.caixaAnalysisStatus,
     })
     .from(process)
     .where(eq(process.id, processId))
@@ -237,10 +237,6 @@ export async function gatherFacts(
   if (rawTermoCompradores?.length) {
     const compradores = toPersons(rawTermoCompradores)
     termoCompradores = compradores.length ? ready(compradores) : absent()
-  } else if (proc.caixaAnalysisStatus === 'processing') {
-    // TRANSICAO (remover na Fase 4): enquanto a analise caixa-owner ainda roda,
-    // 'processing' = job em voo -> nao concluir com o caixa_owner ainda incompleto.
-    termoCompradores = pending()
   } else if (caixaOut?.byDoc?.length) {
     const compradores: Person[] = []
     const seen = new Set<string>()
