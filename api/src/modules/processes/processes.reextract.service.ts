@@ -18,7 +18,6 @@ import {
 // substitui as antigas analises detached caixa-owner e procuracao-conjunto.
 const REEXTRACT_DOC_KEYS = [
   'termo_entrega_recebimento_imovel',
-  'termo_quitacao',
   'declaracao_quitacao',
   'procuracao_advogado',
 ] as const
@@ -30,7 +29,6 @@ export function isReextractDocKey(key: string): boolean {
 // Docs que comprovam o titular do contrato Caixa (card "Tipo de proprietario").
 const CAIXA_CARD_KEYS = [
   'termo_entrega_recebimento_imovel',
-  'termo_quitacao',
   'declaracao_quitacao',
 ] as const
 

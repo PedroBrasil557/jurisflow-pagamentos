@@ -270,7 +270,6 @@ describe('deriveProcessState — readiness (timing)', () => {
     expect(d.ownerType.origin).toBe('undetermined')
     const keys = d.requiredDocs.flatMap((r) => r.keys)
     expect(keys).toContain(DOC.termoEntrega)
-    expect(keys).toContain(DOC.termoQuitacao)
     expect(d.status).toBe('EM_DOCUMENTACAO') // nao PRONTA
   })
 })

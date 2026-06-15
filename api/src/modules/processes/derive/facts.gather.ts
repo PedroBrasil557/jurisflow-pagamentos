@@ -229,8 +229,7 @@ export async function gatherFacts(
   // papel). Fallback: audit caixa_owner legado (dupla fonte na transicao). Ciclo de
   // vida chaveado por inFlightSplit (NAO mais por caixaAnalysisStatus, que virou
   // estado de exibicao derivado). [0]=titular do termo, [1]=co-comprador.
-  const termoClassified =
-    classifiedSet.has(DOC.termoEntrega) || classifiedSet.has(DOC.termoQuitacao)
+  const termoClassified = classifiedSet.has(DOC.termoEntrega)
   const caixaOut = (caixaAudits[0]?.output ?? null) as CaixaByDoc | null
   let termoCompradores: Fact<Person[]>
   if (rawTermoCompradores?.length) {

@@ -13,7 +13,6 @@ export const DOC = {
   declaracao: 'declaracao_hipossuficiencia',
   honorarios: 'contrato_honorarios_advocaticios',
   termoEntrega: 'termo_entrega_recebimento_imovel',
-  termoQuitacao: 'termo_quitacao',
   compraVenda: 'contrato_compra_venda',
 } as const
 
@@ -25,8 +24,8 @@ const BASE_DOCS = [
   DOC.honorarios,
 ] as const
 
-// Provas alternativas do vinculo do imovel com a Caixa (OR-grupo).
-const VINCULO_IMOVEL = [DOC.termoEntrega, DOC.termoQuitacao]
+// Vinculo do imovel com a Caixa: o termo de entrega/recebimento.
+const VINCULO_IMOVEL = [DOC.termoEntrega]
 
 // Regra legal: a compra e venda particular deve ser assinada APOS esta data.
 export const COMPRA_VENDA_DATA_MINIMA = '2023-09-26'
@@ -204,10 +203,10 @@ function deriveRequiredDocs(
     becauseOf: 'documento base obrigatorio',
   }))
 
-  // Vinculo do imovel: sempre >=1 prova (termo OU quitacao).
+  // Vinculo do imovel com a Caixa: termo de entrega/recebimento.
   reqs.push({
     keys: VINCULO_IMOVEL,
-    becauseOf: 'comprovacao do imovel (termo de entrega ou termo de quitacao)',
+    becauseOf: 'comprovacao do imovel (termo de entrega/recebimento)',
   })
 
   // Nao-titular (por match no termo OU por haver compra e venda) -> exige o

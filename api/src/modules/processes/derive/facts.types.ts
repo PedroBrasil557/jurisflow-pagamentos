@@ -63,7 +63,7 @@ export type OwnerType =
   | '' // indeterminado/sem conclusao
 
 // Exigencia satisfeita se QUALQUER das `keys` estiver anexada (OR-grupo) — ex.: o
-// vinculo do imovel = termo_entrega OU termo_quitacao. Doc unico -> keys de 1.
+// requiredDoc com >=1 key (OR). Hoje todos sao doc unico (keys de 1).
 export type RequiredDoc = {
   keys: string[]
   becauseOf: string // proveniencia: por que e exigido (rastreabilidade)

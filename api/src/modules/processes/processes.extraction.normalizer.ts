@@ -17,7 +17,6 @@ export const SPLITTABLE_DOCUMENT_KEYS = [
   'rg_cpf_cnh',
   'comprovante_endereco',
   'termo_entrega_recebimento_imovel',
-  'termo_quitacao',
   'declaracao_hipossuficiencia',
   'contrato_honorarios_advocaticios',
   'contrato_compra_venda',

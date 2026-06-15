@@ -498,14 +498,6 @@ type ChecklistResponseFile = {
   downloadUrl: string | null
 }
 
-// Provas alternativas do vinculo do imovel com a Caixa (grupo-OR): basta UMA.
-const VINCULO_IMOVEL_KEYS = new Set<string>([
-  'termo_entrega_recebimento_imovel',
-  'termo_quitacao',
-])
-
-type ChecklistOrGroup = { key: string; satisfied: boolean }
-
 function buildChecklistResponse(input: {
   checklistItems: Awaited<ReturnType<typeof listChecklistItems>>
   currentFiles: ChecklistFileRecord
@@ -584,8 +576,6 @@ function buildChecklistResponse(input: {
         number: documentDisplayNumberByKey.get(key) ?? null,
         scope,
       },
-      // Grupo-OR (vinculo do imovel): preenchido apos a contagem (abaixo).
-      orGroup: null as ChecklistOrGroup | null,
       currentFiles,
     }
   })
@@ -596,36 +586,15 @@ function buildChecklistResponse(input: {
       status: item.status,
     })
 
-  // Vinculo do imovel com a Caixa: GRUPO-OR. termo_entrega OU termo_quitacao
-  // satisfaz UM unico slot obrigatorio (provas alternativas — ver
-  // processes.documents.ts). Conta-se como 1 obrigatorio a parte (nao por item),
-  // satisfeito se qualquer uma das provas estiver presente.
-  const vinculoItems = items.filter((item) =>
-    VINCULO_IMOVEL_KEYS.has(item.documentType.key),
-  )
-  const vinculoSatisfied = vinculoItems.some(isPresent)
-
-  // Marca os itens do grupo-OR para a UI exibir como alternativos ("anexe um dos
-  // dois"): obrigatorio enquanto NENHUM presente; nao-bloqueante quando o irmao
-  // satisfaz. Mantem o badge coerente com summary.requiredPending.
-  for (const item of vinculoItems) {
-    item.orGroup = { key: 'vinculo_imovel', satisfied: vinculoSatisfied }
-  }
-
   // Itens de conjunto sem conjunto vinculado nao contam como obrigatorios (nao ha
   // como anexar) — ficam visiveis/pendentes com aviso, mas nao travam a completude.
-  // O vinculo do imovel sai da contagem por-item (entra como 1 slot-OR abaixo).
   const requiredItems = items.filter(
     (item) =>
       item.documentType.isRequired &&
-      !VINCULO_IMOVEL_KEYS.has(item.documentType.key) &&
       !(item.scope === 'housing_complex' && !item.housingComplexLinked),
   )
-  const requiredCompletedItems = requiredItems.filter(isPresent).length
-
-  // + 1 obrigatorio (slot-OR do vinculo); + 1 completo se satisfeito.
-  const requiredTotal = requiredItems.length + 1
-  const requiredCompleted = requiredCompletedItems + (vinculoSatisfied ? 1 : 0)
+  const requiredCompleted = requiredItems.filter(isPresent).length
+  const requiredTotal = requiredItems.length
 
   return {
     items,
