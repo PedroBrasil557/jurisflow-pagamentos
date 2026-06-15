@@ -78,8 +78,10 @@ export type Derived = {
     origin: 'human' | 'derived' | 'undetermined' | 'review'
     reason: string
   }
-  // titular do CONTRATO CAIXA = sujeito da consulta de quitacao (RPA).
-  quitacaoSubject: Person | null
+  // titular(es) do CONTRATO CAIXA = sujeitos da consulta de quitacao (RPA). 1-2
+  // pessoas (titular + conjuge/co-comprador). O worker consulta cada CPF ate o
+  // primeiro que emitir o termo de quitacao. [] quando indeterminado.
+  quitacaoSubjects: Person[]
   requiredDocs: RequiredDoc[]
   status: ProcessStatus
   // Pendencias/validacoes que o usuario precisa resolver (bloqueiam PRONTA).

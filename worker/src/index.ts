@@ -26,7 +26,9 @@ const USER_AGENT =
 // a cada POLL_MS uma URL/rota/token errados — espera mais e mantem o log limpo.
 const CONFIG_ERROR_BACKOFF_MS = 60_000
 
-type Job = { processId: string; cpf: string }
+// Os CPFs sao do(s) titular(es) do contrato Caixa (1-2: titular + conjuge/
+// co-comprador). Consulta-se CADA um ate o primeiro emitir o termo (short-circuit).
+type Job = { processId: string; cpfs: string[] }
 
 // Erro do claim classificado: 'config' (404/401/403 — URL/rota/versao da API ou
 // token errados; NAO e transitorio) vs 'transient' (5xx/rede — tentar de novo).
@@ -145,38 +147,58 @@ async function main(): Promise<void> {
       continue
     }
 
-    // Pacing GLOBAL: garante >= MIN_INTERVAL_MS desde o INICIO da consulta
-    // anterior antes de bater no site de novo. So espera quando consultas saem
-    // rapido demais (o que causaria throttling); se a anterior demorou, segue.
-    const waitMs = lastConsultaAt + MIN_INTERVAL_MS - Date.now()
-    if (waitMs > 0) {
-      await sleep(waitMs)
-    }
-    lastConsultaAt = Date.now()
-
-    console.log(`[worker] consultando processo=${job.processId}`)
-    // newContext/newPage DENTRO do try: um erro aqui (ou browser morto) nao deve
-    // derrubar o loop inteiro — vira 'erro' daquele job. O browser e recriado se
-    // tiver desconectado (crash/OOM em execucao de longa duracao).
-    let ctx: Awaited<ReturnType<Browser['newContext']>> | null = null
+    console.log(
+      `[worker] consultando processo=${job.processId} (${job.cpfs.length} CPF(s))`,
+    )
+    // Consulta SEQUENCIAL dos CPFs do contrato Caixa, parando no primeiro que
+    // emitir o termo (short-circuit). nao_encontrado -> tenta o proximo CPF; quitado
+    // -> reporta e para; erro (transitorio) -> reporta erro e para (o job inteiro
+    // re-tenta depois). Assim consulta-se o 2o CPF SO quando o 1o da negativa.
+    let outcome: Awaited<ReturnType<typeof consultarQuitacao>> | null = null
     try {
-      if (!browser.isConnected()) {
-        console.warn('[worker] browser desconectado; relancando')
-        browser = await chromium.launch({ headless: true })
+      for (const cpf of job.cpfs) {
+        // Pacing GLOBAL por CONSULTA: >= MIN_INTERVAL_MS desde o inicio da anterior
+        // antes de bater no site de novo (vale entre CPFs do mesmo job tambem).
+        const waitMs = lastConsultaAt + MIN_INTERVAL_MS - Date.now()
+        if (waitMs > 0) {
+          await sleep(waitMs)
+        }
+        lastConsultaAt = Date.now()
+
+        let ctx: Awaited<ReturnType<Browser['newContext']>> | null = null
+        try {
+          if (!browser.isConnected()) {
+            console.warn('[worker] browser desconectado; relancando')
+            browser = await chromium.launch({ headless: true })
+          }
+          ctx = await browser.newContext({
+            acceptDownloads: true,
+            userAgent: USER_AGENT,
+          })
+          const page = await ctx.newPage()
+          outcome = await consultarQuitacao(page, cpf)
+        } finally {
+          if (ctx) {
+            await ctx.close().catch(() => {})
+          }
+        }
+
+        // quitado -> emitiu para este CPF: para (anexa o termo dele).
+        // erro -> transitorio: para e re-tenta o job depois.
+        // nao_encontrado -> tenta o proximo CPF (se houver).
+        if (outcome.result === 'quitado' || outcome.result === 'erro') {
+          break
+        }
       }
-      ctx = await browser.newContext({
-        acceptDownloads: true,
-        userAgent: USER_AGENT,
-      })
-      const page = await ctx.newPage()
-      const outcome = await consultarQuitacao(page, job.cpf)
-      await reportResult(
-        job.processId,
-        outcome.result,
-        outcome.message,
-        outcome.pdf,
-      )
-      console.log(`[worker] processo=${job.processId} -> ${outcome.result}`)
+
+      // outcome sempre setado (job.cpfs nunca vazio — garantido no claim).
+      const final = outcome ?? {
+        result: 'erro' as const,
+        message: 'Sem CPF para consultar.',
+        pdf: null,
+      }
+      await reportResult(job.processId, final.result, final.message, final.pdf)
+      console.log(`[worker] processo=${job.processId} -> ${final.result}`)
     } catch (error) {
       console.error(
         `[worker] erro no processo=${job.processId}:`,
@@ -188,10 +210,6 @@ async function main(): Promise<void> {
         (error as Error).message?.slice(0, 300) ?? 'erro inesperado',
         null,
       ).catch(() => {})
-    } finally {
-      if (ctx) {
-        await ctx.close().catch(() => {})
-      }
     }
   }
 

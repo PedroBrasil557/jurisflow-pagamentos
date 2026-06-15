@@ -85,6 +85,13 @@ export const process = pgTable(
     caixaQuitacaoAttempts: integer('caixa_quitacao_attempts')
       .default(0)
       .notNull(),
+    // CPFs do(s) TITULAR(es) DO CONTRATO CAIXA (sujeitos da quitacao), DERIVADOS
+    // pelo reconciliador (v3): titular -> compradores do termo; nao_titular ->
+    // vendedores/compradores do termo. Lista (1-2) separada por virgula, pois o
+    // contrato pode ter titular + conjuge/co-comprador — o worker consulta cada um
+    // (para no primeiro que emitir). A fila so nasce quando isto e conhecido; o
+    // worker NAO usa mais o process.cpf. null/'' ate a derivacao concluir.
+    quitacaoSubjectCpfs: text('quitacao_subject_cpfs'),
     cpf: text('cpf').notNull(),
     rg: text('rg').notNull(),
     cadunico: text('cadunico').notNull(),

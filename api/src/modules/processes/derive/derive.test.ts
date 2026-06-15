@@ -156,7 +156,7 @@ describe('deriveProcessState — 2.1 ramo termo', () => {
   test('titular consta no termo -> titular_contrato_caixa + quitacao no titular', () => {
     const d = deriveProcessState(facts())
     expect(d.ownerType.value).toBe('titular_contrato_caixa')
-    expect(d.quitacaoSubject?.cpf).toBe(CPF_A)
+    expect(d.quitacaoSubjects.map((s) => s.cpf)).toEqual([CPF_A])
     // sem co-comprador, sem compra_venda exigida, completo -> PRONTA
     expect(d.status).toBe('DOCUMENTACAO_PRONTA')
   })
@@ -169,7 +169,7 @@ describe('deriveProcessState — 2.1 ramo termo', () => {
       }),
     )
     expect(d.ownerType.value).toBe('nao_titular_contrato_caixa')
-    expect(d.quitacaoSubject?.cpf).toBe(CPF_B) // titular Caixa = comprador do termo
+    expect(d.quitacaoSubjects.map((s) => s.cpf)).toEqual([CPF_B]) // comprador do termo
     const keys = d.requiredDocs.flatMap((r) => r.keys)
     expect(keys).toContain(DOC.compraVenda)
     // compra_venda nao anexada -> pendente -> nao PRONTA
@@ -196,7 +196,7 @@ describe('deriveProcessState — 2.2 ramo compra e venda', () => {
   test('compra e venda -> nao_titular + quitacao no vendedor; data valida -> PRONTA', () => {
     const d = deriveProcessState(compraVendaFacts('2024-01-10'))
     expect(d.ownerType.value).toBe('nao_titular_contrato_caixa')
-    expect(d.quitacaoSubject?.cpf).toBe(CPF_B) // vendedor
+    expect(d.quitacaoSubjects.map((s) => s.cpf)).toEqual([CPF_B]) // vendedor
     expect(d.reviewFlags).toHaveLength(0)
     expect(d.status).toBe('DOCUMENTACAO_PRONTA')
   })
@@ -220,7 +220,7 @@ describe('deriveProcessState — 2.2 ramo compra e venda', () => {
     )
     expect(d.readiness).toBe('ready') // NAO bloqueia por causa da extracao das partes
     expect(d.ownerType.value).toBe('nao_titular_contrato_caixa')
-    expect(d.quitacaoSubject).toBeNull()
+    expect(d.quitacaoSubjects).toHaveLength(0) // vendedor ainda nao extraido
   })
 })
 

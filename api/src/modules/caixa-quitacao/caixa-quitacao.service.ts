@@ -1,38 +1,37 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import { logErrorEvent, logEvent } from '../../shared/observability/log'
 import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
-import { aiAnalysis } from '../ai-analysis/ai-analysis.schema'
 import { attachSystemChecklistFile } from '../processes/processes.checklist.service'
 import { process } from '../processes/processes.schema'
 
 const QUITACAO_DOC_KEY = 'declaracao_quitacao'
 
-// Enfileira a consulta de quitacao SE o CPF for valido e a consulta ainda nao
-// foi iniciada (status 'idle'). Idempotente — chamada na criacao do processo e
-// apos a extracao do scan preencher o CPF; nao re-enfileira o que ja rodou.
-export async function enqueueQuitacaoCheck(
-  processId: string,
-  cpf: string,
-): Promise<void> {
-  if (!isValidCpf(normalizeCpf(cpf))) {
-    return
+// CPFs do(s) titular(es) do contrato Caixa, derivados (coluna quitacao_subject_cpfs,
+// separados por virgula). Normaliza, valida e dedup. [] se a coluna esta vazia.
+function parseSubjectCpfs(raw: string | null): string[] {
+  if (!raw) {
+    return []
   }
-  await db
-    .update(process)
-    .set({ caixaQuitacaoStatus: 'pending', caixaQuitacaoAttempts: 0 })
-    .where(
-      and(eq(process.id, processId), eq(process.caixaQuitacaoStatus, 'idle')),
-    )
+  const out: string[] = []
+  for (const part of raw.split(',')) {
+    const c = normalizeCpf(part)
+    if (c && isValidCpf(c) && !out.includes(c)) {
+      out.push(c)
+    }
+  }
+  return out
 }
 
-// Reconsulta sob demanda (usuario): re-enfileira independentemente do status.
+// Reconsulta sob demanda (usuario): re-enfileira independentemente do status. Usa os
+// CPFs derivados (titular do contrato Caixa); se ainda nao houver, cai no CPF do
+// processo (override manual — "consulte com o que eu tenho").
 export async function requestQuitacaoRecheck(
   processId: string,
 ): Promise<{ status: 'pending' }> {
   const [proc] = await db
-    .select({ cpf: process.cpf })
+    .select({ cpf: process.cpf, subjects: process.quitacaoSubjectCpfs })
     .from(process)
     .where(eq(process.id, processId))
     .limit(1)
@@ -40,22 +39,31 @@ export async function requestQuitacaoRecheck(
   if (!proc) {
     throw new ServiceError(404, 'Processo nao encontrado.')
   }
-  if (!isValidCpf(normalizeCpf(proc.cpf))) {
+
+  let cpfs = parseSubjectCpfs(proc.subjects)
+  if (cpfs.length === 0 && isValidCpf(normalizeCpf(proc.cpf))) {
+    cpfs = [normalizeCpf(proc.cpf)] // fallback manual: CPF do processo
+  }
+  if (cpfs.length === 0) {
     throw new ServiceError(
       400,
-      'Processo sem CPF valido para consultar a quitacao.',
+      'Sem CPF valido do titular do contrato Caixa para consultar a quitacao.',
     )
   }
 
   await db
     .update(process)
-    .set({ caixaQuitacaoStatus: 'pending', caixaQuitacaoAttempts: 0 })
+    .set({
+      quitacaoSubjectCpfs: cpfs.join(','),
+      caixaQuitacaoStatus: 'pending',
+      caixaQuitacaoAttempts: 0,
+    })
     .where(eq(process.id, processId))
 
   return { status: 'pending' }
 }
 
-export type QuitacaoJob = { processId: string; cpf: string } | null
+export type QuitacaoJob = { processId: string; cpfs: string[] } | null
 
 // Apos esgotar as tentativas, um 'erro' transitorio vira terminal. Com o backoff
 // abaixo, 6 tentativas se espalham por ~43min antes do terminal (-> recheck
@@ -110,39 +118,27 @@ export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
         FOR UPDATE SKIP LOCKED
       )`,
     )
-    .returning({ id: process.id, cpf: process.cpf })
+    .returning({
+      id: process.id,
+      subjects: process.quitacaoSubjectCpfs,
+    })
 
   const row = claimed[0]
   if (!row) return null
-  // A consulta de quitacao e do TITULAR DO CONTRATO CAIXA (v3): no caso nao_titular
-  // e o VENDEDOR do contrato de compra e venda, NAO o titular do processo. O
-  // quitacaoSubject derivado vem da evidencia process_derivation; fallback ao cpf
-  // do processo (caso titular, em que coincidem).
-  const subjectCpf = await resolveQuitacaoSubjectCpf(row.id)
-  return { processId: row.id, cpf: subjectCpf ?? row.cpf }
-}
-
-// Le o CPF do sujeito da quitacao (titular do contrato Caixa) da ultima evidencia
-// process_derivation. Retorna normalizado e valido, ou null (usa o cpf do processo).
-async function resolveQuitacaoSubjectCpf(
-  processId: string,
-): Promise<string | null> {
-  const [row] = await db
-    .select({ decision: aiAnalysis.decision })
-    .from(aiAnalysis)
-    .where(
-      and(
-        eq(aiAnalysis.processId, processId),
-        eq(aiAnalysis.kind, 'process_derivation'),
-      ),
-    )
-    .orderBy(desc(aiAnalysis.createdAt))
-    .limit(1)
-  const subject = (
-    row?.decision as { quitacaoSubject?: { cpf?: string } } | null
-  )?.quitacaoSubject
-  const cpf = subject?.cpf ? normalizeCpf(subject.cpf) : null
-  return cpf && isValidCpf(cpf) ? cpf : null
+  // CPFs do TITULAR DO CONTRATO CAIXA (v3): a fila so nasce com isto preenchido
+  // pelo reconciliador. O worker consulta CADA um ate o primeiro emitir o termo. NAO
+  // ha fallback para process.cpf (que seria errado no caso nao_titular).
+  const cpfs = parseSubjectCpfs(row.subjects)
+  if (cpfs.length === 0) {
+    // Invariante quebrada (pending sem sujeito): nao consulta com CPF errado. Volta
+    // para idle para nao re-reivindicar em loop; o reconcile re-enfileira se derivar.
+    await db
+      .update(process)
+      .set({ caixaQuitacaoStatus: 'idle' })
+      .where(eq(process.id, row.id))
+    return null
+  }
+  return { processId: row.id, cpfs }
 }
 
 export type QuitacaoResultInput = {

@@ -183,6 +183,13 @@
       "when": 1781462636155,
       "tag": "0025_lonely_namora",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1781489682179,
+      "tag": "0026_quitacao_subject_cpfs",
+      "breakpoints": true
     }
   ]
 }

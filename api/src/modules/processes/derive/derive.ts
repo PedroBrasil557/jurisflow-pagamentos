@@ -106,7 +106,7 @@ function has(facts: ProcessFacts, key: string): boolean {
 // oficial). NAO le requiredDocs — e irmao dele, nao pai.
 function deriveOwner(facts: ProcessFacts): {
   ownerType: Derived['ownerType']
-  quitacaoSubject: Person | null
+  quitacaoSubjects: Person[]
 } {
   const titulares = req(facts.titularProcesso, 'titular') ?? []
   const titular = titulares[0]
@@ -119,7 +119,7 @@ function deriveOwner(facts: ProcessFacts): {
         origin: 'undetermined',
         reason: 'sem dados do titular',
       },
-      quitacaoSubject: null,
+      quitacaoSubjects: [],
     }
   }
 
@@ -127,8 +127,9 @@ function deriveOwner(facts: ProcessFacts): {
   const hasTermo = has(facts, DOC.termoEntrega)
 
   // Ramo compra e venda: a CLASSIFICACAO ja basta para concluir nao_titular —
-  // nao espera a extracao das partes (NAO faz req()). So o quitacaoSubject
-  // (vendedor) depende da extracao; fica null ate estar 'ready'.
+  // nao espera a extracao das partes (NAO faz req()). Os quitacaoSubjects (os
+  // vendedores = titulares do contrato Caixa) dependem da extracao; ficam [] ate
+  // estar 'ready'. Pode haver 1-2 vendedores -> consulta cada um.
   if (hasCompraVenda) {
     const cv =
       facts.compraVenda.state === 'ready' ? facts.compraVenda.value : undefined
@@ -138,11 +139,13 @@ function deriveOwner(facts: ProcessFacts): {
         origin: 'derived',
         reason: 'contrato de compra e venda particular',
       },
-      quitacaoSubject: cv?.vendedores[0] ?? null,
+      quitacaoSubjects: cv?.vendedores ?? [],
     }
   }
 
-  // Ramo termo: match do titular contra os compradores do termo.
+  // Ramo termo: match do titular contra os compradores do termo. Em AMBOS os
+  // desfechos (titular/nao_titular) os titulares do contrato Caixa sao os
+  // COMPRADORES DO TERMO (1-2: titular + conjuge/co-comprador) — consulta cada um.
   if (hasTermo) {
     const compradores = req(facts.termoCompradores, 'lendo termo') ?? []
     const r = compareCaixaOwner(compradores.map(toBuyer), {
@@ -156,8 +159,7 @@ function deriveOwner(facts: ProcessFacts): {
           origin: 'derived',
           reason: `titular consta no termo (match por ${r.matchedBy})`,
         },
-        // titular do contrato Caixa = o proprio titular do processo.
-        quitacaoSubject: titular,
+        quitacaoSubjects: compradores,
       }
     }
     if (r.result === 'nao_titular') {
@@ -167,7 +169,7 @@ function deriveOwner(facts: ProcessFacts): {
           origin: 'derived',
           reason: 'titular nao consta como comprador no termo',
         },
-        quitacaoSubject: compradores[0] ?? null,
+        quitacaoSubjects: compradores,
       }
     }
     // review: nao da pra afirmar igual nem diferente.
@@ -177,7 +179,7 @@ function deriveOwner(facts: ProcessFacts): {
         origin: 'review',
         reason: 'nao foi possivel confirmar se o titular consta no termo',
       },
-      quitacaoSubject: null,
+      quitacaoSubjects: [],
     }
   }
 
@@ -188,7 +190,7 @@ function deriveOwner(facts: ProcessFacts): {
       origin: 'undetermined',
       reason: 'sem documento do imovel (termo ou compra e venda)',
     },
-    quitacaoSubject: null,
+    quitacaoSubjects: [],
   }
 }
 
@@ -260,7 +262,7 @@ function deriveReviewFlags(
 // ── deriveProcessState: compoe tudo, input-complete ───────────────────────────
 export function deriveProcessState(facts: ProcessFacts): Derived {
   try {
-    const { ownerType, quitacaoSubject } = deriveOwner(facts)
+    const { ownerType, quitacaoSubjects } = deriveOwner(facts)
     const requiredDocs = deriveRequiredDocs(facts, ownerType.value)
     const reviewFlags = deriveReviewFlags(facts, ownerType)
 
@@ -289,7 +291,7 @@ export function deriveProcessState(facts: ProcessFacts): Derived {
     return {
       readiness: 'ready',
       ownerType,
-      quitacaoSubject,
+      quitacaoSubjects,
       requiredDocs,
       status,
       reviewFlags,
@@ -315,7 +317,7 @@ export function deriveProcessState(facts: ProcessFacts): Derived {
         readiness: 'pending',
         pendingOn: e.on,
         ownerType: { value: '', origin: 'undetermined', reason: e.on },
-        quitacaoSubject: null,
+        quitacaoSubjects: [],
         requiredDocs: [],
         status,
         reviewFlags: [],

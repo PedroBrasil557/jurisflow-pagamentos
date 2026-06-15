@@ -20,7 +20,6 @@ import type { AppBindings } from '../../shared/types/app'
 import { normalizeCpf } from '../../shared/utils/cpf'
 import { buildBatchDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
-import { enqueueQuitacaoCheck } from '../caixa-quitacao/caixa-quitacao.service'
 import {
   assertCanAccessBatch,
   assertCanAccessDocumentation,
@@ -567,8 +566,6 @@ async function applyExtractedFieldsToDraft(
 
   const fullName = update.fullName ?? current.fullName
   const cpf = update.cpf ?? current.cpf
-  // Com o CPF extraido, dispara a consulta automatica de quitacao (worker RPA).
-  await enqueueQuitacaoCheck(processId, cpf)
   return { hasIdentity: Boolean(fullName) || Boolean(cpf) }
 }
 

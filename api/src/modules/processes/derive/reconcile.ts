@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { db } from '../../../shared/db'
+import { isValidCpf, normalizeCpf } from '../../../shared/utils/cpf'
 import {
   type RecordAiAnalysisInput,
   recordAiAnalysis,
@@ -139,7 +140,7 @@ async function recordDerivationEvidence(
     input: { facts: factsSnapshot(r.facts) },
     decision: {
       ownerType: r.derived.ownerType,
-      quitacaoSubject: r.derived.quitacaoSubject,
+      quitacaoSubjects: r.derived.quitacaoSubjects,
       status: r.derived.status,
       readiness: r.derived.readiness,
       reviewFlags: r.derived.reviewFlags,
@@ -251,6 +252,11 @@ export async function reconcileOwnerType(input: {
       housingComplexSource: proc.housingComplexSource,
     })
 
+    // ── Quitacao: a FILA nasce aqui (so quando o titular do contrato Caixa e
+    // conhecido). Grava os CPFs derivados; se a lista mudou, (re)enfileira. O worker
+    // consulta cada CPF ate o primeiro emitir. NUNCA usa process.cpf.
+    await reconcileQuitacaoSubjects(processId, d.quitacaoSubjects)
+
     // Status: motor existente (fiel) — le o ownerType/conjunto atualizados para a
     // ativacao condicional. Import dinamico para evitar ciclo com checklist.service.
     const { reconcileProcessStatus } = await import(
@@ -265,6 +271,46 @@ export async function reconcileOwnerType(input: {
       error: String(error),
     })
   }
+}
+
+// (Re)cria a FILA de quitacao quando os titulares do contrato Caixa (CPFs
+// derivados) sao conhecidos ou MUDAM (ex.: titular cedo -> vendedor quando a compra
+// e venda chega). Lista normalizada/validada, dedup, separada por virgula — o worker
+// consulta cada CPF ate o primeiro emitir. Idempotente: mesma lista -> no-op (nao
+// re-enfileira uma consulta ja feita). Best-effort.
+async function reconcileQuitacaoSubjects(
+  processId: string,
+  subjects: Person[],
+): Promise<void> {
+  const cpfs: string[] = []
+  for (const s of subjects) {
+    const c = s.cpf ? normalizeCpf(s.cpf) : ''
+    if (c && isValidCpf(c) && !cpfs.includes(c)) {
+      cpfs.push(c)
+    }
+  }
+  if (cpfs.length === 0) {
+    return // sem sujeito valido ainda -> nao enfileira (nao consulta com CPF errado)
+  }
+
+  const joined = cpfs.join(',')
+  const [proc] = await db
+    .select({ current: process.quitacaoSubjectCpfs })
+    .from(process)
+    .where(eq(process.id, processId))
+    .limit(1)
+  if (!proc || proc.current === joined) {
+    return // inexistente ou lista inalterada -> no-op
+  }
+
+  await db
+    .update(process)
+    .set({
+      quitacaoSubjectCpfs: joined,
+      caixaQuitacaoStatus: 'pending',
+      caixaQuitacaoAttempts: 0,
+    })
+    .where(eq(process.id, processId))
 }
 
 // Aplica o conjunto habitacional sugerido pelo endereco da procuracao (fato

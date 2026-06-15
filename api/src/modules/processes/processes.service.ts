@@ -14,7 +14,6 @@ import { db } from '../../shared/db'
 import { deleteStorageObject } from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
 import { user } from '../auth/auth.schema'
-import { enqueueQuitacaoCheck } from '../caixa-quitacao/caixa-quitacao.service'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import {
   assertCan,
@@ -706,8 +705,9 @@ export async function createProcess(
 
   await ensureProcessChecklistItems(processId)
 
-  // Dispara a consulta automatica de quitacao na Caixa (worker RPA).
-  await enqueueQuitacaoCheck(processId, createdProcess.cpf)
+  // A quitacao NAO e enfileirada aqui (v3): a fila so nasce quando o reconciliador
+  // conhece o(s) titular(es) do contrato Caixa (apos a derivacao). Enfileirar com o
+  // process.cpf na criacao consultaria o CPF errado no caso nao_titular.
 
   return createdProcess
 }
