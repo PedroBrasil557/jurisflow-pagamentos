@@ -2,8 +2,17 @@ import { z } from 'zod'
 
 export const quitacaoResultSchema = z.object({
   processId: z.string().min(1),
-  result: z.enum(['quitado', 'nao_encontrado', 'erro']),
-  message: z.string().max(5000).default(''),
+  // Resultado POR CPF que o worker tentou (na ordem; para no primeiro 'quitado').
+  consultas: z
+    .array(
+      z.object({
+        cpf: z.string().min(1).max(20),
+        result: z.enum(['quitado', 'nao_encontrado', 'erro']),
+        message: z.string().max(5000).optional(),
+      }),
+    )
+    .min(1)
+    .max(5),
   // Teto antes do decode: ~34 MB de base64 ≈ 25 MB binario (o limite do attach).
   // Sem isto, o body e bufferizado/decodificado em memoria antes de qualquer
   // checagem de tamanho -> amplificacao de memoria (DoS).

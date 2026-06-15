@@ -6,6 +6,10 @@ import {
   recordAiAnalysis,
 } from '../../ai-analysis/ai-analysis.service'
 import {
+  aggregateQuitacaoStatus,
+  type QuitacaoConsulta,
+} from '../../caixa-quitacao/quitacao-consulta'
+import {
   getCaixaOwnerAutoApply,
   getProcuracaoConjuntoAutoApply,
 } from '../../settings/settings.service'
@@ -252,10 +256,11 @@ export async function reconcileOwnerType(input: {
       housingComplexSource: proc.housingComplexSource,
     })
 
-    // ── Quitacao: a FILA nasce aqui (so quando o titular do contrato Caixa e
-    // conhecido). Grava os CPFs derivados; se a lista mudou, (re)enfileira. O worker
-    // consulta cada CPF ate o primeiro emitir. NUNCA usa process.cpf.
-    await reconcileQuitacaoSubjects(processId, d.quitacaoSubjects)
+    // ── Quitacao: reconcilia o ESTADO DE CONSULTA por CPF contra os titulares do
+    // contrato Caixa derivados (set-diff: adiciona CPF novo como 'pending', remove o
+    // que saiu, PRESERVA o terminal de quem continua). Separa identidade (quem) de
+    // workflow (consulta por CPF). NUNCA usa process.cpf.
+    await reconcileQuitacaoConsultas(processId, d.quitacaoSubjects)
 
     // Status: motor existente (fiel) — le o ownerType/conjunto atualizados para a
     // ativacao condicional. Import dinamico para evitar ciclo com checklist.service.
@@ -273,42 +278,67 @@ export async function reconcileOwnerType(input: {
   }
 }
 
-// (Re)cria a FILA de quitacao quando os titulares do contrato Caixa (CPFs
-// derivados) sao conhecidos ou MUDAM (ex.: titular cedo -> vendedor quando a compra
-// e venda chega). Lista normalizada/validada, dedup, separada por virgula — o worker
-// consulta cada CPF ate o primeiro emitir. Idempotente: mesma lista -> no-op (nao
-// re-enfileira uma consulta ja feita). Best-effort.
-async function reconcileQuitacaoSubjects(
+// Reconcilia o ESTADO DE CONSULTA (por CPF) contra os titulares do contrato Caixa
+// derivados. SET-DIFF declarativo: CPF novo -> entrada 'pending'; CPF removido ->
+// dropa; CPF que continua -> PRESERVA (nunca re-consulta um terminal so porque o
+// conjunto mudou). Sem comparacao de string/ordem — compara o CONJUNTO de CPFs.
+// Best-effort.
+async function reconcileQuitacaoConsultas(
   processId: string,
   subjects: Person[],
 ): Promise<void> {
-  const cpfs: string[] = []
+  // Identidade: CPFs desejados (normalizados, validos, sem duplicata).
+  const desired: string[] = []
   for (const s of subjects) {
     const c = s.cpf ? normalizeCpf(s.cpf) : ''
-    if (c && isValidCpf(c) && !cpfs.includes(c)) {
-      cpfs.push(c)
+    if (c && isValidCpf(c) && !desired.includes(c)) {
+      desired.push(c)
     }
   }
-  if (cpfs.length === 0) {
-    return // sem sujeito valido ainda -> nao enfileira (nao consulta com CPF errado)
-  }
 
-  const joined = cpfs.join(',')
   const [proc] = await db
-    .select({ current: process.quitacaoSubjectCpfs })
+    .select({
+      consultas: process.quitacaoConsultas,
+      status: process.caixaQuitacaoStatus,
+    })
     .from(process)
     .where(eq(process.id, processId))
     .limit(1)
-  if (!proc || proc.current === joined) {
-    return // inexistente ou lista inalterada -> no-op
+  if (!proc) return
+
+  const current = proc.consultas ?? []
+  const currentCpfs = new Set(current.map((c) => c.cpf))
+
+  // Identidade inalterada (mesmo CONJUNTO de CPFs) -> no-op: preserva todos os
+  // estados (inclusive terminais). Resolve a re-consulta por ordem/tamanho.
+  if (
+    currentCpfs.size === desired.length &&
+    desired.every((c) => currentCpfs.has(c))
+  ) {
+    return
   }
+
+  // Mudou: preserva entrada existente de cada CPF que CONTINUA; novo -> 'pending';
+  // removido -> sai (nao entra em `next`).
+  const byCpf = new Map(current.map((c) => [c.cpf, c]))
+  const next: QuitacaoConsulta[] = desired.map(
+    (cpf) => byCpf.get(cpf) ?? { cpf, status: 'pending' as const },
+  )
+
+  const aggregate = aggregateQuitacaoStatus(next)
+  // Reabriu para consulta (ha CPF novo pendente) e nao estava em voo -> zera o
+  // backoff (attempts) para o worker reivindicar ja.
+  const reopened =
+    aggregate === 'pending' &&
+    proc.status !== 'pending' &&
+    proc.status !== 'processing'
 
   await db
     .update(process)
     .set({
-      quitacaoSubjectCpfs: joined,
-      caixaQuitacaoStatus: 'pending',
-      caixaQuitacaoAttempts: 0,
+      quitacaoConsultas: next,
+      caixaQuitacaoStatus: aggregate,
+      ...(reopened ? { caixaQuitacaoAttempts: 0 } : {}),
     })
     .where(eq(process.id, processId))
 }

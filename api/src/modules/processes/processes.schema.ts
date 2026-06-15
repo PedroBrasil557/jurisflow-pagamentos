@@ -85,13 +85,24 @@ export const process = pgTable(
     caixaQuitacaoAttempts: integer('caixa_quitacao_attempts')
       .default(0)
       .notNull(),
-    // CPFs do(s) TITULAR(es) DO CONTRATO CAIXA (sujeitos da quitacao), DERIVADOS
-    // pelo reconciliador (v3): titular -> compradores do termo; nao_titular ->
-    // vendedores/compradores do termo. Lista (1-2) separada por virgula, pois o
-    // contrato pode ter titular + conjuge/co-comprador — o worker consulta cada um
-    // (para no primeiro que emitir). A fila so nasce quando isto e conhecido; o
-    // worker NAO usa mais o process.cpf. null/'' ate a derivacao concluir.
-    quitacaoSubjectCpfs: text('quitacao_subject_cpfs'),
+    // Estado de consulta da quitacao POR CPF do(s) titular(es) do contrato Caixa
+    // (1-2: titular + conjuge/co-comprador OU os vendedores). Cada entrada tem seu
+    // proprio status terminal — o reconciliador faz set-diff (adiciona CPF novo como
+    // 'pending', remove CPF que saiu, PRESERVA o terminal de quem continua). Isso
+    // separa IDENTIDADE (quem, derivado) de WORKFLOW (consulta por CPF), evitando
+    // re-consultar um terminal so porque o conjunto mudou de ordem/tamanho.
+    // caixa_quitacao_status e o AGREGADO (quitado > pending > nao_encontrado).
+    quitacaoConsultas: jsonb('quitacao_consultas')
+      .$type<
+        Array<{
+          cpf: string
+          status: 'pending' | 'quitado' | 'nao_encontrado' | 'erro'
+          checkedAt?: string
+          message?: string
+        }>
+      >()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     cpf: text('cpf').notNull(),
     rg: text('rg').notNull(),
     cadunico: text('cadunico').notNull(),

@@ -2,36 +2,24 @@ import { and, eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import { logErrorEvent, logEvent } from '../../shared/observability/log'
-import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
 import { attachSystemChecklistFile } from '../processes/processes.checklist.service'
 import { process } from '../processes/processes.schema'
+import {
+  aggregateQuitacaoStatus,
+  type QuitacaoConsulta,
+} from './quitacao-consulta'
 
 const QUITACAO_DOC_KEY = 'declaracao_quitacao'
 
-// CPFs do(s) titular(es) do contrato Caixa, derivados (coluna quitacao_subject_cpfs,
-// separados por virgula). Normaliza, valida e dedup. [] se a coluna esta vazia.
-function parseSubjectCpfs(raw: string | null): string[] {
-  if (!raw) {
-    return []
-  }
-  const out: string[] = []
-  for (const part of raw.split(',')) {
-    const c = normalizeCpf(part)
-    if (c && isValidCpf(c) && !out.includes(c)) {
-      out.push(c)
-    }
-  }
-  return out
-}
-
-// Reconsulta sob demanda (usuario): re-enfileira independentemente do status. Usa os
-// CPFs derivados (titular do contrato Caixa); se ainda nao houver, cai no CPF do
-// processo (override manual — "consulte com o que eu tenho").
+// Reconsulta sob demanda (usuario): volta TODAS as entradas de consulta para
+// 'pending' (re-consulta cada CPF do titular do contrato Caixa). Usa os CPFs ja
+// derivados (em quitacao_consultas) — NUNCA o process.cpf. Se nao ha titular
+// derivado, recusa (em vez de consultar um CPF possivelmente errado).
 export async function requestQuitacaoRecheck(
   processId: string,
 ): Promise<{ status: 'pending' }> {
   const [proc] = await db
-    .select({ cpf: process.cpf, subjects: process.quitacaoSubjectCpfs })
+    .select({ consultas: process.quitacaoConsultas })
     .from(process)
     .where(eq(process.id, processId))
     .limit(1)
@@ -39,22 +27,22 @@ export async function requestQuitacaoRecheck(
   if (!proc) {
     throw new ServiceError(404, 'Processo nao encontrado.')
   }
-
-  let cpfs = parseSubjectCpfs(proc.subjects)
-  if (cpfs.length === 0 && isValidCpf(normalizeCpf(proc.cpf))) {
-    cpfs = [normalizeCpf(proc.cpf)] // fallback manual: CPF do processo
-  }
-  if (cpfs.length === 0) {
+  const consultas = proc.consultas ?? []
+  if (consultas.length === 0) {
     throw new ServiceError(
       400,
-      'Sem CPF valido do titular do contrato Caixa para consultar a quitacao.',
+      'Sem titular do contrato Caixa derivado para consultar a quitacao.',
     )
   }
 
+  const reset: QuitacaoConsulta[] = consultas.map((c) => ({
+    cpf: c.cpf,
+    status: 'pending',
+  }))
   await db
     .update(process)
     .set({
-      quitacaoSubjectCpfs: cpfs.join(','),
+      quitacaoConsultas: reset,
       caixaQuitacaoStatus: 'pending',
       caixaQuitacaoAttempts: 0,
     })
@@ -120,18 +108,20 @@ export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
     )
     .returning({
       id: process.id,
-      subjects: process.quitacaoSubjectCpfs,
+      consultas: process.quitacaoConsultas,
     })
 
   const row = claimed[0]
   if (!row) return null
-  // CPFs do TITULAR DO CONTRATO CAIXA (v3): a fila so nasce com isto preenchido
-  // pelo reconciliador. O worker consulta CADA um ate o primeiro emitir o termo. NAO
-  // ha fallback para process.cpf (que seria errado no caso nao_titular).
-  const cpfs = parseSubjectCpfs(row.subjects)
+  // CPFs ainda PENDENTES (titulares do contrato Caixa). O worker consulta cada um
+  // ate o primeiro emitir o termo. Os terminais (quitado/nao_encontrado/erro) NAO
+  // sao re-consultados. NAO ha fallback para process.cpf.
+  const cpfs = (row.consultas ?? [])
+    .filter((c) => c.status === 'pending')
+    .map((c) => c.cpf)
   if (cpfs.length === 0) {
-    // Invariante quebrada (pending sem sujeito): nao consulta com CPF errado. Volta
-    // para idle para nao re-reivindicar em loop; o reconcile re-enfileira se derivar.
+    // Invariante quebrada (pending sem CPF pendente): volta para idle para nao
+    // re-reivindicar em loop; o reconcile re-enfileira se derivar.
     await db
       .update(process)
       .set({ caixaQuitacaoStatus: 'idle' })
@@ -143,15 +133,20 @@ export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
 
 export type QuitacaoResultInput = {
   processId: string
-  result: 'quitado' | 'nao_encontrado' | 'erro'
-  message: string
+  // Resultado POR CPF que o worker tentou (na ordem; para no primeiro quitado).
+  consultas: Array<{
+    cpf: string
+    result: 'quitado' | 'nao_encontrado' | 'erro'
+    message?: string
+  }>
   pdfBase64?: string | null
   pdfFilename?: string | null
 }
 
-// Registra o desfecho da consulta. 'erro' transitorio volta para 'pending'
-// (retry) enquanto houver tentativas. (Fase 1b: se 'quitado' + pdf, anexar o PDF
-// ao slot declaracao_quitacao — que dispara a analise do titular.)
+// Registra o desfecho POR CPF. Atualiza cada entrada em quitacao_consultas (preserva
+// as outras), anexa o termo se algum CPF quitou, e recomputa o agregado. 'erro' e
+// transitorio: volta o CPF para 'pending' (retry) enquanto houver tentativas; ao
+// esgotar, vira terminal 'erro'.
 export async function recordQuitacaoResult(
   input: QuitacaoResultInput,
 ): Promise<{ status: string }> {
@@ -159,6 +154,7 @@ export async function recordQuitacaoResult(
     .select({
       status: process.caixaQuitacaoStatus,
       attempts: process.caixaQuitacaoAttempts,
+      consultas: process.quitacaoConsultas,
     })
     .from(process)
     .where(eq(process.id, input.processId))
@@ -167,28 +163,23 @@ export async function recordQuitacaoResult(
   if (!proc) {
     logEvent('quitacao.result_received', {
       processId: input.processId,
-      result: input.result,
-      hasPdf: !!input.pdfBase64,
       procStatus: 'not_found',
     })
     throw new ServiceError(404, 'Processo nao encontrado.')
   }
 
+  const quitouCpf = input.consultas.find((c) => c.result === 'quitado')?.cpf
   logEvent('quitacao.result_received', {
     processId: input.processId,
-    result: input.result,
+    consultas: input.consultas.map((c) => ({ cpf: c.cpf, result: c.result })),
     hasPdf: !!input.pdfBase64,
-    pdfBytes: input.pdfBase64
-      ? Buffer.from(input.pdfBase64, 'base64').length
-      : 0,
     procStatus: proc.status,
     attempts: proc.attempts,
   })
 
-  // Correlaciona o resultado com o claim: so aceita /result para um processo que
-  // esta REALMENTE sendo consultado ('processing' — estado em que so o claim do
-  // worker poe o processo). Bloqueia /result forjado/replay para um processId
-  // arbitrario (que injetaria uma declaracao falsa via attachSystemChecklistFile).
+  // Correlaciona o resultado com o claim: so aceita /result para um processo
+  // 'processing' (estado em que so o claim do worker poe o processo). Bloqueia
+  // /result forjado/replay (que injetaria uma declaracao falsa).
   if (proc.status !== 'processing') {
     logEvent('quitacao.result_rejected', {
       processId: input.processId,
@@ -201,13 +192,10 @@ export async function recordQuitacaoResult(
     )
   }
 
-  let result: QuitacaoResultInput['result'] = input.result
-  let message = input.message
-
-  // Quitado + PDF: anexa a Declaracao de Quitacao no slot declaracao_quitacao
-  // (isso dispara a analise do titular do contrato). Se o anexo falhar, trata
-  // como erro para reprocessar (a consulta e idempotente).
-  if (input.result === 'quitado' && input.pdfBase64) {
+  // Quitado + PDF: anexa a Declaracao de Quitacao (do CPF que emitiu). Se o anexo
+  // falhar, esse CPF vira 'erro' (reprocessa — a consulta e idempotente).
+  let attachFailed = false
+  if (quitouCpf && input.pdfBase64) {
     try {
       const bytes = Buffer.from(input.pdfBase64, 'base64')
       const file = new File(
@@ -220,13 +208,9 @@ export async function recordQuitacaoResult(
         documentTypeKey: QUITACAO_DOC_KEY,
         file,
       })
-      // didUploadFile=false => o anexo foi PULADO de PROPOSITO (status do processo
-      // nao aceita anexos: EM_PROCESSO/FINALIZADO/CANCELADO - guard A3). NAO vira
-      // 'erro' (evita retry infinito), mas o log torna o caso VISIVEL: era o ponto
-      // cego onde o sistema marcava quitado sem anexar o termo, silenciosamente.
       logEvent('quitacao.attach', {
         processId: input.processId,
-        documentTypeKey: QUITACAO_DOC_KEY,
+        cpf: quitouCpf,
         didUploadFile: attached?.didUploadFile ?? null,
         pdfBytes: bytes.length,
       })
@@ -235,33 +219,50 @@ export async function recordQuitacaoResult(
         processId: input.processId,
         error: error instanceof Error ? error.message : String(error),
       })
-      result = 'erro'
-      message = `Quitado, mas falhou ao anexar a declaracao: ${
-        error instanceof Error ? error.message : 'erro'
-      }`
+      attachFailed = true
     }
-  } else if (input.result === 'quitado' && !input.pdfBase64) {
-    // Quitado SEM PDF: o worker nao mandou a declaracao. Visibilidade do caso.
+  } else if (quitouCpf && !input.pdfBase64) {
     logEvent('quitacao.attach', {
       processId: input.processId,
-      documentTypeKey: QUITACAO_DOC_KEY,
+      cpf: quitouCpf,
       didUploadFile: false,
-      pdfBytes: 0,
       reason: 'no_pdf',
     })
   }
 
-  let nextStatus: string = result
-  if (result === 'erro' && proc.attempts < MAX_ATTEMPTS) {
-    nextStatus = 'pending'
+  // Aplica o resultado em cada entrada (preserva as demais). 'erro' transitorio ->
+  // 'pending' (retry) enquanto attempts < MAX; ao esgotar, terminal 'erro'.
+  const exhausted = proc.attempts >= MAX_ATTEMPTS
+  const nowIso = new Date().toISOString()
+  const byCpf = new Map<string, QuitacaoConsulta>(
+    (proc.consultas ?? []).map((c) => [c.cpf, { ...c }]),
+  )
+  for (const r of input.consultas) {
+    const entry = byCpf.get(r.cpf)
+    if (!entry) continue
+    if (r.result === 'quitado') {
+      entry.status = attachFailed ? 'erro' : 'quitado'
+    } else if (r.result === 'nao_encontrado') {
+      entry.status = 'nao_encontrado'
+    } else {
+      entry.status = exhausted ? 'erro' : 'pending' // transitorio: retry ate esgotar
+    }
+    entry.checkedAt = nowIso
+    entry.message = r.message?.slice(0, 500)
   }
+  const nextConsultas = [...byCpf.values()]
+  const nextStatus = aggregateQuitacaoStatus(nextConsultas)
+  const message =
+    input.consultas.find((c) => c.cpf === quitouCpf)?.message ??
+    input.consultas[0]?.message ??
+    ''
 
   // Transicao atomica guardada por status='processing': um /result fora de ordem
-  // ou repetido (apos o processo ja ter saido de 'processing') nao sobrescreve o
-  // estado vivo.
+  // ou repetido nao sobrescreve o estado vivo.
   const updated = await db
     .update(process)
     .set({
+      quitacaoConsultas: nextConsultas,
       caixaQuitacaoStatus: nextStatus,
       caixaQuitacaoMessage: message.slice(0, 1000),
       caixaQuitacaoCheckedAt: new Date(),
@@ -286,7 +287,7 @@ export async function recordQuitacaoResult(
   logEvent('quitacao.recorded', {
     processId: input.processId,
     finalStatus: nextStatus,
-    result,
+    quitouCpf: quitouCpf ?? null,
   })
 
   return { status: nextStatus }

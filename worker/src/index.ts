@@ -75,8 +75,11 @@ async function claimJob(): Promise<Job | null> {
 
 async function reportResult(
   processId: string,
-  result: string,
-  message: string,
+  consultas: Array<{
+    cpf: string
+    result: 'quitado' | 'nao_encontrado' | 'erro'
+    message?: string
+  }>,
   pdf: { filename: string; bytes: Buffer } | null,
 ): Promise<void> {
   const res = await fetch(`${API_URL}/api/internal/caixa-quitacao/result`, {
@@ -84,8 +87,7 @@ async function reportResult(
     headers: { 'x-internal-token': TOKEN, 'content-type': 'application/json' },
     body: JSON.stringify({
       processId,
-      result,
-      message,
+      consultas,
       pdfBase64: pdf ? pdf.bytes.toString('base64') : null,
       pdfFilename: pdf?.filename ?? null,
     }),
@@ -154,7 +156,13 @@ async function main(): Promise<void> {
     // emitir o termo (short-circuit). nao_encontrado -> tenta o proximo CPF; quitado
     // -> reporta e para; erro (transitorio) -> reporta erro e para (o job inteiro
     // re-tenta depois). Assim consulta-se o 2o CPF SO quando o 1o da negativa.
-    let outcome: Awaited<ReturnType<typeof consultarQuitacao>> | null = null
+    // Resultado POR CPF (na ordem tentada). pdf vem do CPF que emitiu (quitado).
+    const consultas: Array<{
+      cpf: string
+      result: 'quitado' | 'nao_encontrado' | 'erro'
+      message?: string
+    }> = []
+    let pdf: { filename: string; bytes: Buffer } | null = null
     try {
       for (const cpf of job.cpfs) {
         // Pacing GLOBAL por CONSULTA: >= MIN_INTERVAL_MS desde o inicio da anterior
@@ -165,6 +173,7 @@ async function main(): Promise<void> {
         }
         lastConsultaAt = Date.now()
 
+        let outcome: Awaited<ReturnType<typeof consultarQuitacao>>
         let ctx: Awaited<ReturnType<Browser['newContext']>> | null = null
         try {
           if (!browser.isConnected()) {
@@ -183,31 +192,42 @@ async function main(): Promise<void> {
           }
         }
 
-        // quitado -> emitiu para este CPF: para (anexa o termo dele).
+        consultas.push({
+          cpf,
+          result: outcome.result,
+          message: outcome.message,
+        })
+        // quitado -> emitiu para este CPF: guarda o pdf e PARA (short-circuit).
         // erro -> transitorio: para e re-tenta o job depois.
         // nao_encontrado -> tenta o proximo CPF (se houver).
-        if (outcome.result === 'quitado' || outcome.result === 'erro') {
+        if (outcome.result === 'quitado') {
+          pdf = outcome.pdf
+          break
+        }
+        if (outcome.result === 'erro') {
           break
         }
       }
 
-      // outcome sempre setado (job.cpfs nunca vazio — garantido no claim).
-      const final = outcome ?? {
-        result: 'erro' as const,
-        message: 'Sem CPF para consultar.',
-        pdf: null,
-      }
-      await reportResult(job.processId, final.result, final.message, final.pdf)
-      console.log(`[worker] processo=${job.processId} -> ${final.result}`)
+      await reportResult(job.processId, consultas, pdf)
+      console.log(
+        `[worker] processo=${job.processId} -> ${consultas
+          .map((c) => c.result)
+          .join(',')}`,
+      )
     } catch (error) {
       console.error(
         `[worker] erro no processo=${job.processId}:`,
         (error as Error).message,
       )
+      // Erro inesperado (browser/crash): marca todos os CPFs como 'erro' (retry).
       await reportResult(
         job.processId,
-        'erro',
-        (error as Error).message?.slice(0, 300) ?? 'erro inesperado',
+        job.cpfs.map((cpf) => ({
+          cpf,
+          result: 'erro' as const,
+          message: (error as Error).message?.slice(0, 300) ?? 'erro inesperado',
+        })),
         null,
       ).catch(() => {})
     }
