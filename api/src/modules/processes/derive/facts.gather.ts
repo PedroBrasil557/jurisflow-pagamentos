@@ -2,7 +2,6 @@ import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../../../shared/db'
 import { aiAnalysis } from '../../ai-analysis/ai-analysis.schema'
 import { housingComplex } from '../../housing-complexes/housing-complexes.schema'
-import { compareCaixaOwner } from '../processes.caixa-owner.compare'
 import {
   type ConjuntoMatchResult,
   matchConjuntoInAddress,
@@ -274,29 +273,19 @@ export async function gatherFacts(
       : absent()
 
   // ── conjuntoMatch ── casa o endereco da procuracao com o cadastro (match PURO,
-  // deterministico). So confia no endereco se o OUTORGANTE for o titular do processo
-  // (gate reaproveitado do antigo procuracao-conjunto). O auto-apply fica no reconcile.
-  const outorgantesPersons = rawOutorgantes ? toPersons(rawOutorgantes) : []
-  const ownerConfirmed =
-    !!proc.cpf?.trim() && outorgantesPersons.length > 0
-      ? compareCaixaOwner(
-          outorgantesPersons.map((p) => ({ nome: p.nome, cpf: p.cpf })),
-          { fullName: proc.fullName, cpf: proc.cpf },
-        ).result === 'titular'
-      : false
-
+  // deterministico). O bundle e por-processo (a procuracao ali e DESTE cliente),
+  // entao NAO ha gate de outorgante x titular — confia direto no endereco extraido
+  // (evita falso-negativo por erro de OCR no CPF do outorgante). Auto-apply no reconcile.
   let conjuntoMatch: Fact<ConjuntoMatchResult>
   if (rawProcuracaoEndereco) {
     conjuntoMatch = ready(
-      ownerConfirmed
-        ? matchConjuntoInAddress(
-            {
-              addressText: rawProcuracaoEndereco,
-              addressCity: rawProcuracaoCidade,
-            },
-            conjuntos,
-          )
-        : { result: 'review', matchedBy: 'none' },
+      matchConjuntoInAddress(
+        {
+          addressText: rawProcuracaoEndereco,
+          addressCity: rawProcuracaoCidade,
+        },
+        conjuntos,
+      ),
     )
   } else if (classifiedSet.has(DOC.procuracao)) {
     conjuntoMatch = pending()
