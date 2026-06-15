@@ -1172,6 +1172,19 @@ async function loadProcessChecklistData(currentProcess: ProcessRecord) {
   })
 }
 
+// Mapa key -> processDocumentId de TODOS os slots do checklist, INCLUSIVE os
+// condicionais ocultos na exibicao (ex.: contrato_compra_venda so "aparece" com
+// ownerType=nao_titular). O ANEXO (import/split) deve poder gravar um doc
+// classificado no seu slot ANTES de o ownerType ser derivado — a condicao e de
+// EXIBICAO/obrigatoriedade, nao de existencia do slot.
+export async function getChecklistSlotIdsByKey(
+  processId: string,
+): Promise<Map<string, string>> {
+  await ensureProcessChecklistItems(processId)
+  const items = await listChecklistItems(processId)
+  return new Map(items.map((item) => [item.documentType.key, item.id]))
+}
+
 export async function getProcessChecklist(
   processId: string,
   userId: string,
