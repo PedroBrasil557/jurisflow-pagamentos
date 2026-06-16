@@ -1,5 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm'
 import { db } from '../../../shared/db'
+import { normalizeName } from '../../../shared/utils/name'
 import { aiAnalysis } from '../../ai-analysis/ai-analysis.schema'
 import { housingComplex } from '../../housing-complexes/housing-complexes.schema'
 import {
@@ -53,6 +54,29 @@ function toPerson(r: RawP | undefined): Person | null {
 }
 const toPersons = (rs: RawP[] | undefined): Person[] =>
   (rs ?? []).map(toPerson).filter((p): p is Person => p !== null)
+
+// Junta os termoCompradores espalhados em audits diferentes (o termo_entrega tem o
+// CPF; a declaracao de quitacao pode so ter o nome). Dedup por nome NORMALIZADO
+// (normalizeName: sem acento/caixa/espaco — MESMA regra do compareCaixaOwner, que
+// decide o ownerType). Usar `.toUpperCase()` cru divergia: "José"/"JOSE" nao fundiam
+// e inflavam a contagem de compradores (co-comprador fantasma -> exige RG inexistente).
+// Eleva a versao com CPF quando o mesmo nome reaparece. PURA (testavel).
+export function mergeTermoCompradores(outputs: DocOutput[]): RawP[] {
+  const merged: RawP[] = []
+  for (const out of outputs) {
+    for (const t of out.termoCompradores ?? []) {
+      if (!t.nome) continue
+      const key = normalizeName(t.nome)
+      const idx = merged.findIndex((x) => normalizeName(x.nome ?? '') === key)
+      if (idx === -1) {
+        merged.push(t)
+      } else if (!merged[idx].cpf && t.cpf) {
+        merged[idx] = t // upgrade: prioriza a versao com CPF
+      }
+    }
+  }
+  return merged
+}
 // Audit LEGADO kind caixa_owner (analise removida na v3): por doc, o titular do
 // termo (1o comprador) e o conjuge (2o comprador). Lido so como FALLBACK para
 // processos antigos cujo document_extraction ainda nao traz termoCompradores.
@@ -195,13 +219,8 @@ export async function gatherFacts(
   let rawOutorgantes: RawP[] | undefined
   let rawProcuracaoEndereco: string | undefined
   let rawProcuracaoCidade: string | undefined
-  // termoCompradores e UNIAO entre audits: os compradores podem estar espalhados em
-  // docs diferentes (termo_entrega tem o CPF; a declaracao de quitacao pode so ter o
-  // nome). Dedup por nome normalizado, ELEVANDO a versao que tem CPF — reproduz o
-  // comportamento da antiga analise caixa-owner, que lia todos os termos juntos.
-  const termoMerged: RawP[] = []
-  for (const a of docExtractions) {
-    const out = (a.output ?? {}) as DocOutput
+  const docOutputs = docExtractions.map((a) => (a.output ?? {}) as DocOutput)
+  for (const out of docOutputs) {
     if (!rawCompraVenda && out.compraVenda) rawCompraVenda = out.compraVenda
     if (!rawOutorgantes && out.outorgantes?.length) {
       rawOutorgantes = out.outorgantes
@@ -210,19 +229,10 @@ export async function gatherFacts(
       rawProcuracaoEndereco = out.procuracaoEndereco
       rawProcuracaoCidade = out.procuracaoCidade
     }
-    for (const t of out.termoCompradores ?? []) {
-      if (!t.nome) continue
-      const key = t.nome.trim().toUpperCase()
-      const idx = termoMerged.findIndex(
-        (x) => (x.nome ?? '').trim().toUpperCase() === key,
-      )
-      if (idx === -1) {
-        termoMerged.push(t)
-      } else if (!termoMerged[idx].cpf && t.cpf) {
-        termoMerged[idx] = t // upgrade: prioriza a versao com CPF
-      }
-    }
   }
+  // termoCompradores e UNIAO entre audits (helper puro: dedup por nome normalizado,
+  // elevando a versao com CPF) — reproduz a antiga analise caixa-owner.
+  const termoMerged = mergeTermoCompradores(docOutputs)
   const rawTermoCompradores = termoMerged.length ? termoMerged : undefined
 
   // ── termoCompradores ── FONTE PRIMARIA: document_extraction (v3, extracao por

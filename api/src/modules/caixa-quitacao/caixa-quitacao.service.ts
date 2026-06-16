@@ -6,6 +6,7 @@ import { attachSystemChecklistFile } from '../processes/processes.checklist.serv
 import { process } from '../processes/processes.schema'
 import {
   aggregateQuitacaoStatus,
+  nextConsultaStatus,
   type QuitacaoConsulta,
 } from './quitacao-consulta'
 
@@ -193,8 +194,11 @@ export async function recordQuitacaoResult(
   }
 
   // Quitado + PDF: anexa a Declaracao de Quitacao (do CPF que emitiu). Se o anexo
-  // falhar, esse CPF vira 'erro' (reprocessa — a consulta e idempotente).
+  // falhar, esse CPF NAO termina como 'quitado': volta para 'pending' (reprocessa —
+  // a consulta e idempotente) ate as tentativas esgotarem. Assim uma quitacao ja
+  // confirmada nao e perdida por uma falha transitoria de armazenamento.
   let attachFailed = false
+  let attachError = ''
   if (quitouCpf && input.pdfBase64) {
     try {
       const bytes = Buffer.from(input.pdfBase64, 'base64')
@@ -215,9 +219,10 @@ export async function recordQuitacaoResult(
         pdfBytes: bytes.length,
       })
     } catch (error) {
+      attachError = error instanceof Error ? error.message : String(error)
       logErrorEvent('quitacao.attach_failed', {
         processId: input.processId,
-        error: error instanceof Error ? error.message : String(error),
+        error: attachError,
       })
       attachFailed = true
     }
@@ -240,15 +245,17 @@ export async function recordQuitacaoResult(
   for (const r of input.consultas) {
     const entry = byCpf.get(r.cpf)
     if (!entry) continue
-    if (r.result === 'quitado') {
-      entry.status = attachFailed ? 'erro' : 'quitado'
-    } else if (r.result === 'nao_encontrado') {
-      entry.status = 'nao_encontrado'
-    } else {
-      entry.status = exhausted ? 'erro' : 'pending' // transitorio: retry ate esgotar
-    }
+    entry.status = nextConsultaStatus(r.result, { attachFailed, exhausted })
     entry.checkedAt = nowIso
-    entry.message = r.message?.slice(0, 500)
+    // Quitou mas falhou ao anexar: preserva o MOTIVO real (sem isso, a mensagem
+    // visivel seria a do "quitado" e esconderia a causa da volta para retry/erro).
+    entry.message =
+      r.result === 'quitado' && attachFailed
+        ? `Quitado, mas falhou ao anexar a declaracao: ${attachError}`.slice(
+            0,
+            500,
+          )
+        : r.message?.slice(0, 500)
   }
   const nextConsultas = [...byCpf.values()]
   const nextStatus = aggregateQuitacaoStatus(nextConsultas)
