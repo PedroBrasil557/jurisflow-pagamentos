@@ -23,6 +23,15 @@ export const titularQuitacaoStatusLabels: Record<TitularQuitacaoStatus, string> 
     erro: 'Erro',
   }
 
+export const titularAverbacaoValues = ['sim', 'nao', 'indeterminado'] as const
+export type TitularAverbacao = (typeof titularAverbacaoValues)[number]
+
+export const titularAverbacaoLabels: Record<TitularAverbacao, string> = {
+  sim: 'Sim',
+  nao: 'Nao',
+  indeterminado: 'Indeterminado',
+}
+
 export type TitularesListQuery = {
   page?: number
   limit?: number
@@ -31,7 +40,9 @@ export type TitularesListQuery = {
   municipio?: string
   modalidade?: string[]
   empreendimento?: string[]
+  logradouros?: string[]
   quitacaoStatuses?: TitularQuitacaoStatus[]
+  averbacoes?: TitularAverbacao[]
   assinaturaFrom?: string
   assinaturaTo?: string
 }
@@ -60,9 +71,11 @@ export async function fetchTitulares(
       ...(query.empreendimento?.length
         ? { empreendimento: query.empreendimento }
         : {}),
+      ...(query.logradouros?.length ? { logradouros: query.logradouros } : {}),
       ...(query.quitacaoStatuses?.length
         ? { quitacaoStatuses: query.quitacaoStatuses }
         : {}),
+      ...(query.averbacoes?.length ? { averbacoes: query.averbacoes } : {}),
       ...(query.assinaturaFrom ? { assinaturaFrom: query.assinaturaFrom } : {}),
       ...(query.assinaturaTo ? { assinaturaTo: query.assinaturaTo } : {}),
     },
@@ -111,6 +124,46 @@ export async function fetchEmpreendimentoOptions(): Promise<string[]> {
   return body.options
 }
 
+export async function fetchLogradouroOptions(): Promise<string[]> {
+  const response = await titularesRoute.opcoes.logradouro.$get()
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel carregar os logradouros.'),
+    )
+  }
+
+  const body = (await response.json()) as { options: string[] }
+  return body.options
+}
+
+// URL do export .xlsx com os filtros atuais (sem page/limit). Same-origin →
+// abrir num anchor dispara o download com o cookie de sessao.
+export function titularesExportUrl(
+  query: Omit<TitularesListQuery, 'page' | 'limit'>,
+): string {
+  return titularesRoute.export
+    .$url({
+      query: {
+        ...(query.search ? { search: query.search } : {}),
+        ...(query.uf?.length ? { uf: query.uf } : {}),
+        ...(query.municipio ? { municipio: query.municipio } : {}),
+        ...(query.modalidade?.length ? { modalidade: query.modalidade } : {}),
+        ...(query.empreendimento?.length
+          ? { empreendimento: query.empreendimento }
+          : {}),
+        ...(query.logradouros?.length ? { logradouros: query.logradouros } : {}),
+        ...(query.quitacaoStatuses?.length
+          ? { quitacaoStatuses: query.quitacaoStatuses }
+          : {}),
+        ...(query.averbacoes?.length ? { averbacoes: query.averbacoes } : {}),
+        ...(query.assinaturaFrom ? { assinaturaFrom: query.assinaturaFrom } : {}),
+        ...(query.assinaturaTo ? { assinaturaTo: query.assinaturaTo } : {}),
+      },
+    })
+    .toString()
+}
+
 export async function reconsultarTitularesRequest(
   ids: string[],
 ): Promise<{ enqueued: number }> {
@@ -143,6 +196,16 @@ export function titularDocumentPreviewUrl(
   docId: string,
 ): string {
   return titularDocumentoRoute.preview
+    .$url({ param: { id: titularId, docId } })
+    .toString()
+}
+
+// URL do CONTEUDO (bytes) same-origin — consumida pelo viewer de PDF (react-pdf).
+export function titularDocumentContentUrl(
+  titularId: string,
+  docId: string,
+): string {
+  return titularDocumentoRoute.conteudo
     .$url({ param: { id: titularId, docId } })
     .toString()
 }

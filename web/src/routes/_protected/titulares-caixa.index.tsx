@@ -21,7 +21,9 @@ function TitularesRoute() {
     <TitularesCaixaPage
       currentAssinaturaFrom={search.assinaturaFrom}
       currentAssinaturaTo={search.assinaturaTo}
+      currentAverbacoes={search.averbacoes ?? []}
       currentEmpreendimento={search.empreendimento ?? []}
+      currentLogradouros={search.logradouros ?? []}
       currentModalidade={search.modalidade ?? []}
       currentMunicipio={search.municipio ?? ''}
       currentPage={search.page ?? 1}

@@ -1,11 +1,14 @@
 import { eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
+import { logEvent } from '../../shared/observability/log'
+import { extractPdfText } from '../../shared/pdf/extract-text'
 import {
   buildStorageObjectKey,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
 import { registerQuitacaoSubject } from '../quitacao-queue/quitacao-queue.subjects'
+import { classifyAverbacao } from './averbacao'
 import {
   titularContratoCaixa,
   titularDocumento,
@@ -79,5 +82,23 @@ registerQuitacaoSubject('titular', {
           createdAt: sql`now()`,
         },
       })
+
+    // Le o termo e deriva o flag "Averbacao" (frase "procedimento de averbacao").
+    // Best-effort: nunca quebra o anexo — em falha de leitura fica 'indeterminado'.
+    let averbacao: 'sim' | 'nao' | 'indeterminado' = 'indeterminado'
+    try {
+      const text = await extractPdfText(document.bytes)
+      averbacao = classifyAverbacao(text)
+    } catch (error) {
+      logEvent('titular.averbacao_error', {
+        titularId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    await db
+      .update(titularContratoCaixa)
+      .set({ averbacao, averbacaoCheckedAt: new Date() })
+      .where(eq(titularContratoCaixa.id, titularId))
+    logEvent('titular.averbacao', { titularId, averbacao })
   },
 })

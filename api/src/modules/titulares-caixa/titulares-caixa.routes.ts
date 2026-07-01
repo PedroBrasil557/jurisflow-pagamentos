@@ -14,14 +14,18 @@ import {
 } from '../../shared/validation/validators'
 import { importTitularesFromXlsx } from './titulares-caixa.import.service'
 import {
+  exportTitularesQuerySchema,
   listTitularesQuerySchema,
   reconsultarPayloadSchema,
   titularDocumentoParamsSchema,
 } from './titulares-caixa.schemas'
 import {
+  exportTitulares,
+  getTitularDocumentBytes,
   getTitularDocumentDownloadUrl,
   getTitularDocumentInlineUrl,
   listEmpreendimentoOptions,
+  listLogradouroOptions,
   listTitulares,
   reconsultarTitulares,
 } from './titulares-caixa.service'
@@ -43,10 +47,37 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
+  // Export Excel (.xlsx) respeitando os filtros atuais da tela.
+  .get('/export', queryValidator(exportTitularesQuerySchema), async (c) => {
+    try {
+      const bytes = await exportTitulares(c.req.valid('query'))
+      const date = new Date().toISOString().slice(0, 10)
+      c.header(
+        'content-type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      )
+      c.header(
+        'content-disposition',
+        `attachment; filename="titulares-caixa-${date}.xlsx"`,
+      )
+      return c.body(bytes.slice().buffer as ArrayBuffer)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
   // Opcoes distintas de empreendimento para o filtro multiselect.
   .get('/opcoes/empreendimento', async (c) => {
     try {
       const result = await listEmpreendimentoOptions()
+      return c.json(result, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  // Opcoes distintas de logradouro para o filtro multiselect.
+  .get('/opcoes/logradouro', async (c) => {
+    try {
+      const result = await listLogradouroOptions()
       return c.json(result, 200)
     } catch (error) {
       return handleServiceError(c, error)
@@ -118,6 +149,24 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
         const { id, docId } = c.req.valid('param')
         const url = await getTitularDocumentInlineUrl({ titularId: id, docId })
         return c.redirect(url)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // Conteudo (bytes) SAME-ORIGIN para o viewer de PDF (react-pdf/pdfjs) — evita
+  // CORS/redirect ao MinIO. Cookie-auth admin.
+  .get(
+    '/:id/documentos/:docId/conteudo',
+    paramsValidator(titularDocumentoParamsSchema),
+    async (c) => {
+      try {
+        const { id, docId } = c.req.valid('param')
+        const doc = await getTitularDocumentBytes({ titularId: id, docId })
+        c.header('content-type', doc.contentType || 'application/pdf')
+        c.header('content-disposition', 'inline')
+        c.header('cache-control', 'private, max-age=300')
+        return c.body(doc.bytes.slice().buffer as ArrayBuffer)
       } catch (error) {
         return handleServiceError(c, error)
       }

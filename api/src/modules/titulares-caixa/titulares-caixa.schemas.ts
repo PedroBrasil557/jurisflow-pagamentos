@@ -1,5 +1,8 @@
 import { z } from 'zod'
-import { titularQuitacaoStatuses } from './titulares-caixa.schema'
+import {
+  titularAverbacaoValues,
+  titularQuitacaoStatuses,
+} from './titulares-caixa.schema'
 
 // Query param multi-valor: chega como string unica ou array na URL. Normaliza
 // para array (ou undefined). O `.optional()` fica FORA do preprocess para o Hono
@@ -22,14 +25,38 @@ export const listTitularesQuerySchema = z.object({
   municipio: z.string().trim().optional(),
   modalidade: z.preprocess(toArray, z.array(z.string())).optional(),
   empreendimento: z.preprocess(toArray, z.array(z.string())).optional(),
+  logradouros: z.preprocess(toArray, z.array(z.string())).optional(),
   quitacaoStatuses: z
     .preprocess(toArray, z.array(z.enum(titularQuitacaoStatuses)))
+    .optional(),
+  averbacoes: z
+    .preprocess(toArray, z.array(z.enum(titularAverbacaoValues)))
     .optional(),
   assinaturaFrom: z.string().trim().optional(),
   assinaturaTo: z.string().trim().optional(),
 })
 
 export type ListTitularesQuery = z.infer<typeof listTitularesQuerySchema>
+
+// Mesmos filtros da listagem, sem paginacao — usado no export Excel.
+export const exportTitularesQuerySchema = z.object({
+  search: z.string().trim().optional(),
+  uf: z.preprocess(toArray, z.array(z.string())).optional(),
+  municipio: z.string().trim().optional(),
+  modalidade: z.preprocess(toArray, z.array(z.string())).optional(),
+  empreendimento: z.preprocess(toArray, z.array(z.string())).optional(),
+  logradouros: z.preprocess(toArray, z.array(z.string())).optional(),
+  quitacaoStatuses: z
+    .preprocess(toArray, z.array(z.enum(titularQuitacaoStatuses)))
+    .optional(),
+  averbacoes: z
+    .preprocess(toArray, z.array(z.enum(titularAverbacaoValues)))
+    .optional(),
+  assinaturaFrom: z.string().trim().optional(),
+  assinaturaTo: z.string().trim().optional(),
+})
+
+export type ExportTitularesQuery = z.infer<typeof exportTitularesQuerySchema>
 
 export const reconsultarPayloadSchema = z.object({
   // Vazio ou ausente = reconsultar TODOS os filtrados? Nao — exige ids explicitos

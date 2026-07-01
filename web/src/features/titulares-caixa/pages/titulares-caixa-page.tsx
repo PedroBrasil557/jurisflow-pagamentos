@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import {
   Download,
   Eye,
+  FileDown,
   FileSpreadsheet,
   RefreshCw,
   SlidersHorizontal,
@@ -19,6 +20,7 @@ import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
 import { AppDialog, DialogFooter } from '@/shared/components/app-dialog'
 import { PageHeader } from '@/shared/components/page-header'
+import { PdfViewer } from '@/shared/components/pdf-viewer/pdf-viewer'
 import { SearchableMultiSelect } from '@/shared/components/searchable-multi-select'
 import { SearchInput } from '@/shared/components/search-input'
 import { StatusBadge } from '@/shared/components/status-badge'
@@ -34,14 +36,19 @@ import {
 } from '../services/titulares-caixa.mutations'
 import {
   empreendimentoOptionsQuery,
+  logradouroOptionsQuery,
   titularListOptions,
 } from '../services/titulares-caixa.queries'
 import {
   defaultTitularesPageLimit,
+  type TitularAverbacao,
   type TitularListItem,
   type TitularQuitacaoStatus,
+  titularAverbacaoLabels,
+  titularAverbacaoValues,
+  titularDocumentContentUrl,
   titularDocumentDownloadUrl,
-  titularDocumentPreviewUrl,
+  titularesExportUrl,
   titularQuitacaoStatuses,
   titularQuitacaoStatusLabels,
 } from '../services/titulares-caixa.service'
@@ -54,6 +61,12 @@ const quitacaoTone: Record<TitularQuitacaoStatus, StatusTone> = {
   quitado: 'success',
   nao_encontrado: 'warning',
   erro: 'error',
+}
+
+const averbacaoTone: Record<TitularAverbacao, StatusTone> = {
+  sim: 'success',
+  nao: 'ghost',
+  indeterminado: 'warning',
 }
 
 function formatCpf(cpf: string) {
@@ -76,7 +89,9 @@ type TitularesCaixaPageProps = {
   currentMunicipio: string
   currentModalidade: string[]
   currentEmpreendimento: string[]
+  currentLogradouros: string[]
   currentQuitacaoStatuses: TitularQuitacaoStatus[]
+  currentAverbacoes: TitularAverbacao[]
   currentAssinaturaFrom?: string
   currentAssinaturaTo?: string
 }
@@ -88,7 +103,9 @@ export function TitularesCaixaPage({
   currentMunicipio,
   currentModalidade,
   currentEmpreendimento,
+  currentLogradouros,
   currentQuitacaoStatuses,
+  currentAverbacoes,
   currentAssinaturaFrom,
   currentAssinaturaTo,
 }: TitularesCaixaPageProps) {
@@ -119,9 +136,11 @@ export function TitularesCaixaPage({
       empreendimento: currentEmpreendimento.length
         ? currentEmpreendimento
         : undefined,
+      logradouros: currentLogradouros.length ? currentLogradouros : undefined,
       quitacaoStatuses: currentQuitacaoStatuses.length
         ? currentQuitacaoStatuses
         : undefined,
+      averbacoes: currentAverbacoes.length ? currentAverbacoes : undefined,
       assinaturaFrom: currentAssinaturaFrom,
       assinaturaTo: currentAssinaturaTo,
     }),
@@ -140,9 +159,11 @@ export function TitularesCaixaPage({
       ...(currentEmpreendimento.length
         ? { empreendimento: currentEmpreendimento }
         : {}),
+      ...(currentLogradouros.length ? { logradouros: currentLogradouros } : {}),
       ...(currentQuitacaoStatuses.length
         ? { quitacaoStatuses: currentQuitacaoStatuses }
         : {}),
+      ...(currentAverbacoes.length ? { averbacoes: currentAverbacoes } : {}),
       ...(currentAssinaturaFrom ? { assinaturaFrom: currentAssinaturaFrom } : {}),
       ...(currentAssinaturaTo ? { assinaturaTo: currentAssinaturaTo } : {}),
       ...overrides,
@@ -154,8 +175,10 @@ export function TitularesCaixaPage({
     if (merged.modalidade?.length) next.modalidade = merged.modalidade
     if (merged.empreendimento?.length)
       next.empreendimento = merged.empreendimento
+    if (merged.logradouros?.length) next.logradouros = merged.logradouros
     if (merged.quitacaoStatuses?.length)
       next.quitacaoStatuses = merged.quitacaoStatuses
+    if (merged.averbacoes?.length) next.averbacoes = merged.averbacoes
     if (merged.assinaturaFrom) next.assinaturaFrom = merged.assinaturaFrom
     if (merged.assinaturaTo) next.assinaturaTo = merged.assinaturaTo
     return next
@@ -195,12 +218,39 @@ export function TitularesCaixaPage({
     })
   }
 
+  function handleExport() {
+    const url = titularesExportUrl({
+      search: debouncedSearch || undefined,
+      uf: currentUf.length ? currentUf : undefined,
+      municipio: currentMunicipio || undefined,
+      modalidade: currentModalidade.length ? currentModalidade : undefined,
+      empreendimento: currentEmpreendimento.length
+        ? currentEmpreendimento
+        : undefined,
+      logradouros: currentLogradouros.length ? currentLogradouros : undefined,
+      quitacaoStatuses: currentQuitacaoStatuses.length
+        ? currentQuitacaoStatuses
+        : undefined,
+      averbacoes: currentAverbacoes.length ? currentAverbacoes : undefined,
+      assinaturaFrom: currentAssinaturaFrom,
+      assinaturaTo: currentAssinaturaTo,
+    })
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.rel = 'noreferrer'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  }
+
   const activeFilterCount =
     currentUf.length +
     (currentMunicipio ? 1 : 0) +
     currentModalidade.length +
     currentEmpreendimento.length +
+    currentLogradouros.length +
     currentQuitacaoStatuses.length +
+    currentAverbacoes.length +
     (currentAssinaturaFrom ? 1 : 0) +
     (currentAssinaturaTo ? 1 : 0)
 
@@ -222,12 +272,19 @@ export function TitularesCaixaPage({
       id: 'empreendimento',
       header: 'Empreendimento',
       cellClassName: 'min-w-[12rem]',
-      render: (t) => (
-        <div className="grid gap-0.5">
-          <p>{t.empreendimento}</p>
-          <p className="text-sm text-muted-foreground">{t.modalidade}</p>
-        </div>
-      ),
+      render: (t) => {
+        const endereco = [t.logradouro, t.complemento]
+          .filter((v) => v?.trim())
+          .join(' - ')
+        return (
+          <div className="grid gap-0.5">
+            <p>{t.empreendimento}</p>
+            {endereco ? (
+              <p className="text-sm text-muted-foreground">{endereco}</p>
+            ) : null}
+          </div>
+        )
+      },
     },
     {
       id: 'local',
@@ -258,6 +315,18 @@ export function TitularesCaixaPage({
           {titularQuitacaoStatusLabels[t.quitacaoStatus]}
         </StatusBadge>
       ),
+    },
+    {
+      id: 'averbacao',
+      header: 'Averbacao',
+      render: (t) =>
+        t.averbacao ? (
+          <StatusBadge tone={averbacaoTone[t.averbacao]}>
+            {titularAverbacaoLabels[t.averbacao]}
+          </StatusBadge>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
     },
     {
       id: 'actions',
@@ -316,6 +385,10 @@ export function TitularesCaixaPage({
         title="Titulares Caixa"
         description="Cadastro de titulares de contrato Caixa e consulta de quitacao"
       >
+        <Button onClick={handleExport} variant="outline">
+          <FileDown className="size-4" />
+          Exportar
+        </Button>
         <Button onClick={() => setImportOpen(true)}>
           <Upload className="size-4" />
           Importar planilha
@@ -459,7 +532,9 @@ export function TitularesCaixaPage({
           municipio: currentMunicipio,
           modalidade: currentModalidade,
           empreendimento: currentEmpreendimento,
+          logradouros: currentLogradouros,
           quitacaoStatuses: currentQuitacaoStatuses,
+          averbacoes: currentAverbacoes,
           assinaturaFrom: currentAssinaturaFrom,
           assinaturaTo: currentAssinaturaTo,
         }}
@@ -488,17 +563,17 @@ export function TitularesCaixaPage({
             </DialogFooter>
           }
           icon={FileSpreadsheet}
-          maxWidth="3xl"
+          maxWidth="screen"
           onClose={() => setPreviewDoc(null)}
           open
           title={`Termo de quitacao — ${previewDoc.nome}`}
           variant="info"
         >
-          <iframe
-            className="h-[70vh] w-full rounded-md border border-border"
-            src={titularDocumentPreviewUrl(previewDoc.id, previewDoc.docId)}
-            title="Termo de quitacao"
-          />
+          <div className="h-[80vh] overflow-hidden rounded-md border border-border">
+            <PdfViewer
+              url={titularDocumentContentUrl(previewDoc.id, previewDoc.docId)}
+            />
+          </div>
         </AppDialog>
       ) : null}
     </div>
@@ -562,7 +637,9 @@ type FiltersValue = {
   municipio: string
   modalidade: string[]
   empreendimento: string[]
+  logradouros: string[]
   quitacaoStatuses: TitularQuitacaoStatus[]
+  averbacoes: TitularAverbacao[]
   assinaturaFrom?: string
   assinaturaTo?: string
 }
@@ -590,6 +667,15 @@ function FiltersDialog({ initial, onApply, onClose, open }: FiltersDialogProps) 
     () => (optionsQuery.data ?? []).map((e) => ({ value: e, label: e })),
     [optionsQuery.data],
   )
+  const [logradouros, setLogradouros] = useState<string[]>(initial.logradouros)
+  const logradouroQuery = useQuery(logradouroOptionsQuery())
+  const logradouroOptions = useMemo(
+    () => (logradouroQuery.data ?? []).map((e) => ({ value: e, label: e })),
+    [logradouroQuery.data],
+  )
+  const [averbacoes, setAverbacoes] = useState<TitularAverbacao[]>(
+    initial.averbacoes,
+  )
   const [assinaturaFrom, setAssinaturaFrom] = useState(
     initial.assinaturaFrom ?? '',
   )
@@ -601,13 +687,21 @@ function FiltersDialog({ initial, onApply, onClose, open }: FiltersDialogProps) 
     )
   }
 
+  function toggleAverbacao(value: TitularAverbacao, checked: boolean) {
+    setAverbacoes((prev) =>
+      checked ? [...prev, value] : prev.filter((s) => s !== value),
+    )
+  }
+
   function submit() {
     onApply({
       uf: uf.trim() ? [uf.trim().toUpperCase()] : [],
       municipio: municipio.trim(),
       modalidade: modalidade.trim() ? [modalidade.trim()] : [],
       empreendimento,
+      logradouros,
       quitacaoStatuses: statuses,
+      averbacoes,
       assinaturaFrom: assinaturaFrom || undefined,
       assinaturaTo: assinaturaTo || undefined,
     })
@@ -673,6 +767,16 @@ function FiltersDialog({ initial, onApply, onClose, open }: FiltersDialogProps) 
           value={empreendimento}
         />
 
+        <SearchableMultiSelect
+          isLoading={logradouroQuery.isLoading}
+          label="Logradouro"
+          onChange={setLogradouros}
+          options={logradouroOptions}
+          placeholder="Todos os logradouros"
+          searchPlaceholder="Buscar logradouro..."
+          value={logradouros}
+        />
+
         <div className="grid gap-2">
           <Label>Status da quitacao</Label>
           <div className="grid grid-cols-2 gap-2">
@@ -690,6 +794,28 @@ function FiltersDialog({ initial, onApply, onClose, open }: FiltersDialogProps) 
                   }
                 />
                 {titularQuitacaoStatusLabels[status]}
+              </Label>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-2">
+          <Label>Averbacao</Label>
+          <div className="grid grid-cols-2 gap-2">
+            {titularAverbacaoValues.map((value) => (
+              <Label
+                className="flex items-center gap-2 text-sm font-normal"
+                htmlFor={`averbacao-${value}`}
+                key={value}
+              >
+                <Checkbox
+                  checked={averbacoes.includes(value)}
+                  id={`averbacao-${value}`}
+                  onCheckedChange={(checked) =>
+                    toggleAverbacao(value, checked === true)
+                  }
+                />
+                {titularAverbacaoLabels[value]}
               </Label>
             ))}
           </div>

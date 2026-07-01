@@ -31,6 +31,16 @@ export const titularQuitacaoStatusEnum = pgEnum(
   titularQuitacaoStatuses,
 )
 
+// Flag "Averbacao" lido do termo de quitacao (frase "procedimento de averbacao").
+// null = ainda nao analisado; indeterminado = PDF ilegivel/template desconhecido.
+export const titularAverbacaoValues = ['sim', 'nao', 'indeterminado'] as const
+export type TitularAverbacao = (typeof titularAverbacaoValues)[number]
+
+export const titularAverbacaoEnum = pgEnum(
+  'titular_averbacao',
+  titularAverbacaoValues,
+)
+
 export const titularContratoCaixa = pgTable(
   'titular_contrato_caixa',
   {
@@ -57,6 +67,9 @@ export const titularContratoCaixa = pgTable(
       .notNull(),
     quitacaoMessage: text('quitacao_message'),
     quitacaoLastCheckedAt: timestamp('quitacao_last_checked_at'),
+    // Flag "Averbacao" derivado do termo (null = ainda nao analisado).
+    averbacao: titularAverbacaoEnum('averbacao'),
+    averbacaoCheckedAt: timestamp('averbacao_checked_at'),
     // Auditoria.
     createdByUserId: text('created_by_user_id').references(() => user.id, {
       onDelete: 'set null',
@@ -71,6 +84,7 @@ export const titularContratoCaixa = pgTable(
   (table) => [
     index('titular_cpf_idx').on(table.cpf),
     index('titular_quitacao_status_idx').on(table.quitacaoStatus),
+    index('titular_averbacao_idx').on(table.averbacao),
     index('titular_empreendimento_idx').on(table.empreendimento),
     index('titular_uf_idx').on(table.uf),
     index('titular_municipio_idx').on(table.municipio),

@@ -22,7 +22,7 @@ type AppDialogProps = {
   description?: string
   footer?: ReactNode
   icon?: LucideIcon
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl'
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | '3xl' | 'screen'
   onClose: () => void
   open: boolean
   title: string
@@ -36,6 +36,7 @@ const maxWidthClasses = {
   xl: 'sm:max-w-xl',
   '2xl': 'sm:max-w-2xl',
   '3xl': 'sm:max-w-3xl',
+  screen: 'sm:max-w-[95vw]',
 }
 
 const iconVariantClasses: Record<AppDialogVariant, string> = {

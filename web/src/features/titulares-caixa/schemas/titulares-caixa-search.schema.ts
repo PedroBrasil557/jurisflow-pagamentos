@@ -1,5 +1,7 @@
 import {
+  type TitularAverbacao,
   type TitularQuitacaoStatus,
+  titularAverbacaoLabels,
   titularQuitacaoStatusLabels,
 } from '../services/titulares-caixa.service'
 
@@ -10,7 +12,9 @@ export type TitularesSearch = {
   municipio?: string
   modalidade?: string[]
   empreendimento?: string[]
+  logradouros?: string[]
   quitacaoStatuses?: TitularQuitacaoStatus[]
+  averbacoes?: TitularAverbacao[]
   assinaturaFrom?: string
   assinaturaTo?: string
 }
@@ -49,6 +53,15 @@ function parseQuitacaoStatuses(
   return valid.length > 0 ? valid : undefined
 }
 
+function parseAverbacoes(value: unknown): TitularAverbacao[] | undefined {
+  const raw = Array.isArray(value) ? value : value != null ? [value] : []
+  const valid = raw.filter(
+    (item): item is TitularAverbacao =>
+      typeof item === 'string' && item in titularAverbacaoLabels,
+  )
+  return valid.length > 0 ? valid : undefined
+}
+
 function parseIsoDate(value: unknown): string | undefined {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return undefined
@@ -66,7 +79,9 @@ export function parseTitularesSearch(
   const municipio = parseText(search.municipio)
   const modalidade = parseStringArray(search.modalidade)
   const empreendimento = parseStringArray(search.empreendimento)
+  const logradouros = parseStringArray(search.logradouros)
   const quitacaoStatuses = parseQuitacaoStatuses(search.quitacaoStatuses)
+  const averbacoes = parseAverbacoes(search.averbacoes)
   const assinaturaFrom = parseIsoDate(search.assinaturaFrom)
   const assinaturaTo = parseIsoDate(search.assinaturaTo)
 
@@ -77,7 +92,9 @@ export function parseTitularesSearch(
     ...(municipio ? { municipio } : {}),
     ...(modalidade ? { modalidade } : {}),
     ...(empreendimento ? { empreendimento } : {}),
+    ...(logradouros ? { logradouros } : {}),
     ...(quitacaoStatuses ? { quitacaoStatuses } : {}),
+    ...(averbacoes ? { averbacoes } : {}),
     ...(assinaturaFrom ? { assinaturaFrom } : {}),
     ...(assinaturaTo ? { assinaturaTo } : {}),
   }
