@@ -156,6 +156,27 @@ services:
       api:
         condition: service_healthy
 
+  # Worker RPA dos TITULARES de contrato Caixa: mesma imagem/robo do worker de
+  # processos, mas roda o entrypoint proprio (src/titulares/index.ts) que consome a
+  # FILA GENERICA (/api/internal/quitacao). Processo separado — a feature de
+  # titulares e independente/desacoplada de processos.
+  titulares-worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile.dev
+    working_dir: /workspace/worker
+    command: ["node", "--import", "tsx", "src/titulares/index.ts"]
+    environment:
+      API_URL: "http://api:3556"
+      INTERNAL_API_TOKEN: "dev-internal-token-change-me"
+      POLL_MS: "5000"
+    volumes:
+      - ./worker:/workspace/worker
+      - worker_node_modules:/workspace/worker/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   web_node_modules:
   api_node_modules:

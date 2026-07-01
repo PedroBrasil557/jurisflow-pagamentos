@@ -1,0 +1,132 @@
+import {
+  date,
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core'
+import { user } from '../auth/auth.schema'
+
+// Cadastro de titular de contrato Caixa (uma linha por titular/contrato, importado
+// da planilha "lista_titular_contrato_caixa"). Dado de NEGOCIO — a mecanica da
+// consulta de quitacao vive na fila (quitacao_job); aqui guardamos apenas uma
+// PROJECAO do status para listar/filtrar rapido.
+
+// idle: sem consulta | pending: enfileirada/em andamento | terminais: quitado /
+// nao_encontrado / erro (job dead-letter).
+export const titularQuitacaoStatuses = [
+  'idle',
+  'pending',
+  'quitado',
+  'nao_encontrado',
+  'erro',
+] as const
+export type TitularQuitacaoStatus = (typeof titularQuitacaoStatuses)[number]
+
+export const titularQuitacaoStatusEnum = pgEnum(
+  'titular_quitacao_status',
+  titularQuitacaoStatuses,
+)
+
+export const titularContratoCaixa = pgTable(
+  'titular_contrato_caixa',
+  {
+    id: text('id').primaryKey(),
+    // Colunas da planilha.
+    uf: text('uf').notNull(),
+    municipio: text('municipio').notNull(),
+    modalidade: text('modalidade').notNull(),
+    empreendimento: text('empreendimento').notNull(),
+    mutuarioNome: text('mutuario_nome').notNull(),
+    cpf: text('cpf').notNull(), // normalizado (11 digitos)
+    pis: text('pis'),
+    dataAssinatura: date('data_assinatura'),
+    logradouro: text('logradouro'),
+    numeroImovel: text('numero_imovel'),
+    // Parte da identidade natural (indice unico) — nao pode ser NULL (o Postgres
+    // trata NULLs como distintos e o upsert do reimport duplicaria a linha). Vazio
+    // vira '' para a identidade ser deterministica.
+    complemento: text('complemento').default('').notNull(),
+    bairro: text('bairro'),
+    // Projecao do status da quitacao (dirigida pela fila).
+    quitacaoStatus: titularQuitacaoStatusEnum('quitacao_status')
+      .default('idle')
+      .notNull(),
+    quitacaoMessage: text('quitacao_message'),
+    quitacaoLastCheckedAt: timestamp('quitacao_last_checked_at'),
+    // Auditoria.
+    createdByUserId: text('created_by_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    importBatchId: text('import_batch_id'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('titular_cpf_idx').on(table.cpf),
+    index('titular_quitacao_status_idx').on(table.quitacaoStatus),
+    index('titular_empreendimento_idx').on(table.empreendimento),
+    index('titular_uf_idx').on(table.uf),
+    index('titular_municipio_idx').on(table.municipio),
+    // Identidade natural: o upsert do reimport atualiza os descritivos SEM duplicar
+    // a linha nem perder a quitacao ja resolvida. Um titular pode ter varios
+    // contratos (empreendimentos/unidades), entao CPF sozinho nao e unico.
+    uniqueIndex('titular_natural_idx').on(
+      table.cpf,
+      table.empreendimento,
+      table.complemento,
+    ),
+  ],
+)
+
+export const titularDocumentoTipos = ['termo_quitacao'] as const
+export type TitularDocumentoTipo = (typeof titularDocumentoTipos)[number]
+
+export const titularDocumentoTipoEnum = pgEnum(
+  'titular_documento_tipo',
+  titularDocumentoTipos,
+)
+
+export const titularDocumentoSources = ['rpa', 'manual'] as const
+export const titularDocumentoSourceEnum = pgEnum(
+  'titular_documento_source',
+  titularDocumentoSources,
+)
+
+// Documento vinculado ao titular (termo/declaracao de quitacao). Bytes no storage
+// (MinIO/S3); metadados aqui. NAO reusa o checklist do processo (abstracao errada:
+// titular nao tem processo/checklist).
+export const titularDocumento = pgTable(
+  'titular_documento',
+  {
+    id: text('id').primaryKey(),
+    titularId: text('titular_id')
+      .notNull()
+      .references(() => titularContratoCaixa.id, { onDelete: 'cascade' }),
+    tipo: titularDocumentoTipoEnum('tipo').notNull(),
+    storageKey: text('storage_key').notNull(),
+    filename: text('filename').notNull(),
+    contentType: text('content_type').notNull(),
+    size: integer('size').notNull(),
+    source: titularDocumentoSourceEnum('source').default('rpa').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('titular_documento_titular_idx').on(table.titularId),
+    // No maximo um documento por tipo por titular: o reanexo (retry idempotente ou
+    // reconsulta) faz upsert em vez de acumular duplicatas.
+    uniqueIndex('titular_documento_titular_tipo_idx').on(
+      table.titularId,
+      table.tipo,
+    ),
+  ],
+)
+
+export type TitularContratoCaixaRow = typeof titularContratoCaixa.$inferSelect
+export type TitularDocumentoRow = typeof titularDocumento.$inferSelect

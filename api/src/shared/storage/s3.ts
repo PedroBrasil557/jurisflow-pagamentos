@@ -196,6 +196,29 @@ export async function deleteStorageObject(input: {
   )
 }
 
+// URL pre-assinada para VISUALIZACAO inline no navegador (sem forcar download):
+// Content-Disposition: inline + Content-Type application/pdf. Usada no preview em
+// iframe (ver o termo de quitacao sem baixar).
+export async function createStorageObjectInlineUrl(input: {
+  bucketName: StorageBucketName
+  expiresInSeconds?: number
+  objectKey: string
+  contentType?: string
+}) {
+  return getSignedUrl(
+    publicStorageClient,
+    new GetObjectCommand({
+      Bucket: input.bucketName,
+      Key: input.objectKey,
+      ResponseContentDisposition: 'inline',
+      ResponseContentType: input.contentType ?? 'application/pdf',
+    }),
+    {
+      expiresIn: input.expiresInSeconds ?? 60 * 10,
+    },
+  )
+}
+
 // Monta o Content-Disposition de download. Inclui o filename* (RFC 5987) para
 // nomes com acentos/UTF-8 (ex.: "João.zip"), com um fallback ASCII em filename.
 // Remove CR/LF para nao permitir injecao de header.

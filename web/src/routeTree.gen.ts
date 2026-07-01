@@ -17,6 +17,7 @@ import { Route as ProtectedProcessosRouteImport } from './routes/_protected/proc
 import { Route as ProtectedPrimeiroAcessoRouteImport } from './routes/_protected/primeiro-acesso'
 import { Route as ProtectedConfiguracoesRouteImport } from './routes/_protected/configuracoes'
 import { Route as ProtectedCadastrosRouteImport } from './routes/_protected/cadastros'
+import { Route as ProtectedTitularesCaixaIndexRouteImport } from './routes/_protected/titulares-caixa.index'
 import { Route as ProtectedProcessosIndexRouteImport } from './routes/_protected/processos.index'
 import { Route as ProtectedProcessosNovoRouteImport } from './routes/_protected/processos.novo'
 import { Route as ProtectedProcessosProcessIdEditarRouteImport } from './routes/_protected/processos.$processId.editar'
@@ -61,6 +62,12 @@ const ProtectedCadastrosRoute = ProtectedCadastrosRouteImport.update({
   path: '/cadastros',
   getParentRoute: () => ProtectedRoute,
 } as any)
+const ProtectedTitularesCaixaIndexRoute =
+  ProtectedTitularesCaixaIndexRouteImport.update({
+    id: '/titulares-caixa/',
+    path: '/titulares-caixa/',
+    getParentRoute: () => ProtectedRoute,
+  } as any)
 const ProtectedProcessosIndexRoute = ProtectedProcessosIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -94,6 +101,7 @@ export interface FileRoutesByFullPath {
   '/seguranca': typeof ProtectedSegurancaRoute
   '/processos/novo': typeof ProtectedProcessosNovoRoute
   '/processos/': typeof ProtectedProcessosIndexRoute
+  '/titulares-caixa/': typeof ProtectedTitularesCaixaIndexRoute
   '/processos/$processId/checklist': typeof ProtectedProcessosProcessIdChecklistRoute
   '/processos/$processId/editar': typeof ProtectedProcessosProcessIdEditarRoute
 }
@@ -106,6 +114,7 @@ export interface FileRoutesByTo {
   '/': typeof ProtectedIndexRoute
   '/processos/novo': typeof ProtectedProcessosNovoRoute
   '/processos': typeof ProtectedProcessosIndexRoute
+  '/titulares-caixa': typeof ProtectedTitularesCaixaIndexRoute
   '/processos/$processId/checklist': typeof ProtectedProcessosProcessIdChecklistRoute
   '/processos/$processId/editar': typeof ProtectedProcessosProcessIdEditarRoute
 }
@@ -121,6 +130,7 @@ export interface FileRoutesById {
   '/_protected/': typeof ProtectedIndexRoute
   '/_protected/processos/novo': typeof ProtectedProcessosNovoRoute
   '/_protected/processos/': typeof ProtectedProcessosIndexRoute
+  '/_protected/titulares-caixa/': typeof ProtectedTitularesCaixaIndexRoute
   '/_protected/processos/$processId/checklist': typeof ProtectedProcessosProcessIdChecklistRoute
   '/_protected/processos/$processId/editar': typeof ProtectedProcessosProcessIdEditarRoute
 }
@@ -136,6 +146,7 @@ export interface FileRouteTypes {
     | '/seguranca'
     | '/processos/novo'
     | '/processos/'
+    | '/titulares-caixa/'
     | '/processos/$processId/checklist'
     | '/processos/$processId/editar'
   fileRoutesByTo: FileRoutesByTo
@@ -148,6 +159,7 @@ export interface FileRouteTypes {
     | '/'
     | '/processos/novo'
     | '/processos'
+    | '/titulares-caixa'
     | '/processos/$processId/checklist'
     | '/processos/$processId/editar'
   id:
@@ -162,6 +174,7 @@ export interface FileRouteTypes {
     | '/_protected/'
     | '/_protected/processos/novo'
     | '/_protected/processos/'
+    | '/_protected/titulares-caixa/'
     | '/_protected/processos/$processId/checklist'
     | '/_protected/processos/$processId/editar'
   fileRoutesById: FileRoutesById
@@ -229,6 +242,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedCadastrosRouteImport
       parentRoute: typeof ProtectedRoute
     }
+    '/_protected/titulares-caixa/': {
+      id: '/_protected/titulares-caixa/'
+      path: '/titulares-caixa'
+      fullPath: '/titulares-caixa/'
+      preLoaderRoute: typeof ProtectedTitularesCaixaIndexRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
     '/_protected/processos/': {
       id: '/_protected/processos/'
       path: '/'
@@ -286,6 +306,7 @@ interface ProtectedRouteChildren {
   ProtectedProcessosRoute: typeof ProtectedProcessosRouteWithChildren
   ProtectedSegurancaRoute: typeof ProtectedSegurancaRoute
   ProtectedIndexRoute: typeof ProtectedIndexRoute
+  ProtectedTitularesCaixaIndexRoute: typeof ProtectedTitularesCaixaIndexRoute
 }
 
 const ProtectedRouteChildren: ProtectedRouteChildren = {
@@ -295,6 +316,7 @@ const ProtectedRouteChildren: ProtectedRouteChildren = {
   ProtectedProcessosRoute: ProtectedProcessosRouteWithChildren,
   ProtectedSegurancaRoute: ProtectedSegurancaRoute,
   ProtectedIndexRoute: ProtectedIndexRoute,
+  ProtectedTitularesCaixaIndexRoute: ProtectedTitularesCaixaIndexRoute,
 }
 
 const ProtectedRouteWithChildren = ProtectedRoute._addFileChildren(
