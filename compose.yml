@@ -149,6 +149,10 @@ services:
       API_URL: "http://api:3556"
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
       POLL_MS: "5000"
+      # Portal da Caixa e um recurso GLOBAL unico e o pacing e por-worker. Com dois
+      # workers (processos + titulares), 10s cada mantem a carga combinada ~= a de um
+      # worker a 5s, evitando que se estrangulem mutuamente.
+      CONSULTA_MIN_INTERVAL_MS: "10000"
     volumes:
       - ./worker:/workspace/worker
       - worker_node_modules:/workspace/worker/node_modules
@@ -170,6 +174,9 @@ services:
       API_URL: "http://api:3556"
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
       POLL_MS: "5000"
+      # Ver nota no servico `worker`: 10s por worker mantem a carga total do portal
+      # polida quando processos e titulares rodam ao mesmo tempo.
+      CONSULTA_MIN_INTERVAL_MS: "10000"
     volumes:
       - ./worker:/workspace/worker
       - worker_node_modules:/workspace/worker/node_modules
