@@ -4,6 +4,7 @@ import {
   buildStorageObjectKey,
   createStorageObjectDownloadUrl,
   deleteStorageObject,
+  getStorageObjectBytes,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -165,6 +166,41 @@ export async function listHousingComplexFiles(housingComplexId: string) {
   )
 
   return { items }
+}
+
+// Bytes de um arquivo do conjunto para stream INLINE (viewer same-origin do
+// checklist do processo). Valida que o arquivo pertence ao conjunto informado
+// (ownership) — o caller ja checou o acesso do usuario ao processo/checklist.
+export async function getHousingComplexFileContent(input: {
+  housingComplexId: string
+  fileId: string
+}): Promise<{ bytes: Uint8Array; contentType: string; filename: string }> {
+  const [row] = await db
+    .select({
+      bucketName: housingComplexFile.bucketName,
+      objectKey: housingComplexFile.objectKey,
+      mimeType: housingComplexFile.mimeType,
+      originalFileName: housingComplexFile.originalFileName,
+    })
+    .from(housingComplexFile)
+    .where(
+      and(
+        eq(housingComplexFile.id, input.fileId),
+        eq(housingComplexFile.housingComplexId, input.housingComplexId),
+        eq(housingComplexFile.isCurrent, true),
+      ),
+    )
+    .limit(1)
+
+  if (!row) {
+    throw new HousingComplexServiceError(404, 'Arquivo nao encontrado.')
+  }
+
+  const bytes = await getStorageObjectBytes({
+    bucketName: row.bucketName,
+    objectKey: row.objectKey,
+  })
+  return { bytes, contentType: row.mimeType, filename: row.originalFileName }
 }
 
 export async function deleteHousingComplexFile(input: {

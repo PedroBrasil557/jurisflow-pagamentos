@@ -278,9 +278,7 @@ export const listProcessesQuerySchema = z.object({
           : Array.isArray(value)
             ? value
             : [value],
-      z.array(
-        z.enum(['titular_contrato_caixa', 'nao_titular_contrato_caixa']),
-      ),
+      z.array(z.enum(['titular_contrato_caixa', 'nao_titular_contrato_caixa'])),
     )
     .optional(),
   housingComplexIds: z
@@ -331,6 +329,22 @@ export const processChecklistFileParamsSchema = z.object({
   fileId: z.string().trim().min(1, {
     message: 'Informe o arquivo.',
   }),
+})
+
+// Conteudo (bytes) inline de um arquivo do checklist para o viewer same-origin.
+// Sem processDocumentId: arquivos do conjunto (housing_complex) nao tem um; o
+// `source` distingue de onde carregar os bytes.
+export const processChecklistFileContentParamsSchema = z.object({
+  processId: z.string().trim().min(1, {
+    message: 'Informe o processo.',
+  }),
+  fileId: z.string().trim().min(1, {
+    message: 'Informe o arquivo.',
+  }),
+})
+
+export const processChecklistFileContentQuerySchema = z.object({
+  source: z.enum(['process', 'housing_complex']).default('process'),
 })
 
 export const processPdfModelParamsSchema = z.object({

@@ -5,6 +5,7 @@ import {
   buildStorageObjectKey,
   createStorageObjectDownloadUrl,
   deleteStorageObject,
+  getStorageObjectBytes,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -14,6 +15,7 @@ import { buildChecklistDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
 import {
   getHousingComplexChecklistFiles,
+  getHousingComplexFileContent,
   type HousingComplexChecklistFile,
 } from '../housing-complexes/housing-complexes.documents.service'
 import {
@@ -1479,6 +1481,72 @@ export async function getProcessChecklistFileDownload(input: {
     },
     downloadUrl,
     expiresAt: new Date(Date.now() + expiresInSeconds * 1000),
+  }
+}
+
+// Bytes de um arquivo do checklist para stream INLINE (viewer same-origin, evita
+// CORS/redirect ao S3 e permite range requests do pdfjs). Mesma checagem de acesso
+// do download. `source` distingue arquivo do PROCESSO (processDocumentFile) do
+// arquivo do CONJUNTO (housing_complex) — ambos aparecem no checklist do processo.
+export async function getProcessChecklistFileBytes(input: {
+  processId: string
+  fileId: string
+  source: 'process' | 'housing_complex'
+  userId: string
+  perms: ResolvedPermissions
+}): Promise<{ bytes: Uint8Array; contentType: string; filename: string }> {
+  const { relationship } = await getProcessContextOrThrow({
+    processId: input.processId,
+    userId: input.userId,
+    perms: input.perms,
+  })
+  assertCanAccessChecklist(input.perms, relationship)
+
+  if (input.source === 'housing_complex') {
+    const currentProcess = await getProcessRecordOrThrow(input.processId)
+    if (!currentProcess.housingComplexId) {
+      throw new ProcessServiceError(404, 'Arquivo nao encontrado.')
+    }
+    return getHousingComplexFileContent({
+      housingComplexId: currentProcess.housingComplexId,
+      fileId: input.fileId,
+    })
+  }
+
+  // source === 'process': valida via join que o arquivo pertence a ESTE processo.
+  const [fileRecord] = await db
+    .select({
+      bucketName: processDocumentFile.bucketName,
+      objectKey: processDocumentFile.objectKey,
+      mimeType: processDocumentFile.mimeType,
+      originalFileName: processDocumentFile.originalFileName,
+    })
+    .from(processDocumentFile)
+    .innerJoin(
+      processDocument,
+      eq(processDocumentFile.processDocumentId, processDocument.id),
+    )
+    .where(
+      and(
+        eq(processDocumentFile.id, input.fileId),
+        eq(processDocument.processId, input.processId),
+        eq(processDocumentFile.isCurrent, true),
+      ),
+    )
+    .limit(1)
+
+  if (!fileRecord) {
+    throw new ProcessServiceError(404, 'Arquivo nao encontrado.')
+  }
+
+  const bytes = await getStorageObjectBytes({
+    bucketName: fileRecord.bucketName,
+    objectKey: fileRecord.objectKey,
+  })
+  return {
+    bytes,
+    contentType: fileRecord.mimeType,
+    filename: fileRecord.originalFileName,
   }
 }
 

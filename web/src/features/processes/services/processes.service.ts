@@ -22,6 +22,8 @@ const processChecklistFileClientRoute =
   processChecklistItemClientRoute.files[':fileId']
 const processChecklistFileDownloadClientRoute =
   processChecklistFileClientRoute.download
+const processChecklistFileContentClientRoute =
+  processChecklistClientRoute.files[':fileId'].conteudo
 const processBatchClientRoute = processClientRoute.batch
 const processBatchFileClientRoute = processBatchClientRoute[':fileId']
 const processBatchFileSplitClientRoute = processBatchFileClientRoute.split
@@ -588,6 +590,22 @@ export async function getProcessChecklistFileDownloadRequest(input: {
   }
 
   return (await response.json()) as GetProcessChecklistFileDownloadResponse
+}
+
+// URL do CONTEUDO (bytes) same-origin de um arquivo do checklist — consumida pelo
+// DocumentViewer (react-pdf / <img>). `source` distingue arquivo do processo vs do
+// conjunto habitacional. A navegacao inclui o cookie de sessao (same-origin).
+export function processChecklistFileContentUrl(input: {
+  processId: string
+  fileId: string
+  source: 'process' | 'housing_complex'
+}): string {
+  return processChecklistFileContentClientRoute
+    .$url({
+      param: { processId: input.processId, fileId: input.fileId },
+      query: { source: input.source },
+    })
+    .toString()
 }
 
 export async function deleteChecklistFileRequest(input: {

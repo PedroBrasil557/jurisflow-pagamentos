@@ -615,6 +615,7 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
           onDeleteFile={handleDeleteChecklistFile}
           onDownloadFile={handleDownloadFile}
           onSubmit={handleChecklistItemSubmit}
+          processId={processId}
         />
       ) : null}
 

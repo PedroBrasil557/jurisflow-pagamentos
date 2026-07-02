@@ -50,6 +50,7 @@ import {
   downloadAllChecklistFiles,
   downloadAllChecklistFilesZip,
   getProcessChecklist,
+  getProcessChecklistFileBytes,
   getProcessChecklistFileDownload,
   submitProcessChecklistItem,
   uploadProcessChecklistFile,
@@ -71,6 +72,8 @@ import {
   presignImportBodySchema,
   presignScanBodySchema,
   processBatchFileParamsSchema,
+  processChecklistFileContentParamsSchema,
+  processChecklistFileContentQuerySchema,
   processChecklistFileParamsSchema,
   processChecklistItemParamsSchema,
   processIdParamsSchema,
@@ -420,6 +423,31 @@ export const processRoutes = new Hono<AppBindings>()
         })
 
         return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // Conteudo (bytes) SAME-ORIGIN para o viewer inline (PDF/imagem) — evita
+  // CORS/redirect ao S3 e permite range requests do pdfjs. Cookie-auth + mesma
+  // checagem de acesso do checklist. `source` distingue processo vs conjunto.
+  .get(
+    '/:processId/checklist/files/:fileId/conteudo',
+    paramsValidator(processChecklistFileContentParamsSchema),
+    queryValidator(processChecklistFileContentQuerySchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const doc = await getProcessChecklistFileBytes({
+          ...c.req.valid('param'),
+          source: c.req.valid('query').source,
+          userId: currentUser.id,
+          perms,
+        })
+        c.header('content-type', doc.contentType || 'application/octet-stream')
+        c.header('content-disposition', 'inline')
+        c.header('cache-control', 'private, max-age=300')
+        return c.body(doc.bytes.slice().buffer as ArrayBuffer)
       } catch (error) {
         return handleServiceError(c, error)
       }
