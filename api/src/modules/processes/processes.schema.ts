@@ -1,6 +1,7 @@
-import { relations } from 'drizzle-orm'
+import { relations, sql } from 'drizzle-orm'
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -63,7 +64,9 @@ export const process = pgTable(
     // pela analise do contrato Caixa). Habilita human-lock + proveniencia.
     ownerTypeSource: text('owner_type_source').default('human').notNull(),
     // Estado operacional (NAO evidencia) da analise do contrato Caixa:
-    // idle | processing | done | review | error. Reset no boot se 'processing'.
+    // idle | processing | done | review | error. Orfao ('processing' apos crash)
+    // volta a ser reivindicavel por staleness no claim (caixa_analysis_started_at);
+    // NAO ha reset no boot.
     caixaAnalysisStatus: text('caixa_analysis_status')
       .default('idle')
       .notNull(),
@@ -79,9 +82,32 @@ export const process = pgTable(
     caixaQuitacaoCheckedAt: timestamp('caixa_quitacao_checked_at'),
     // Heartbeat do job de quitacao: setado SO no claim. Base do staleness.
     caixaQuitacaoStartedAt: timestamp('caixa_quitacao_started_at'),
+    // Fencing token por-claim (RPA concorrente): setado a cada claim; o /result so
+    // e aceito se casar com o token vigente. Sem isto, um /result de um claim
+    // re-reivindicado por staleness sobrescreveria o estado vivo / perderia uma
+    // quitacao ja confirmada (paridade com o leaseToken da fila generica).
+    caixaQuitacaoClaimToken: text('caixa_quitacao_claim_token'),
     caixaQuitacaoAttempts: integer('caixa_quitacao_attempts')
       .default(0)
       .notNull(),
+    // Estado de consulta da quitacao POR CPF do(s) titular(es) do contrato Caixa
+    // (1-2: titular + conjuge/co-comprador OU os vendedores). Cada entrada tem seu
+    // proprio status terminal — o reconciliador faz set-diff (adiciona CPF novo como
+    // 'pending', remove CPF que saiu, PRESERVA o terminal de quem continua). Isso
+    // separa IDENTIDADE (quem, derivado) de WORKFLOW (consulta por CPF), evitando
+    // re-consultar um terminal so porque o conjunto mudou de ordem/tamanho.
+    // caixa_quitacao_status e o AGREGADO (quitado > pending > nao_encontrado).
+    quitacaoConsultas: jsonb('quitacao_consultas')
+      .$type<
+        Array<{
+          cpf: string
+          status: 'pending' | 'quitado' | 'nao_encontrado' | 'erro'
+          checkedAt?: string
+          message?: string
+        }>
+      >()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     cpf: text('cpf').notNull(),
     rg: text('rg').notNull(),
     cadunico: text('cadunico').notNull(),
@@ -101,7 +127,9 @@ export const process = pgTable(
       .default('human')
       .notNull(),
     // Estado operacional da analise da procuracao (conjunto a partir do endereco
-    // do outorgante): idle | processing | done | review | error. Reset no boot.
+    // do outorgante): idle | processing | done | review | error. Orfao
+    // ('processing' apos crash) e reivindicavel por staleness no claim (heartbeat
+    // abaixo); NAO ha reset no boot.
     procuracaoConjuntoStatus: text('procuracao_conjunto_status')
       .default('idle')
       .notNull(),
@@ -175,6 +203,14 @@ export const process = pgTable(
     index('process_housing_complex_id_idx').on(table.housingComplexId),
     index('process_documentation_assignee_id_idx').on(
       table.documentationAssigneeId,
+    ),
+    // Invariante do conjunto: o vinculo e tudo-ou-nada. Ou o processo aponta para
+    // um conjunto REGISTRADO (id + nome preenchidos), ou nenhum (id null + texto
+    // vazio). Proibe o estado "nome sem id" (texto livre sem registro), que
+    // quebraria a heranca de documentos de escopo de conjunto.
+    check(
+      'process_housing_complex_link_chk',
+      sql`(${table.housingComplexId} IS NULL) = (btrim(${table.housingComplex}) = '')`,
     ),
   ],
 )
@@ -427,10 +463,35 @@ export const processBatchFile = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
     uploadedAt: timestamp('uploaded_at').defaultNow().notNull(),
-    // Estado do desmembramento assincrono: 'idle' | 'processing' | 'done' | 'error'.
+    // Estado do desmembramento/ingestao assincrona (fila duravel):
+    // 'idle' | 'queued' | 'processing' | 'done' | 'error'. 'queued' = na fila,
+    // esperando o worker reivindicar (api/src/worker.ts). Recuperacao de orfao e do
+    // proprio worker: o claim re-reivindica 'processing' com lease expirado (campos
+    // abaixo). O fluxo legado de batch-split (claimSplitProcessing) usa 'processing'
+    // SEM lease e tem stale-reclaim proprio.
     splitStatus: text('split_status').notNull().default('idle'),
     splitMessage: text('split_message'),
     splitUpdatedAt: timestamp('split_updated_at'),
+    // ENTREGAS: incrementado em TODO claim (inclusive re-reivindicacao de orfao).
+    // Backstop contra crash-poison: um PDF que mata o worker (OOM) nunca chega ao
+    // failIngestion, entao so o teto de entregas (MAX_DELIVERIES, checado no claim)
+    // o poe em quarentena. (Coluna DB segue 'split_attempts' por compat de migracao.)
+    splitDeliveryCount: integer('split_attempts').notNull().default(0),
+    // FALHAS registradas: incrementado SO no failIngestion (erro capturado). E o
+    // orcamento de retry real (MAX_FAILURES) — interrupcoes de infra (crash/orfao)
+    // NAO o consomem, entao nao dead-letam um job inocente por churn de infra.
+    splitFailureCount: integer('split_failure_count').notNull().default(0),
+    // Lease: ate quando o worker que reivindicou "segura" o job. Renovado por
+    // heartbeat durante o processamento. Em 'processing': expirou < now() => orfao,
+    // reivindicavel. Em 'queued': funciona como "elegivel a partir de" (backoff de
+    // retry); null = elegivel ja.
+    splitLeaseExpiresAt: timestamp('split_lease_expires_at'),
+    // Fencing token do claim (uuid): renovacao/conclusao so valem para o dono atual
+    // do lease — impede um worker lento/revivido sobrescrever o job ja reivindicado
+    // por outro apos a expiracao do lease.
+    splitLeaseToken: text('split_lease_token'),
+    // Marca quando o job foi para dead-letter (tentativas esgotadas). Observabilidade.
+    splitDeadLetterAt: timestamp('split_dead_letter_at'),
   },
   (table) => [
     uniqueIndex('process_batch_file_storage_object_idx').on(
@@ -441,8 +502,26 @@ export const processBatchFile = pgTable(
     index('process_batch_file_uploaded_by_user_id_idx').on(
       table.uploadedByUserId,
     ),
+    // Suporta o claim da fila: filtra por status e ordena por elegibilidade.
+    index('process_batch_file_split_claim_idx').on(
+      table.splitStatus,
+      table.splitLeaseExpiresAt,
+    ),
   ],
 )
+
+// Sessao de upload pre-assinado do SCAN, antes de existir um processo. Liga o
+// uploadId (opaco) ao usuario que o presignou, para que o /scan/complete so
+// possa ser concluido pelo dono (sem isto, qualquer usuario autenticado poderia
+// completar/consultar um uploadId alheio). A linha e apagada no complete
+// bem-sucedido; orfas (presign sem complete) sao varridas por TTL/GC.
+export const scanUpload = pgTable('scan_upload', {
+  uploadId: text('upload_id').primaryKey(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
 
 export const processBatchFileRelations = relations(
   processBatchFile,

@@ -41,7 +41,10 @@ export function useCreateProcessViaScan() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (file: File) => createProcessViaScanRequest(file),
+    mutationFn: (input: {
+      pdf: Blob
+      onProgress?: (fraction: number) => void
+    }) => createProcessViaScanRequest(input.pdf, input.onProgress),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     },

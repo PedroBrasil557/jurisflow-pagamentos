@@ -16,7 +16,9 @@ const WebScannerDialog = lazy(() =>
 )
 
 type ScanButtonProps = {
-  onComplete: (file: File) => void
+  // scanSessionId: id da sessao de captura (IndexedDB) para o consumidor limpar
+  // apos o upload confirmar; null quando nao ha sessao persistida (Scanbot).
+  onComplete: (file: File, scanSessionId: string | null) => void
   disabled?: boolean
   label?: string
   className?: string
@@ -33,20 +35,18 @@ export function ScanButton({
   const providerQuery = useQuery(scannerProviderQuery)
   const licenseQuery = useQuery(scanbotLicenseQuery)
 
-  // Servico escolhido no painel de Configuracoes ('scanbot' | 'web' |
-  // 'docaligner').
-  const provider = providerQuery.data ?? 'web'
+  // Servico escolhido no painel de Configuracoes ('scanbot' | 'docaligner').
+  const provider = providerQuery.data ?? 'docaligner'
 
   async function handleClick() {
-    // Scanner web (jscanify) e DocAligner (IA) usam o mesmo dialogo no
-    // navegador; sem licenca. O DocAligner liga a deteccao por IA via `useMl`.
-    if (provider === 'web' || provider === 'docaligner') {
+    // DocAligner (IA): scanner do navegador, sem licenca. Detector unico.
+    if (provider !== 'scanbot') {
       setOpen(true)
       return
     }
 
     // Scanbot: requer license. Falha dura (sem licenca / SDK nao inicia) cai no
-    // Scanner web COM aviso — digitalizar nao pode ficar 100% quebrado.
+    // scanner do navegador COM aviso — digitalizar nao pode ficar 100% quebrado.
     const scanbotKey = resolveScanbotKey(licenseQuery.data)
 
     if (!scanbotKey) {
@@ -62,7 +62,8 @@ export function ScanButton({
       const { scanWithScanbot } = await import('./scanbot-scan')
       const file = await scanWithScanbot(scanbotKey)
       if (file) {
-        onComplete(file)
+        // Scanbot devolve o PDF pronto — nao ha sessao IndexedDB a limpar.
+        onComplete(file, null)
       }
     } catch (error) {
       // Loga o motivo completo (devtools) e mostra um resumo no toast, para dar
@@ -96,12 +97,11 @@ export function ScanButton({
         <Suspense fallback={null}>
           <WebScannerDialog
             onClose={() => setOpen(false)}
-            onComplete={(file) => {
+            onComplete={(file, scanSessionId) => {
               setOpen(false)
-              onComplete(file)
+              onComplete(file, scanSessionId)
             }}
             open={open}
-            useMl={provider === 'docaligner'}
           />
         </Suspense>
       ) : null}

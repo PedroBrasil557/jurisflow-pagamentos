@@ -102,7 +102,10 @@ function estimatePaperGrid(
   width: number,
   height: number,
 ): Grid {
-  const cell = Math.max(1, Math.ceil(Math.max(width, height) / BACKGROUND_CELLS))
+  const cell = Math.max(
+    1,
+    Math.ceil(Math.max(width, height) / BACKGROUND_CELLS),
+  )
   const cols = Math.ceil(width / cell)
   const rows = Math.ceil(height / cell)
   const r = new Uint8ClampedArray(cols * rows)

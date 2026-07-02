@@ -3,7 +3,6 @@ import { normalizeName } from '../../shared/utils/name'
 import {
   type CaixaBuyer,
   compareCaixaOwner,
-  decideCaixaOwnerOutcome,
 } from './processes.caixa-owner.compare'
 
 // CPFs validos (checksum) e distintos para os testes.
@@ -33,12 +32,12 @@ describe('compareCaixaOwner', () => {
     expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
   })
 
-  test('CPFs validos diferentes => review, mesmo com nome igual (pai/filho)', () => {
+  test('CPFs validos diferentes => nao_titular, mesmo com nome igual (pai/filho)', () => {
     const r = compareCaixaOwner(
       [buyer({ nome: 'Jose da Silva', cpf: CPF_OUTRO })],
       titular,
     )
-    expect(r).toEqual({ result: 'review', matchedBy: 'none' })
+    expect(r).toEqual({ result: 'nao_titular', matchedBy: 'none' })
   })
 
   test('sem CPF + nome identico (acento/caixa) => titular (matchedBy name)', () => {
@@ -46,9 +45,17 @@ describe('compareCaixaOwner', () => {
     expect(r).toEqual({ result: 'titular', matchedBy: 'name' })
   })
 
-  test('sem CPF + nome diferente => review', () => {
+  test('sem CPF + nome diferente => review (nome-so e sinal fraco, nao impoe nao_titular)', () => {
     const r = compareCaixaOwner([buyer({ nome: 'Maria Souza' })], titular)
     expect(r).toEqual({ result: 'review', matchedBy: 'none' })
+  })
+
+  test('titular com CPF valido + comprador com CPF valido diferente => nao_titular (confirmado)', () => {
+    const r = compareCaixaOwner(
+      [buyer({ nome: 'Maria Souza', cpf: CPF_OUTRO })],
+      titular,
+    )
+    expect(r).toEqual({ result: 'nao_titular', matchedBy: 'none' })
   })
 
   test('casal: basta um comprador bater por CPF', () => {
@@ -103,70 +110,28 @@ describe('compareCaixaOwner', () => {
     )
     expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
   })
-})
 
-describe('decideCaixaOwnerOutcome', () => {
-  test('review => sempre revisar, nunca aplica', () => {
-    const o = decideCaixaOwnerOutcome({
-      result: 'review',
-      currentOwnerType: '',
-      ownerTypeSource: 'human',
-      autoApplyEnabled: true,
-    })
-    expect(o.apply).toBe(false)
-    expect(o.analysisStatus).toBe('review')
-    expect(o.historyEvent).toBe('CAIXA_OWNER_REVIEW_REQUIRED')
+  // v3 — colapso 2 estados: o co-comprador/conjuge e tratado como comprador do
+  // termo (mesma lista). Basta o titular do processo bater com QUALQUER comprador.
+  test('titular bate com o 2o comprador (co-comprador) por CPF => titular', () => {
+    const r = compareCaixaOwner(
+      [
+        buyer({ nome: 'Outra Pessoa', cpf: CPF_OUTRO }),
+        buyer({ nome: 'Qualquer Nome', cpf: '111.444.777-35' }),
+      ],
+      titular,
+    )
+    expect(r).toEqual({ result: 'titular', matchedBy: 'cpf' })
   })
 
-  test('titular ja aplicado => no-op (done, sem evento)', () => {
-    const o = decideCaixaOwnerOutcome({
-      result: 'titular',
-      currentOwnerType: 'titular_contrato_caixa',
-      ownerTypeSource: 'system',
-      autoApplyEnabled: true,
-    })
-    expect(o).toEqual({
-      analysisStatus: 'done',
-      apply: false,
-      historyEvent: null,
-    })
-  })
-
-  test('shadow (flag off): titular detectado => revisar, sem aplicar', () => {
-    const o = decideCaixaOwnerOutcome({
-      result: 'titular',
-      currentOwnerType: '',
-      ownerTypeSource: 'human',
-      autoApplyEnabled: false,
-    })
-    expect(o.apply).toBe(false)
-    expect(o.analysisStatus).toBe('review')
-  })
-
-  test('flag on + ownerType vazio => auto-aplica titular', () => {
-    const o = decideCaixaOwnerOutcome({
-      result: 'titular',
-      currentOwnerType: '',
-      ownerTypeSource: 'human',
-      autoApplyEnabled: true,
-    })
-    expect(o).toEqual({
-      analysisStatus: 'done',
-      apply: true,
-      newOwnerType: 'titular_contrato_caixa',
-      historyEvent: 'CAIXA_OWNER_AUTO_SET',
-    })
-  })
-
-  test('human-lock: humano definiu "nao titular" => revisar, nao sobrescreve', () => {
-    const o = decideCaixaOwnerOutcome({
-      result: 'titular',
-      currentOwnerType: 'nao_titular_contrato_caixa',
-      ownerTypeSource: 'human',
-      autoApplyEnabled: true,
-    })
-    expect(o.apply).toBe(false)
-    expect(o.analysisStatus).toBe('review')
-    expect(o.historyEvent).toBe('CAIXA_OWNER_REVIEW_REQUIRED')
+  test('titular nao consta entre os compradores, CPF confirmado => nao_titular', () => {
+    const r = compareCaixaOwner(
+      [
+        buyer({ nome: 'Maria Souza', cpf: CPF_OUTRO }),
+        buyer({ nome: 'Outro Comprador', cpf: CPF_OUTRO }),
+      ],
+      titular,
+    )
+    expect(r).toEqual({ result: 'nao_titular', matchedBy: 'none' })
   })
 })

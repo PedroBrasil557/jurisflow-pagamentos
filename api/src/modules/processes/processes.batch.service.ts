@@ -4,6 +4,7 @@ import { ServiceError } from '../../shared/errors/service-error'
 import {
   buildImportStagingObjectKey,
   buildProcessBatchObjectKey,
+  buildScanStagingObjectKey,
   buildStorageObjectKey,
   copyStorageObject,
   createStorageObjectDownloadUrl,
@@ -20,26 +21,42 @@ import type { AppBindings } from '../../shared/types/app'
 import { normalizeCpf } from '../../shared/utils/cpf'
 import { buildBatchDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
-import { enqueueQuitacaoCheck } from '../caixa-quitacao/caixa-quitacao.service'
 import {
   assertCanAccessBatch,
   assertCanAccessDocumentation,
   assertProcessAction,
+  resolveUserPermissions,
 } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
+import { reconcileOwnerType } from './derive/reconcile'
 import {
   getProcessContextOrThrow,
   getProcessRecordOrThrow,
 } from './processes.access'
 import { assertChecklistUploadAllowed } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
+import { recordDocumentExtractionAudit } from './processes.extraction.audit'
 import { extractDocumentsFromFiles } from './processes.extraction.service'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { importDocumentBundle } from './processes.import.service'
-import { process, processBatchFile } from './processes.schema'
+import {
+  deadLetterIngestion,
+  enqueueIngestion,
+  failIngestion,
+  INGESTION_HEARTBEAT_MS,
+  INGESTION_MAX_DELIVERIES,
+  type IngestionJob,
+  markIngestionDone,
+  renewIngestionLease,
+} from './processes.ingestion.queue'
+import { countPdfPages } from './processes.pdf.splitter'
+import { process, processBatchFile, scanUpload } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
-type ProcessActor = NonNullable<AppBindings['Variables']['user']>
+// Estas funcoes so usam o id do ator (usuario autenticado OU bot do sistema na
+// ingestao). Tipar so o id permite passar { id } sem cast e o compilador garante
+// que ninguem leia outro campo de um ator que nao o tem.
+type ProcessActor = Pick<NonNullable<AppBindings['Variables']['user']>, 'id'>
 
 export const maxBatchFileSizeInBytes = 25 * 1024 * 1024
 
@@ -373,7 +390,8 @@ async function runBatchFileSplit(input: {
     )
 
     // 1 chamada de IA: classifica as paginas (os campos titular/endereco sao ignorados aqui).
-    const { documents } = await extractDocumentsFromFiles([file])
+    const startedAt = Date.now()
+    const { documents, meta } = await extractDocumentsFromFiles([file])
 
     const result = await importDocumentBundle({
       processId: input.processId,
@@ -383,7 +401,26 @@ async function runBatchFileSplit(input: {
       perms: input.perms,
     })
 
+    // Auditoria (ai_analysis): registra a classificacao da IA + a decisao de anexo.
+    await recordDocumentExtractionAudit({
+      processId: input.processId,
+      fileId: fileRecord.id,
+      totalPages: await countPdfPages(bytes),
+      meta,
+      outcome: result,
+      durationMs: Date.now() - startedAt,
+      triggeredByUserId: input.actor.id,
+    })
+
     await setSplitStatus(fileRecord.id, 'done', result.message)
+
+    // Reconcilia ownerType + status APOS o split virar 'done': se rodasse antes,
+    // gatherFacts veria o split 'processing' (classifiedTypes=pending) e concluiria
+    // 'undetermined' — sem nada re-disparar depois (era a causa do ownerType vazio).
+    void reconcileOwnerType({
+      processId: input.processId,
+      triggeredByUserId: input.actor.id,
+    })
   } catch (error) {
     const message =
       error instanceof ServiceError
@@ -473,6 +510,12 @@ const SCAN_FIELD_COLUMNS = [
   'city',
   'state',
   'zipcode',
+  // Conjuge (do termo de entrega): spouseContractSigned='sim' + dados.
+  'spouseContractSigned',
+  'spouseSameAddress',
+  'spouseFullName',
+  'spouseCpf',
+  'spouseBirthDate',
 ] as const
 
 type ScanFieldColumn = (typeof SCAN_FIELD_COLUMNS)[number]
@@ -488,25 +531,34 @@ async function applyExtractedFieldsToDraft(
   const allowed = new Set<string>(SCAN_FIELD_COLUMNS)
   const update: Partial<Record<ScanFieldColumn, string>> = {}
 
+  // Colunas date (so aceitam data valida) e colunas de CPF (normalizadas).
+  const dateColumns = new Set<string>(['birthDate', 'spouseBirthDate'])
+  const cpfColumns = new Set<string>(['cpf', 'spouseCpf'])
+
   for (const field of fields) {
     if (!allowed.has(field.key)) continue
     const column = field.key as ScanFieldColumn
-    // birthDate (coluna date), cpf (identidade) e zipcode (CEP) so se forem
-    // validos — evita gravar dado invalido e promover o rascunho a CADASTRADO
-    // com lixo. O campo invalido ainda aparece na revisao com warning.
+    // Campos de data, CPF e CEP so se forem validos — evita gravar dado invalido e
+    // promover o rascunho com lixo. O campo invalido ainda aparece na revisao com
+    // warning.
     if (
-      (column === 'birthDate' || column === 'cpf' || column === 'zipcode') &&
+      (dateColumns.has(column) ||
+        cpfColumns.has(column) ||
+        column === 'zipcode') &&
       !field.valid
     ) {
       continue
     }
 
+    // Campos do titular sao notNull (default '') — vazio = ''. Campos do conjuge
+    // sao nullable — vazio = null. Trata os dois.
     const currentValue = current[column]
-    const isEmpty =
-      column === 'birthDate' ? currentValue == null : currentValue === ''
+    const isEmpty = currentValue == null || currentValue === ''
     if (!isEmpty) continue
 
-    update[column] = column === 'cpf' ? normalizeCpf(field.value) : field.value
+    update[column] = cpfColumns.has(column)
+      ? normalizeCpf(field.value)
+      : field.value
   }
 
   if (Object.keys(update).length > 0) {
@@ -515,213 +567,447 @@ async function applyExtractedFieldsToDraft(
 
   const fullName = update.fullName ?? current.fullName
   const cpf = update.cpf ?? current.cpf
-  // Com o CPF extraido, dispara a consulta automatica de quitacao (worker RPA).
-  await enqueueQuitacaoCheck(processId, cpf)
   return { hasIdentity: Boolean(fullName) || Boolean(cpf) }
 }
 
-// Ingestao digitalizacao em background: extrai campos + classifica, preenche o rascunho,
-// desmembra/anexa e define o status final por completude. NUNCA lanca: grava o
-// resultado em splitStatus/splitMessage.
-async function runScanIngestion(input: {
+// Trabalho PURO da ingestao digitalizacao: extrai campos + classifica, preenche o
+// rascunho, desmembra/anexa e decide o status final por completude. Retorna a
+// mensagem de desfecho (sucesso) ou LANCA em falha. NAO grava splitStatus — quem
+// chama mapeia para splitStatus (inline) ou para a fila (worker).
+async function runIngestionWork(input: {
   processId: string
   fileRecord: typeof processBatchFile.$inferSelect
   actor: ProcessActor
   perms: ResolvedPermissions
-}) {
+}): Promise<string> {
   const { fileRecord } = input
 
-  try {
-    const bytes = await getStorageObjectBytes({
-      bucketName: fileRecord.bucketName,
-      objectKey: fileRecord.objectKey,
-    }).catch(() => {
-      throw new ProcessServiceError(
-        503,
-        'Nao foi possivel ler o arquivo do storage. Tente novamente.',
-      )
-    })
-
-    const file = new File(
-      [new Uint8Array(bytes)],
-      fileRecord.originalFileName,
-      {
-        type: 'application/pdf',
-      },
+  const bytes = await getStorageObjectBytes({
+    bucketName: fileRecord.bucketName,
+    objectKey: fileRecord.objectKey,
+  }).catch(() => {
+    throw new ProcessServiceError(
+      503,
+      'Nao foi possivel ler o arquivo do storage. Tente novamente.',
     )
+  })
 
-    const { fields, documents } = await extractDocumentsFromFiles([file])
+  const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
+    type: 'application/pdf',
+  })
 
-    // Best-effort: aplicar campos extraidos nao pode derrubar o anexo dos docs.
-    let hasIdentity = false
-    try {
-      const applied = await applyExtractedFieldsToDraft(input.processId, fields)
-      hasIdentity = applied.hasIdentity
-    } catch (error) {
-      console.error('digitalizacao: falha ao aplicar campos no rascunho', {
+  const startedAt = Date.now()
+  const { fields, documents, meta } = await extractDocumentsFromFiles([file])
+
+  // Best-effort: aplicar campos extraidos nao pode derrubar o anexo dos docs.
+  let hasIdentity = false
+  try {
+    const applied = await applyExtractedFieldsToDraft(input.processId, fields)
+    hasIdentity = applied.hasIdentity
+  } catch (error) {
+    console.error('digitalizacao: falha ao aplicar campos no rascunho', {
+      processId: input.processId,
+      error: String(error),
+    })
+  }
+
+  const result = await importDocumentBundle({
+    processId: input.processId,
+    file,
+    documents,
+    actor: input.actor,
+    perms: input.perms,
+  })
+
+  // Auditoria (ai_analysis): registra a classificacao da IA + a decisao de anexo.
+  // Vale inclusive com 0 anexos — e justamente o caso de misclassificacao.
+  // BEST-EFFORT (nao FATAL): roda DEPOIS do anexo (importDocumentBundle). Se
+  // fosse fatal, uma falha transitoria aqui re-executaria o job e
+  // importDocumentBundle RE-ANEXARIA os mesmos documentos (nao idempotente) ->
+  // anexos duplicados. Perder um registro de auditoria e preferivel a duplicar
+  // documentos no checklist.
+  try {
+    await recordDocumentExtractionAudit({
+      processId: input.processId,
+      fileId: fileRecord.id,
+      totalPages: await countPdfPages(bytes),
+      meta,
+      outcome: result,
+      durationMs: Date.now() - startedAt,
+      triggeredByUserId: input.actor.id,
+    })
+  } catch (auditError) {
+    console.error('Falha ao registrar auditoria de extracao (best-effort)', {
+      processId: input.processId,
+      fileId: fileRecord.id,
+      error: String(auditError),
+    })
+  }
+
+  // NOTA: a reconciliacao de ownerType/status NAO roda aqui — o split ainda esta
+  // 'processing' (o caller so marca 'done' depois). Roda em processClaimedIngestion
+  // APOS markIngestionDone, senao gatherFacts veria classifiedTypes=pending e
+  // concluiria 'undetermined' (ownerType vazio) sem nada re-disparar.
+
+  // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o
+  // sync nao roda: decidimos explicitamente.
+  if (result.attached.length === 0) {
+    // Documentos reconhecidos mas nenhum anexado: registra o motivo p/ diagnostico.
+    if (result.skipped.length > 0) {
+      console.error(
+        'digitalizacao: documentos reconhecidos mas nenhum anexado',
+        {
+          processId: input.processId,
+          skipped: result.skipped,
+        },
+      )
+    }
+
+    const current = await getProcessRecordOrThrow(input.processId)
+    if (current.status === 'RASCUNHO' && hasIdentity) {
+      await db
+        .update(process)
+        .set({ status: 'CADASTRADO' })
+        .where(eq(process.id, input.processId))
+
+      await createProcessHistoryEntry({
         processId: input.processId,
-        error: String(error),
+        actorUserId: input.actor.id,
+        eventType: 'STATUS_CHANGED',
+        fromStatus: 'RASCUNHO',
+        toStatus: 'CADASTRADO',
+        notes:
+          'Dados extraidos por digitalizacao; nenhum documento foi separado.',
+      })
+
+      return 'Dados extraidos. Nenhum documento foi separado — anexe manualmente.'
+    }
+
+    return 'Nada foi reconhecido no documento. Refaca a captura.'
+  }
+
+  return result.message
+}
+
+// Processa um job reivindicado da FILA (worker, Fase 2). Reconstroi actor/perms do
+// usuario que fez o upload (a autorizacao ja ocorreu no enqueue, na rota), roda o
+// trabalho com heartbeat do lease e grava o desfecho via primitivas da fila
+// (done | retry com backoff | dead-letter). NUNCA lanca.
+export async function processClaimedIngestion(
+  job: IngestionJob,
+): Promise<void> {
+  // Backstop de ENTREGAS: reivindicado vezes demais sem concluir nem registrar
+  // falha — assinatura de crash-poison (um PDF que derruba o worker, ex.: OOM,
+  // antes do failIngestion). Dead-letter SEM processar: processar de novo
+  // re-executaria o mesmo PDF que mata o worker. Fecha o gap de re-claim infinito.
+  if (job.deliveryCount >= INGESTION_MAX_DELIVERIES) {
+    const applied = await deadLetterIngestion(
+      job.batchFileId,
+      job.leaseToken,
+      `Entregas excederam o limite (${INGESTION_MAX_DELIVERIES}) sem concluir — arquivo possivelmente derruba o worker.`,
+    )
+    if (!applied) {
+      console.warn(
+        'worker: lease perdido antes do backstop de entregas (outra replica assumiu)',
+        { batchFileId: job.batchFileId },
+      )
+    }
+    return
+  }
+
+  const [fileRecord] = await db
+    .select()
+    .from(processBatchFile)
+    .where(eq(processBatchFile.id, job.batchFileId))
+    .limit(1)
+
+  if (!fileRecord) {
+    // Linha sumiu (processo deletado entre enqueue e claim): encerra sem retry.
+    await markIngestionDone(
+      job.batchFileId,
+      job.leaseToken,
+      'Arquivo inexistente.',
+    )
+    return
+  }
+
+  // Heartbeat: renova o lease enquanto processa, para um job longo (IA) nao ser
+  // considerado orfao e reivindicado em duplicidade. O fencing token garante que,
+  // se o lease for perdido, a conclusao deste worker vira no-op (nao sobrescreve).
+  const heartbeat = setInterval(() => {
+    void renewIngestionLease(job.batchFileId, job.leaseToken)
+  }, INGESTION_HEARTBEAT_MS)
+
+  try {
+    const [uploader] = await db
+      .select({ id: user.id, role: user.role })
+      .from(user)
+      .where(eq(user.id, fileRecord.uploadedByUserId))
+      .limit(1)
+
+    if (!uploader) {
+      throw new ProcessServiceError(404, 'Usuario do upload nao encontrado.')
+    }
+
+    const perms = await resolveUserPermissions(uploader.id, uploader.role)
+    const actor: ProcessActor = { id: uploader.id }
+
+    const message = await runIngestionWork({
+      processId: fileRecord.processId,
+      fileRecord,
+      actor,
+      perms,
+    })
+    const applied = await markIngestionDone(
+      job.batchFileId,
+      job.leaseToken,
+      message,
+    )
+    if (!applied) {
+      // Lease perdido enquanto processava: outro worker reivindicou o orfao e ja
+      // concluiu. Descartamos este desfecho (o fencing impediu a sobrescrita).
+      console.warn(
+        'worker: lease perdido apos concluir; desfecho descartado (outra replica assumiu)',
+        { batchFileId: job.batchFileId },
+      )
+    } else {
+      // Split DURAVELMENTE 'done': agora o reconcile ve classifiedTypes=ready e
+      // conclui o ownerType (ex.: nao_titular por contrato de compra e venda). Roda
+      // aqui — fora de runIngestionWork — para nao correr com o split 'processing'.
+      void reconcileOwnerType({
+        processId: fileRecord.processId,
+        triggeredByUserId: actor.id,
       })
     }
-
-    const result = await importDocumentBundle({
-      processId: input.processId,
-      file,
-      documents,
-      actor: input.actor,
-      perms: input.perms,
-    })
-
-    // Com >=1 anexo, o status ja avancou (sync por-arquivo). Com 0 anexos, o
-    // sync nao roda: decidimos explicitamente.
-    if (result.attached.length === 0) {
-      // Documentos reconhecidos mas nenhum anexado: registra o motivo p/ diagnostico.
-      if (result.skipped.length > 0) {
-        console.error(
-          'digitalizacao: documentos reconhecidos mas nenhum anexado',
-          {
-            processId: input.processId,
-            skipped: result.skipped,
-          },
-        )
-      }
-
-      const current = await getProcessRecordOrThrow(input.processId)
-      if (current.status === 'RASCUNHO' && hasIdentity) {
-        await db
-          .update(process)
-          .set({ status: 'CADASTRADO' })
-          .where(eq(process.id, input.processId))
-
-        await createProcessHistoryEntry({
-          processId: input.processId,
-          actorUserId: input.actor.id,
-          eventType: 'STATUS_CHANGED',
-          fromStatus: 'RASCUNHO',
-          toStatus: 'CADASTRADO',
-          notes:
-            'Dados extraidos por digitalizacao; nenhum documento foi separado.',
-        })
-
-        await setSplitStatus(
-          fileRecord.id,
-          'done',
-          'Dados extraidos. Nenhum documento foi separado — anexe manualmente.',
-        )
-        return
-      }
-
-      await setSplitStatus(
-        fileRecord.id,
-        'done',
-        'Nada foi reconhecido no documento. Refaca a captura.',
-      )
-      return
-    }
-
-    await setSplitStatus(fileRecord.id, 'done', result.message)
   } catch (error) {
     const message =
       error instanceof ServiceError
         ? error.message
         : 'Nao foi possivel processar o documento.'
-    console.error('Falha na ingestao digitalizacao', {
-      fileId: fileRecord.id,
+    console.error('Falha na ingestao (worker)', {
+      batchFileId: job.batchFileId,
+      deliveryCount: job.deliveryCount,
+      failureCount: job.failureCount,
       error: String(error),
     })
-    await setSplitStatus(fileRecord.id, 'error', message)
+    const applied = await failIngestion(
+      job.batchFileId,
+      job.leaseToken,
+      job.failureCount,
+      message,
+    )
+    if (!applied) {
+      console.warn(
+        'worker: lease perdido apos falha; retry/dead-letter nao aplicado (outra replica assumiu)',
+        { batchFileId: job.batchFileId },
+      )
+    }
+  } finally {
+    clearInterval(heartbeat)
   }
 }
 
-// Armazena o scan no lote (como fonte) e dispara a ingestao digitalizacao em background.
-// Gated por 'create' na rota. Retorna o id do arquivo p/ o front acompanhar.
-// Guarda UM arquivo no lote (S3 + processBatchFile 'processing'), pronto para a
-// ingestao. Nao dispara o trabalho — quem chama decide (single ou multi).
-async function storeIngestionFile(input: {
-  processId: string
-  file: File
-  actor: ProcessActor
-}): Promise<typeof processBatchFile.$inferSelect> {
-  assertBatchFile(input.file)
+// Nome fixo do arquivo do scan (uma sessao = um PDF). O uploadId ja individualiza
+// a chave no staging e o id do lote.
+const SCAN_PDF_FILE_NAME = 'scan.pdf'
 
-  if (input.file.type.toLowerCase() !== 'application/pdf') {
+// Violacao de chave unica no Postgres (SQLSTATE 23505). Usado para distinguir um
+// complete duplicado (idempotente) de um erro transitorio de banco.
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === '23505'
+  )
+}
+
+// SCAN pre-assinado — fase 1 (presign). Como o import, mas a sessao NAO cria
+// processo: retorna um uploadId opaco + URL de PUT direto no S3 (staging). O
+// rascunho so nasce no complete — logo presign sem complete NAO deixa RASCUNHO
+// orfao; o objeto abandonado expira pelo lifecycle do prefixo de staging.
+export async function presignScanUpload(input: {
+  contentType: string
+  size: number
+  userId: string
+}): Promise<{ uploadId: string; objectKey: string; uploadUrl: string }> {
+  if (input.contentType.toLowerCase() !== 'application/pdf') {
+    throw new ProcessServiceError(415, 'A digitalizacao deve ser um PDF.')
+  }
+  if (input.size <= 0 || input.size > maxBatchFileSizeInBytes) {
     throw new ProcessServiceError(
-      415,
-      'Apenas arquivos PDF podem ser processados.',
+      413,
+      'A digitalizacao excede o limite de 25 MB.',
     )
   }
 
-  const fileId = crypto.randomUUID()
-  const bucketName = storageBuckets.processDocuments
-  const objectKey = buildProcessBatchObjectKey({
-    processId: input.processId,
-    fileId,
-    fileName: input.file.name,
+  const uploadId = crypto.randomUUID()
+  const objectKey = buildScanStagingObjectKey({ uploadId })
+  const uploadUrl = await createStorageObjectUploadUrl({
+    bucketName: storageBuckets.processDocuments,
+    objectKey,
+    contentType: 'application/pdf',
+    // Trava o tamanho do PUT no valor declarado (<=25MB ja validado acima).
+    contentLength: input.size,
   })
-  const fileBytes = new Uint8Array(await input.file.arrayBuffer())
 
-  try {
-    await uploadStorageObject({
-      bucketName,
-      objectKey,
-      contentType: 'application/pdf',
-      body: fileBytes,
+  // Vincula o uploadId ao usuario: so o dono pode concluir/consultar depois.
+  await db.insert(scanUpload).values({ uploadId, userId: input.userId })
+
+  return { uploadId, objectKey, uploadUrl }
+}
+
+// Exige que o uploadId pertenca ao usuario (presignado por ele). Sem isto,
+// qualquer usuario autenticado poderia concluir o upload (PDF/PII) de outro.
+export async function assertScanUploadOwner(
+  uploadId: string,
+  userId: string,
+): Promise<void> {
+  const [owned] = await db
+    .select({ uploadId: scanUpload.uploadId })
+    .from(scanUpload)
+    .where(and(eq(scanUpload.uploadId, uploadId), eq(scanUpload.userId, userId)))
+    .limit(1)
+
+  if (!owned) {
+    throw new ProcessServiceError(403, 'Digitalizacao nao encontrada.')
+  }
+}
+
+// Remove a sessao de upload apos o complete consumi-la (best-effort).
+export async function deleteScanUpload(uploadId: string): Promise<void> {
+  await db.delete(scanUpload).where(eq(scanUpload.uploadId, uploadId))
+}
+
+// Idempotencia (escopada ao dono): se o complete ja rodou para este uploadId, o
+// lote (id=uploadId, uploadedByUserId=dono) existe. Retorna a conclusao anterior
+// para um retry (rede movel) devolver o mesmo processo — e NUNCA o processo de
+// outro usuario (o filtro por dono fecha o vazamento de id / IDOR).
+export async function findScanCompletion(
+  uploadId: string,
+  userId: string,
+): Promise<{ processId: string; batchFileId: string } | null> {
+  const [existing] = await db
+    .select({
+      processId: processBatchFile.processId,
+      batchFileId: processBatchFile.id,
     })
-  } catch {
+    .from(processBatchFile)
+    .where(
+      and(
+        eq(processBatchFile.id, uploadId),
+        eq(processBatchFile.uploadedByUserId, userId),
+      ),
+    )
+    .limit(1)
+
+  return existing ?? null
+}
+
+// SCAN pre-assinado — validacao do staging ANTES de criar o rascunho: chave
+// exata (anti-arbitraria), objeto existe, tamanho e assinatura PDF. Assim um
+// upload invalido nunca cria um rascunho orfao. Devolve o tamanho real.
+export async function validateScanStaging(input: {
+  uploadId: string
+  objectKey: string
+}): Promise<{ sizeInBytes: number }> {
+  const bucketName = storageBuckets.processDocuments
+  const stagingKey = buildScanStagingObjectKey({ uploadId: input.uploadId })
+  if (input.objectKey !== stagingKey) {
+    throw new ProcessServiceError(400, 'Chave de objeto invalida.')
+  }
+
+  const head = await headStorageObject({ bucketName, objectKey: stagingKey })
+  if (!head) {
     throw new ProcessServiceError(
-      503,
-      'Nao foi possivel enviar o documento para o storage. Tente novamente.',
+      400,
+      'O upload da digitalizacao nao foi encontrado (pode ja ter sido enviado).',
+    )
+  }
+  if (head.sizeInBytes > maxBatchFileSizeInBytes) {
+    await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+      () => {},
+    )
+    throw new ProcessServiceError(
+      413,
+      'A digitalizacao excede o limite de 25 MB.',
     )
   }
 
+  const prefix = await readStorageObjectPrefix({
+    bucketName,
+    objectKey: stagingKey,
+    length: PDF_MAGIC.length,
+  })
+  if (!hasPdfSignature(prefix)) {
+    await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+      () => {},
+    )
+    throw new ProcessServiceError(415, 'A digitalizacao nao e um PDF valido.')
+  }
+
+  return { sizeInBytes: head.sizeInBytes }
+}
+
+// SCAN pre-assinado — fase 2 (complete), com o rascunho JA criado pelo chamador.
+// Move do staging para o lote (id do lote = uploadId, o que da idempotencia via
+// PK) e enfileira a ingestao. Em conflito de PK (complete concorrente) lanca 409
+// para o chamador desfazer o rascunho e devolver a conclusao vencedora.
+export async function finalizeScanUpload(input: {
+  uploadId: string
+  processId: string
+  actor: ProcessActor
+  sizeInBytes: number
+}): Promise<{ batchFileId: string }> {
+  const bucketName = storageBuckets.processDocuments
+  const stagingKey = buildScanStagingObjectKey({ uploadId: input.uploadId })
+  const batchKey = buildProcessBatchObjectKey({
+    processId: input.processId,
+    fileId: input.uploadId,
+    fileName: SCAN_PDF_FILE_NAME,
+  })
+
+  await copyStorageObject({
+    bucketName,
+    sourceObjectKey: stagingKey,
+    destinationObjectKey: batchKey,
+  })
+
   try {
-    const [inserted] = await db
-      .insert(processBatchFile)
-      .values({
-        id: fileId,
-        processId: input.processId,
-        bucketName,
-        objectKey,
-        originalFileName: input.file.name,
-        mimeType: 'application/pdf',
-        sizeInBytes: input.file.size,
-        uploadedByUserId: input.actor.id,
-        splitStatus: 'processing',
-        splitUpdatedAt: new Date(),
-      })
-      .returning()
-    return inserted
+    await db.insert(processBatchFile).values({
+      // id = uploadId: um 2o complete (retry/corrida) colide na PK -> 409.
+      id: input.uploadId,
+      processId: input.processId,
+      bucketName,
+      objectKey: batchKey,
+      originalFileName: SCAN_PDF_FILE_NAME,
+      mimeType: 'application/pdf',
+      sizeInBytes: input.sizeInBytes,
+      uploadedByUserId: input.actor.id,
+      // Entra na fila duravel: o worker reivindica (claim+lease) e processa.
+      splitStatus: 'queued',
+      splitUpdatedAt: new Date(),
+    })
   } catch (error) {
-    try {
-      await deleteStorageObject({ bucketName, objectKey })
-    } catch {
-      // cleanup best-effort
+    await deleteStorageObject({ bucketName, objectKey: batchKey }).catch(
+      () => {},
+    )
+    // SO violacao de unicidade (PK) = complete duplicado -> 409 idempotente. Erro
+    // transitorio (deadlock/conexao) NAO deve virar "ja enviada": relanca para a
+    // rota tratar como falha retentavel (a rota ainda checa um vencedor).
+    if (isUniqueViolation(error)) {
+      throw new ProcessServiceError(409, 'Digitalizacao ja enviada.')
     }
     throw error
   }
-}
 
-export async function startScanIngestion(input: {
-  processId: string
-  file: File
-  actor: ProcessActor
-  perms: ResolvedPermissions
-}) {
-  const fileRecord = await storeIngestionFile({
-    processId: input.processId,
-    file: input.file,
-    actor: input.actor,
-  })
+  // Sucesso: remove o staging (a copia definitiva ja existe). Se falhar, o
+  // lifecycle do prefixo de staging limpa depois.
+  await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+    () => {},
+  )
 
-  // Dispara sem await: o trabalho continua apos a resposta HTTP.
-  void runScanIngestion({
-    processId: input.processId,
-    fileRecord,
-    actor: input.actor,
-    perms: input.perms,
-  })
-
-  return { batchFileId: fileRecord.id }
+  return { batchFileId: input.uploadId }
 }
 
 // Reprocessa a ingestao dos arquivos que FALHARAM (splitStatus='error') de um
@@ -760,24 +1046,11 @@ export async function reprocessFailedIngestion(input: {
     )
   }
 
-  // Re-roda SEQUENCIALMENTE os que conseguir reivindicar (claim atomico).
-  void (async () => {
-    for (const fileRecord of errorFiles) {
-      if (await claimSplitProcessing(fileRecord.id)) {
-        await runScanIngestion({
-          processId: input.processId,
-          fileRecord,
-          actor: input.actor,
-          perms: input.perms,
-        })
-      }
-    }
-  })().catch((error) => {
-    console.error('Falha no reprocessamento da ingestao', {
-      processId: input.processId,
-      error: String(error),
-    })
-  })
+  // Re-enfileira os que falharam: enqueueIngestion reseta para 'queued' e zera
+  // tentativas/lease/dead-letter; o worker reivindica e processa.
+  for (const fileRecord of errorFiles) {
+    await enqueueIngestion(fileRecord.id)
+  }
 
   return { count: errorFiles.length }
 }
@@ -953,7 +1226,8 @@ export async function completeDocumentImport(input: {
           mimeType: 'application/pdf',
           sizeInBytes: head.sizeInBytes,
           uploadedByUserId: input.actor.id,
-          splitStatus: 'processing',
+          // Entra na fila duravel: o worker reivindica e processa.
+          splitStatus: 'queued',
           splitUpdatedAt: new Date(),
         })
         .returning()
@@ -972,22 +1246,7 @@ export async function completeDocumentImport(input: {
     )
   }
 
-  // Coordenador SEQUENCIAL (detached) — mesma logica do multi-import.
-  void (async () => {
-    for (const fileRecord of fileRecords) {
-      await runScanIngestion({
-        processId: input.processId,
-        fileRecord,
-        actor: input.actor,
-        perms: input.perms,
-      })
-    }
-  })().catch((error) => {
-    console.error('Falha no coordenador de ingestao (import presigned)', {
-      processId: input.processId,
-      error: String(error),
-    })
-  })
+  // Os arquivos ja entram como 'queued'; o worker reivindica e processa.
 
   return { batchFileIds: fileRecords.map((record) => record.id) }
 }

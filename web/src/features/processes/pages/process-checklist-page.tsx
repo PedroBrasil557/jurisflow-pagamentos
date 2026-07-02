@@ -23,6 +23,7 @@ import { CaixaQuitacaoCard } from '../components/caixa-quitacao-card'
 import { BatchSection } from '../components/process-batch-section'
 import { ChecklistItemCard } from '../components/process-checklist-item-card'
 import { ChecklistItemDialog } from '../components/process-checklist-item-dialog'
+import { ChecklistPendenciasBanner } from '../components/process-checklist-pendencias-banner'
 import { ProcuracaoConjuntoCard } from '../components/procuracao-conjunto-card'
 import {
   buildProcessRelationship,
@@ -433,6 +434,10 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
           ) : null}
         </PageHeader>
 
+        <ChecklistPendenciasBanner
+          reviewFlags={checklistData?.reviewFlags ?? []}
+        />
+
         {process.caixaQuitacaoStatus !== 'idle' ? (
           <CaixaQuitacaoCard
             message={process.caixaQuitacaoMessage}
@@ -480,6 +485,7 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
               <div className="grid gap-4 pt-4">
                 <BatchSection
                   batchFiles={batchFiles}
+                  processId={processId}
                   canDelete={canDeleteBatchCurrentFiles}
                   canUpload={canUploadBatchCurrentFiles}
                   isUploading={uploadBatchMutation.isPending}
@@ -538,6 +544,12 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
                   const optionalItems = checklistData.items.filter(
                     (item) => !item.documentType.isRequired,
                   )
+                  // Docs com pendencia bloqueante (eco da reviewFlag na linha).
+                  const flaggedDocKeys = new Set(
+                    (checklistData.reviewFlags ?? [])
+                      .map((flag) => flag.docKey)
+                      .filter((key): key is string => Boolean(key)),
+                  )
 
                   return (
                     <div className="grid gap-6">
@@ -549,6 +561,9 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
                         <section className="grid gap-4 xl:grid-cols-2">
                           {requiredItems.map((item) => (
                             <ChecklistItemCard
+                              flagged={flaggedDocKeys.has(
+                                item.documentType.key,
+                              )}
                               item={item}
                               key={item.id}
                               onOpen={(nextItem) => {
@@ -568,6 +583,9 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
                           <section className="grid gap-4 xl:grid-cols-2">
                             {optionalItems.map((item) => (
                               <ChecklistItemCard
+                                flagged={flaggedDocKeys.has(
+                                  item.documentType.key,
+                                )}
                                 item={item}
                                 key={item.id}
                                 onOpen={(nextItem) => {
@@ -597,6 +615,7 @@ export function ProcessChecklistPage({ processId }: ProcessChecklistPageProps) {
           onDeleteFile={handleDeleteChecklistFile}
           onDownloadFile={handleDownloadFile}
           onSubmit={handleChecklistItemSubmit}
+          processId={processId}
         />
       ) : null}
 

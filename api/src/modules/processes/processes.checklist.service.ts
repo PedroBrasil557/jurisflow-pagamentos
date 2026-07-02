@@ -5,6 +5,7 @@ import {
   buildStorageObjectKey,
   createStorageObjectDownloadUrl,
   deleteStorageObject,
+  getStorageObjectBytes,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -14,6 +15,7 @@ import { buildChecklistDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
 import {
   getHousingComplexChecklistFiles,
+  getHousingComplexFileContent,
   type HousingComplexChecklistFile,
 } from '../housing-complexes/housing-complexes.documents.service'
 import {
@@ -22,14 +24,13 @@ import {
   assertProcessAction,
 } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
+import { deriveProcessState } from './derive/derive'
+import { gatherFacts } from './derive/facts.gather'
+import type { ReviewFlag } from './derive/facts.types'
 import {
   getProcessContextOrThrow,
   getProcessRecordOrThrow,
 } from './processes.access'
-import {
-  isCaixaOwnerDocKey,
-  startCaixaOwnerAnalysis,
-} from './processes.caixa-owner.service'
 import {
   conditionalProcessDocumentTypes,
   defaultProcessDocumentTypes,
@@ -40,9 +41,9 @@ import {
 import { ProcessServiceError } from './processes.errors'
 import { createProcessHistoryEntry } from './processes.history.service'
 import {
-  isProcuracaoDocKey,
-  startProcuracaoConjuntoAnalysis,
-} from './processes.procuracao-conjunto.service'
+  isReextractDocKey,
+  reextractDocAndReconcile,
+} from './processes.reextract.service'
 import {
   process,
   processDocument,
@@ -51,7 +52,10 @@ import {
 } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
-type ProcessActor = NonNullable<AppBindings['Variables']['user']>
+// Estas funcoes so usam o id do ator (usuario autenticado OU bot do sistema, ex.:
+// 'jurisflow-bot' no anexo da quitacao). Tipar so o id permite passar { id } sem
+// cast e o compilador garante que ninguem leia outro campo de um ator sem ele.
+type ProcessActor = Pick<NonNullable<AppBindings['Variables']['user']>, 'id'>
 type ProcessRecord = typeof process.$inferSelect
 type ChecklistFileRecord = Awaited<ReturnType<typeof listCurrentChecklistFiles>>
 type ProcessChecklistItemRecord = Awaited<
@@ -579,6 +583,12 @@ function buildChecklistResponse(input: {
     }
   })
 
+  const isPresent = (item: (typeof items)[number]) =>
+    getChecklistPresenceStatus({
+      currentFileCount: item.currentFiles.length,
+      status: item.status,
+    })
+
   // Itens de conjunto sem conjunto vinculado nao contam como obrigatorios (nao ha
   // como anexar) — ficam visiveis/pendentes com aviso, mas nao travam a completude.
   const requiredItems = items.filter(
@@ -586,20 +596,20 @@ function buildChecklistResponse(input: {
       item.documentType.isRequired &&
       !(item.scope === 'housing_complex' && !item.housingComplexLinked),
   )
-  const requiredCompleted = requiredItems.filter((item) =>
-    getChecklistPresenceStatus({
-      currentFileCount: item.currentFiles.length,
-      status: item.status,
-    }),
-  ).length
+  const requiredCompleted = requiredItems.filter(isPresent).length
+  const requiredTotal = requiredItems.length
 
   return {
     items,
     summary: {
       requiredCompleted,
-      requiredPending: requiredItems.length - requiredCompleted,
-      requiredTotal: requiredItems.length,
+      requiredPending: requiredTotal - requiredCompleted,
+      requiredTotal,
       totalItems: items.length,
+      // O vinculo do conjunto e pre-requisito de completude: um processo nao pode
+      // ficar "documentacao pronta" sem conjunto (os docs de escopo de conjunto sao
+      // obrigatorios para a peticao). A UI usa isto para sinalizar o bloqueio.
+      housingComplexLinked: input.housingComplexId !== null,
     },
   }
 }
@@ -885,8 +895,10 @@ async function attachChecklistFile(input: {
 // consulta de quitacao para anexar o PDF baixado da Caixa ao slot do checklist.
 // Reusa o core attachChecklistFile (ator = usuario tecnico jurisflow-bot) e
 // dispara a mesma cadeia do anexo manual (analise do titular para termos Caixa).
-// NAO sincroniza status do processo aqui — isso ocorre na proxima interacao do
-// usuario com o checklist (anexar um doc obrigatorio raramente completa tudo).
+// Reconcilia o status ao final: na automacao, o anexo de sistema (worker de
+// quitacao -> declaracao_quitacao) costuma ser o ULTIMO obrigatorio, completando a
+// documentacao — o backend e dono do avanco para DOCUMENTACAO_PRONTA, qualquer
+// origem.
 export async function attachSystemChecklistFile(input: {
   processId: string
   documentTypeKey: string
@@ -929,7 +941,7 @@ export async function attachSystemChecklistFile(input: {
   }
 
   // Apenas o id e usado por attachChecklistFile (uploadedByUserId/actorUserId).
-  const actor = { id: 'jurisflow-bot' } as unknown as ProcessActor
+  const actor: ProcessActor = { id: 'jurisflow-bot' }
 
   let didUploadFile = false
   await db.transaction(async (tx) => {
@@ -942,29 +954,51 @@ export async function attachSystemChecklistFile(input: {
     didUploadFile = result.didUploadFile
   })
 
-  if (didUploadFile && isCaixaOwnerDocKey(input.documentTypeKey)) {
-    // Fire-and-forget: nunca deixar a Promise rejeitar sem tratamento (o claim
-    // faz I/O no banco) — uma rejeicao nao capturada vira unhandledRejection.
-    startCaixaOwnerAnalysis({
+  if (didUploadFile && isReextractDocKey(input.documentTypeKey)) {
+    // Re-extracao por papel (UMA chamada de IA) + reconciliacao, em background. O
+    // doc chegou avulso (anexo de sistema/RPA), sem passar pela extracao do lote —
+    // entao extraimos aqui para alimentar os fatos (termoCompradores/conjunto).
+    void reextractDocAndReconcile({
       processId: input.processId,
+      documentTypeKey: input.documentTypeKey,
       triggeredByUserId: null,
-    }).catch((error) => {
-      console.error(
-        '[caixa-owner] falha ao disparar analise (anexo de sistema):',
-        error,
-      )
     })
+  }
+
+  if (didUploadFile) {
+    // Reconcilia o status: o anexo de sistema pode ter completado a documentacao
+    // obrigatoria (auto-avanco para DOCUMENTACAO_PRONTA). Ator = bot do sistema.
+    await reconcileProcessStatus(input.processId, actor)
   }
 
   return { didUploadFile }
 }
 
+// Reconciliador de status por completude do checklist: carrega o checklist e
+// sincroniza. Ponto UNICO para "recomputar o estado do processo" a partir de
+// qualquer origem (worker de ingestao/quitacao, script de backfill, re-sync de
+// conjunto). Idempotente. O backend e dono do avanco de estado.
+export async function reconcileProcessStatus(
+  processId: string,
+  actor: ProcessActor,
+) {
+  // syncProcessStatusAfterChecklistChange ja le tudo fresco (status + checklist).
+  return syncProcessStatusAfterChecklistChange({ processId, actor })
+}
+
 export async function syncProcessStatusAfterChecklistChange(input: {
   actor: ProcessActor
-  checklist: Awaited<ReturnType<typeof getProcessChecklist>>
   processId: string
 }) {
   const currentProcess = await getProcessRecordOrThrow(input.processId)
+
+  // Le a completude FRESCA aqui — logo antes de decidir e escrever — em vez de
+  // confiar num checklist montado pelo caller em outro momento. Um snapshot velho
+  // podia avancar/reverter o status com base em dado que ja mudou (corrida entre
+  // reconciles concorrentes: submit do usuario, auto-apply do caixa-owner, worker
+  // da quitacao). O dano critico (iniciar processo incompleto) e fechado a parte,
+  // revalidando no startProcess; aqui mantemos o campo status convergente.
+  const checklist = await loadProcessChecklistData(currentProcess)
 
   // Only auto-sync for early/mid statuses. RASCUNHO (entrada do digitalizacao) avanca por
   // completude; EM_LOTE (legado) ainda drena por aqui.
@@ -981,11 +1015,11 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   }
 
   // Count only from visible (filtered) checklist items
-  const visibleFileCount = input.checklist.items.reduce(
+  const visibleFileCount = checklist.items.reduce(
     (sum, item) => sum + item.currentFiles.length,
     0,
   )
-  const hasOkWithoutFile = input.checklist.items.some(
+  const hasOkWithoutFile = checklist.items.some(
     (item) => item.status === 'OK_SEM_ARQUIVO',
   )
   const hasIndividualDocs = visibleFileCount > 0 || hasOkWithoutFile
@@ -996,20 +1030,73 @@ export async function syncProcessStatusAfterChecklistChange(input: {
     ? 'EM_DOCUMENTACAO'
     : 'CADASTRADO'
 
-  // If DOCUMENTACAO_PRONTA but docs became pending, revert to EM_DOCUMENTACAO
-  if (
-    currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
-    input.checklist.summary.requiredPending > 0
-  ) {
-    targetStatus = 'EM_DOCUMENTACAO'
+  // v3 — gates do derive (alem da completude do checklist). O checklist segue a
+  // FONTE da completude documental (todos os obrigatorios atuais). O derive
+  // adiciona:
+  //  - readiness: nao DECIDE com um job exigido em voo (input-complete). Hold,
+  //    nao reverte (anti-flapping) — quando o fato assenta, o reconcile re-dispara.
+  //  - reviewFlags: bloqueia/reverte PRONTA por validacao de negocio (ex.: data de
+  //    assinatura do contrato de compra e venda fora do prazo legal). reviewFlags
+  //    so e nao-vazio com fatos 'ready', entao reverter por ele nao causa flapping.
+  // FAIL-CLOSED: se a derivacao dos gates falhar (ex.: hiccup no banco), NAO
+  // assume que esta liberado — segura (nao promove para PRONTA). gatesEvaluated=false
+  // bloqueia o avanco, mas NAO reverte um PRONTA existente (anti-flapping): um erro
+  // transitorio nao pode nem liberar um processo que viola a regra legal, nem
+  // derrubar um que ja estava ok. O proximo reconcile reavalia.
+  let reviewBlocked = false
+  let readinessPending = false
+  let gatesEvaluated = false
+  try {
+    const facts = await gatherFacts(input.processId)
+    if (facts) {
+      const derived = deriveProcessState(facts)
+      reviewBlocked = derived.reviewFlags.length > 0
+      readinessPending = derived.readiness === 'pending'
+      gatesEvaluated = true
+    } else {
+      gatesEvaluated = true // processo sem fatos -> nada a bloquear
+    }
+  } catch (error) {
+    console.error('sync status: falha ao derivar gates (FAIL-CLOSED: segura)', {
+      processId: input.processId,
+      error: String(error),
+    })
   }
 
-  // If DOCUMENTACAO_PRONTA and all docs are still ok, no change needed
-  if (
-    currentProcess.status === 'DOCUMENTACAO_PRONTA' &&
-    input.checklist.summary.requiredPending === 0
-  ) {
-    return currentProcess
+  // Completude documental (so checklist + conjunto — sempre conhecida).
+  const checklistComplete =
+    checklist.summary.requiredPending === 0 &&
+    currentProcess.housingComplexId !== null
+
+  // AVANCAR para PRONTA exige: gates AVALIADOS (fail-closed) + completo + sem
+  // reviewFlag bloqueante + nenhum job exigido em voo (input-complete).
+  const canAdvanceToReady =
+    gatesEvaluated && checklistComplete && !reviewBlocked && !readinessPending
+
+  // PRONTA segue valido se ainda completo e SEM reviewFlag CONHECIDO. Se os gates
+  // nao foram avaliados, mantem (nao reverte por incerteza — anti-flapping).
+  const prontaStillValid =
+    checklistComplete && !(gatesEvaluated && reviewBlocked)
+
+  // Auto-avanco para DOCUMENTACAO_PRONTA. O BACKEND e dono deste avanco — dispara
+  // para QUALQUER origem (digitalizacao por worker, anexo de doc de conjunto, upload
+  // humano), sem depender do frontend. So a partir de EM_DOCUMENTACAO (predecessor
+  // legal): CADASTRADO sem docs nunca tem requiredPending===0 com hasIndividualDocs.
+  //
+  // PRE-REQUISITO: conjunto VINCULADO. Sem conjunto, os docs de escopo de conjunto
+  // sao excluidos dos obrigatorios (nao ha onde anexar) — entao requiredPending pode
+  // chegar a 0 sem eles. Travar o avanco aqui impede um processo sem conjunto ficar
+  // "pronto" pulando docs obrigatorios da peticao.
+  if (currentProcess.status === 'EM_DOCUMENTACAO' && canAdvanceToReady) {
+    targetStatus = 'DOCUMENTACAO_PRONTA'
+  }
+
+  // Ja em DOCUMENTACAO_PRONTA: mantem se ainda valido (anti-flapping); reverte para
+  // EM_DOCUMENTACAO so quando a completude 'ready' quebra (faltou doc obrigatorio,
+  // conjunto desvinculado, ou reviewFlag CONHECIDO como a data do contrato fora do
+  // prazo). Gate nao avaliado -> mantem (nao reverte por incerteza).
+  if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+    targetStatus = prontaStillValid ? 'DOCUMENTACAO_PRONTA' : 'EM_DOCUMENTACAO'
   }
 
   // If already at the right status, no change
@@ -1018,32 +1105,42 @@ export async function syncProcessStatusAfterChecklistChange(input: {
   }
 
   const extraValues: Record<string, unknown> = {}
-
-  if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+  if (targetStatus === 'DOCUMENTACAO_PRONTA') {
+    extraValues.documentationReadyAt = new Date()
+  } else if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+    // Saindo de PRONTA (documentacao voltou a ficar pendente).
     extraValues.documentationReadyAt = null
   }
 
-  const [updatedProcess] = await db
-    .update(process)
-    .set({
-      status: targetStatus,
-      ...extraValues,
-    })
-    .where(eq(process.id, input.processId))
-    .returning()
+  // update + historico na MESMA transacao: a auditoria nao pode divergir do estado.
+  const updatedProcess = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(process)
+      .set({
+        status: targetStatus,
+        ...extraValues,
+      })
+      .where(eq(process.id, input.processId))
+      .returning()
 
-  await createProcessHistoryEntry({
-    processId: input.processId,
-    actorUserId: input.actor.id,
-    eventType: 'STATUS_CHANGED',
-    fromStatus: currentProcess.status,
-    toStatus: targetStatus,
-    notes:
-      targetStatus === 'CADASTRADO'
-        ? 'Todos os documentos foram removidos.'
-        : targetStatus === 'EM_DOCUMENTACAO'
-          ? 'Documentacao voltou a ficar pendente.'
-          : undefined,
+    await createProcessHistoryEntry({
+      processId: input.processId,
+      actorUserId: input.actor.id,
+      eventType: 'STATUS_CHANGED',
+      fromStatus: currentProcess.status,
+      toStatus: targetStatus,
+      notes:
+        targetStatus === 'CADASTRADO'
+          ? 'Todos os documentos foram removidos.'
+          : targetStatus === 'DOCUMENTACAO_PRONTA'
+            ? 'Documentacao concluida automaticamente.'
+            : targetStatus === 'EM_DOCUMENTACAO'
+              ? 'Documentacao voltou a ficar pendente.'
+              : undefined,
+      executor: tx,
+    })
+
+    return updated
   })
 
   return updatedProcess
@@ -1087,6 +1184,19 @@ async function loadProcessChecklistData(currentProcess: ProcessRecord) {
   })
 }
 
+// Mapa key -> processDocumentId de TODOS os slots do checklist, INCLUSIVE os
+// condicionais ocultos na exibicao (ex.: contrato_compra_venda so "aparece" com
+// ownerType=nao_titular). O ANEXO (import/split) deve poder gravar um doc
+// classificado no seu slot ANTES de o ownerType ser derivado — a condicao e de
+// EXIBICAO/obrigatoriedade, nao de existencia do slot.
+export async function getChecklistSlotIdsByKey(
+  processId: string,
+): Promise<Map<string, string>> {
+  await ensureProcessChecklistItems(processId)
+  const items = await listChecklistItems(processId)
+  return new Map(items.map((item) => [item.documentType.key, item.id]))
+}
+
 export async function getProcessChecklist(
   processId: string,
   userId: string,
@@ -1100,7 +1210,24 @@ export async function getProcessChecklist(
     })
   assertCanAccessChecklist(perms, relationship)
 
-  return loadProcessChecklistData(currentProcess)
+  const checklist = await loadProcessChecklistData(currentProcess)
+
+  // Pendencias bloqueantes (reviewFlags) para o banner "para concluir, resolva".
+  // Derive ao vivo (fresco). Best-effort: na falha, banner vazio (nao quebra a tela).
+  let reviewFlags: ReviewFlag[] = []
+  try {
+    const facts = await gatherFacts(processId)
+    if (facts) {
+      reviewFlags = deriveProcessState(facts).reviewFlags
+    }
+  } catch (error) {
+    console.error('getProcessChecklist: falha ao derivar reviewFlags', {
+      processId,
+      error: String(error),
+    })
+  }
+
+  return { ...checklist, reviewFlags }
 }
 
 // Re-sincroniza o status de todos os processos de um conjunto. Chamado quando um
@@ -1116,11 +1243,8 @@ export async function syncProcessesForHousingComplex(input: {
     .where(eq(process.housingComplexId, input.housingComplexId))
 
   for (const { id } of processes) {
-    const currentProcess = await getProcessRecordOrThrow(id)
-    const checklist = await loadProcessChecklistData(currentProcess)
     await syncProcessStatusAfterChecklistChange({
       processId: id,
-      checklist,
       actor: input.actor,
     })
   }
@@ -1253,30 +1377,17 @@ export async function submitProcessChecklistItem(input: {
   const updatedProcess = await syncProcessStatusAfterChecklistChange({
     processId: input.processId,
     actor: input.actor,
-    checklist,
   })
 
-  // Gatilho automatico: ao anexar/substituir um termo da Caixa, dispara a
-  // analise do titular do contrato em background (nao bloqueia a resposta).
-  if (didUploadFile && isCaixaOwnerDocKey(checklistItem.documentType.key)) {
-    // Fire-and-forget protegido: rejeicao do claim/dispatch nao pode escapar
-    // como unhandledRejection (nao ha handler global).
-    startCaixaOwnerAnalysis({
+  // Gatilho automatico: ao anexar/substituir um termo da Caixa OU a procuracao
+  // (upload manual, fora do lote), re-extrai por papel (UMA chamada de IA, que ja
+  // traz termoCompradores + endereco) e reconcilia, em background — nao bloqueia a
+  // resposta. Substitui as antigas analises caixa-owner e procuracao-conjunto.
+  if (didUploadFile && isReextractDocKey(checklistItem.documentType.key)) {
+    void reextractDocAndReconcile({
       processId: input.processId,
+      documentTypeKey: checklistItem.documentType.key,
       triggeredByUserId: input.actor.id,
-    }).catch((error) => {
-      console.error('[caixa-owner] falha ao disparar analise:', error)
-    })
-  }
-
-  // Gatilho automatico: ao anexar a procuracao, dispara a analise do conjunto
-  // (a partir do endereco do outorgante) em background.
-  if (didUploadFile && isProcuracaoDocKey(checklistItem.documentType.key)) {
-    startProcuracaoConjuntoAnalysis({
-      processId: input.processId,
-      triggeredByUserId: input.actor.id,
-    }).catch((error) => {
-      console.error('[procuracao-conjunto] falha ao disparar analise:', error)
     })
   }
 
@@ -1373,6 +1484,72 @@ export async function getProcessChecklistFileDownload(input: {
   }
 }
 
+// Bytes de um arquivo do checklist para stream INLINE (viewer same-origin, evita
+// CORS/redirect ao S3 e permite range requests do pdfjs). Mesma checagem de acesso
+// do download. `source` distingue arquivo do PROCESSO (processDocumentFile) do
+// arquivo do CONJUNTO (housing_complex) — ambos aparecem no checklist do processo.
+export async function getProcessChecklistFileBytes(input: {
+  processId: string
+  fileId: string
+  source: 'process' | 'housing_complex'
+  userId: string
+  perms: ResolvedPermissions
+}): Promise<{ bytes: Uint8Array; contentType: string; filename: string }> {
+  const { relationship } = await getProcessContextOrThrow({
+    processId: input.processId,
+    userId: input.userId,
+    perms: input.perms,
+  })
+  assertCanAccessChecklist(input.perms, relationship)
+
+  if (input.source === 'housing_complex') {
+    const currentProcess = await getProcessRecordOrThrow(input.processId)
+    if (!currentProcess.housingComplexId) {
+      throw new ProcessServiceError(404, 'Arquivo nao encontrado.')
+    }
+    return getHousingComplexFileContent({
+      housingComplexId: currentProcess.housingComplexId,
+      fileId: input.fileId,
+    })
+  }
+
+  // source === 'process': valida via join que o arquivo pertence a ESTE processo.
+  const [fileRecord] = await db
+    .select({
+      bucketName: processDocumentFile.bucketName,
+      objectKey: processDocumentFile.objectKey,
+      mimeType: processDocumentFile.mimeType,
+      originalFileName: processDocumentFile.originalFileName,
+    })
+    .from(processDocumentFile)
+    .innerJoin(
+      processDocument,
+      eq(processDocumentFile.processDocumentId, processDocument.id),
+    )
+    .where(
+      and(
+        eq(processDocumentFile.id, input.fileId),
+        eq(processDocument.processId, input.processId),
+        eq(processDocumentFile.isCurrent, true),
+      ),
+    )
+    .limit(1)
+
+  if (!fileRecord) {
+    throw new ProcessServiceError(404, 'Arquivo nao encontrado.')
+  }
+
+  const bytes = await getStorageObjectBytes({
+    bucketName: fileRecord.bucketName,
+    objectKey: fileRecord.objectKey,
+  })
+  return {
+    bytes,
+    contentType: fileRecord.mimeType,
+    filename: fileRecord.originalFileName,
+  }
+}
+
 export async function deleteChecklistFile(input: {
   processId: string
   processDocumentId: string
@@ -1460,7 +1637,6 @@ export async function deleteChecklistFile(input: {
   const currentProcess = await syncProcessStatusAfterChecklistChange({
     processId: input.processId,
     actor: input.actor,
-    checklist,
   })
 
   return {

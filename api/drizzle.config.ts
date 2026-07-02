@@ -12,6 +12,8 @@ export default defineConfig({
     './src/modules/processes/processes.schema.ts',
     './src/modules/permissions/permissions.schema.ts',
     './src/modules/settings/settings.schema.ts',
+    './src/modules/quitacao-queue/quitacao-queue.schema.ts',
+    './src/modules/titulares-caixa/titulares-caixa.schema.ts',
   ],
   out: './drizzle',
   dialect: 'postgresql',

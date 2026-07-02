@@ -155,6 +155,76 @@
       "when": 1781147002578,
       "tag": "0021_tiny_shockwave",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1781212150899,
+      "tag": "0022_groovy_baron_strucker",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1781226387823,
+      "tag": "0023_bored_riptide",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1781295433776,
+      "tag": "0024_purple_hex",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1781462636155,
+      "tag": "0025_lonely_namora",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1781489682179,
+      "tag": "0026_quitacao_subject_cpfs",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1781493247992,
+      "tag": "0027_quitacao_consultas",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1781500000000,
+      "tag": "0028_titulares_caixa",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1781500100000,
+      "tag": "0029_titular_averbacao",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1781500200000,
+      "tag": "0030_scan_upload",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1781500300000,
+      "tag": "0031_quitacao_claim_token",
+      "breakpoints": true
     }
   ]
 }

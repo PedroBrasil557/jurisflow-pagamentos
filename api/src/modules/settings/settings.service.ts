@@ -205,10 +205,13 @@ export async function saveScanbotLicenseKey(key: string): Promise<KeyStatus> {
 
 // --- Servico de digitalizacao (escolha explicita no painel) ---
 
-export type ScannerProvider = 'scanbot' | 'web' | 'docaligner'
+// 'docaligner' = scanner do navegador com deteccao por IA (padrao). 'scanbot' =
+// SDK licenciado. O antigo 'web' (OpenCV/jscanify) foi removido e migra p/ docaligner.
+export type ScannerProvider = 'scanbot' | 'docaligner'
 
 // Provedor efetivo: o salvo no painel; se nao houver escolha, usa 'scanbot'
-// quando ha license configurada, senao 'web' (preserva o comportamento atual).
+// quando ha license configurada, senao 'docaligner'. Valores legados ('web') ou
+// desconhecidos migram para 'docaligner'.
 export async function getScannerProvider(): Promise<ScannerProvider> {
   const [row] = await db
     .select({ scannerProvider: appSettings.scannerProvider })
@@ -217,12 +220,18 @@ export async function getScannerProvider(): Promise<ScannerProvider> {
     .limit(1)
 
   const stored = row?.scannerProvider
-  if (stored === 'scanbot' || stored === 'web' || stored === 'docaligner') {
-    return stored
+  if (stored === 'scanbot') {
+    return 'scanbot'
+  }
+  if (stored === 'docaligner') {
+    return 'docaligner'
+  }
+  if (stored === 'web') {
+    return 'docaligner'
   }
 
   const hasLicense = (await getScanbotLicenseKey()) !== null
-  return hasLicense ? 'scanbot' : 'web'
+  return hasLicense ? 'scanbot' : 'docaligner'
 }
 
 export async function saveScannerProvider(

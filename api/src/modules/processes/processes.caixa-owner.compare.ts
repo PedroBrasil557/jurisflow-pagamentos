@@ -18,20 +18,26 @@ export type CaixaTitular = {
 export type CaixaOwnerMatch = 'cpf' | 'name' | 'none'
 
 export type CaixaOwnerResult = {
-  // Auto-aplica SO 'titular'. Tudo que nao for match identico vira 'review'
-  // (humano decide; o sistema nunca auto-aplica "nao titular").
-  result: 'titular' | 'review'
+  // A eleicao do ownerType compara o titular do PROCESSO com os compradores do
+  // TERMO. Modelo de 2 estados (v3 — co-comprador/conjuge colapsado no titular):
+  // - 'titular'     => bate com um comprador do termo (titular do contrato Caixa).
+  // - 'nao_titular' => diferenca CONFIRMADA por CPF (titular do processo nao consta
+  //   entre os compradores). Comprou de terceiro => exige contrato de compra e venda.
+  // - 'review'      => INDETERMINADO (nao da pra afirmar igualdade nem diferenca).
+  result: 'titular' | 'nao_titular' | 'review'
   matchedBy: CaixaOwnerMatch
 }
 
 // Decisao DETERMINISTICA (codigo, nunca o LLM). Precisao sobre recall:
 // 1) CPF e o sinal primario — exige ambos validos (checksum) e iguais.
-// 2) Nome so e usado como fallback QUANDO o comprador NAO TRAZ CPF no doc.
-//    Se o doc traz um CPF (mesmo mascarado/parcial, ex.: "111.444.***-**" — comum
-//    por LGPD), NAO casar por nome: o CPF e um sinal de identidade conflitante
-//    que invalida o match por homonimo (dois "Jose da Silva" distintos) => review.
-// 3) Varios compradores (casal): basta UM bater para ser titular.
-// 4) Nenhum match identico => 'review'.
+// 2) Nome so e usado como fallback QUANDO a pessoa NAO TRAZ CPF no doc. Se o doc
+//    traz um CPF (mesmo mascarado/parcial, ex.: "111.444.***-**" — comum por LGPD),
+//    NAO casa por nome: o CPF nao pode ser confirmado.
+// 3) Bate com um comprador do termo => 'titular'.
+// 4) Sem match, com diferenca CONFIRMADA POR CPF (o titular do processo e alguem do
+//    termo tem CPF valido e NAO batem) => 'nao_titular'.
+// 5) Qualquer outro sem-match (nome divergente sem CPF, CPF mascarado/invalido, ou
+//    nada comparavel) => 'review' — sinal fraco demais para impor "nao titular".
 export function compareCaixaOwner(
   compradores: CaixaBuyer[],
   titular: CaixaTitular,
@@ -51,86 +57,49 @@ export function compareCaixaOwner(
   const buyerHasNoCpf = (buyer: CaixaBuyer): boolean =>
     !buyer.cpf || normalizeCpf(buyer.cpf).length === 0
 
-  // 1) CPF identico (primario).
-  if (titularCpfValid) {
-    for (const buyer of compradores) {
-      if (
-        buyerHasValidCpf(buyer) &&
-        normalizeCpf(buyer.cpf as string) === titularCpf
-      ) {
-        return { result: 'titular', matchedBy: 'cpf' }
+  // Compara o titular do processo contra os compradores do termo. CPF identico
+  // (primario) tem prioridade; nome so como fallback sem-CPF.
+  const matchAgainst = (pessoas: CaixaBuyer[]): CaixaOwnerMatch => {
+    if (titularCpfValid) {
+      for (const pessoa of pessoas) {
+        if (
+          buyerHasValidCpf(pessoa) &&
+          normalizeCpf(pessoa.cpf as string) === titularCpf
+        ) {
+          return 'cpf'
+        }
       }
     }
+    if (titularName) {
+      for (const pessoa of pessoas) {
+        if (
+          buyerHasNoCpf(pessoa) &&
+          normalizeName(pessoa.nome) === titularName
+        ) {
+          return 'name'
+        }
+      }
+    }
+    return 'none'
   }
 
-  // 2) Nome identico (fallback) — so para compradores que NAO trazem CPF no doc.
-  if (titularName) {
-    for (const buyer of compradores) {
-      if (buyerHasNoCpf(buyer) && normalizeName(buyer.nome) === titularName) {
-        return { result: 'titular', matchedBy: 'name' }
-      }
-    }
+  // 1) E um comprador do termo?
+  const titularMatch = matchAgainst(compradores)
+  if (titularMatch !== 'none') {
+    return { result: 'titular', matchedBy: titularMatch }
+  }
+
+  // 2) Sem match identico. So afirmamos 'nao_titular' com DIFERENCA CONFIRMADA POR
+  // CPF: o titular do processo tem CPF valido E existe alguem no termo com CPF
+  // valido (logo os CPFs foram comparados e nao bateram). Qualquer outro caso —
+  // nome divergente sem CPF, CPF mascarado/invalido, ou nada comparavel — vai para
+  // 'review'. Motivo: nome divergente e sinal FRACO para impor uma classificacao
+  // adversa (nao_titular torna o contrato_compra_venda obrigatorio); um glitch de
+  // OCR no nome (acento, abreviacao) nao deve, sozinho, travar o processo.
+  const someoneHasValidCpf = compradores.some(buyerHasValidCpf)
+  if (titularCpfValid && someoneHasValidCpf) {
+    return { result: 'nao_titular', matchedBy: 'none' }
   }
 
   return { result: 'review', matchedBy: 'none' }
-}
-
-export const CAIXA_OWNER_TITULAR = 'titular_contrato_caixa'
-
-export type CaixaOwnerOutcome = {
-  // Estado operacional resultante (process.caixaAnalysisStatus).
-  analysisStatus: 'done' | 'review'
-  // Se deve gravar ownerType = titular (so quando ha CERTEZA + flag ligada).
-  apply: boolean
-  newOwnerType?: typeof CAIXA_OWNER_TITULAR
-  historyEvent: 'CAIXA_OWNER_AUTO_SET' | 'CAIXA_OWNER_REVIEW_REQUIRED' | null
-}
-
-// Decide o desfecho a partir do resultado deterministico + estado atual do
-// processo + flag. PURA (sem I/O). Regras:
-// - 'review' => sempre revisar (nunca auto-aplica "nao titular").
-// - 'titular' ja aplicado => no-op.
-// - shadow (flag off) => mesmo com 'titular', so registra e manda revisar.
-// - human-lock => se um humano definiu outro ownerType, nao sobrescreve: revisar.
-// - caso contrario, com a flag ligada => auto-aplica titular.
-export function decideCaixaOwnerOutcome(input: {
-  result: CaixaOwnerResult['result']
-  currentOwnerType: string
-  ownerTypeSource: string
-  autoApplyEnabled: boolean
-}): CaixaOwnerOutcome {
-  if (input.result === 'review') {
-    return {
-      analysisStatus: 'review',
-      apply: false,
-      historyEvent: 'CAIXA_OWNER_REVIEW_REQUIRED',
-    }
-  }
-
-  if (input.currentOwnerType === CAIXA_OWNER_TITULAR) {
-    return { analysisStatus: 'done', apply: false, historyEvent: null }
-  }
-
-  if (!input.autoApplyEnabled) {
-    return {
-      analysisStatus: 'review',
-      apply: false,
-      historyEvent: 'CAIXA_OWNER_REVIEW_REQUIRED',
-    }
-  }
-
-  if (input.ownerTypeSource === 'human' && input.currentOwnerType !== '') {
-    return {
-      analysisStatus: 'review',
-      apply: false,
-      historyEvent: 'CAIXA_OWNER_REVIEW_REQUIRED',
-    }
-  }
-
-  return {
-    analysisStatus: 'done',
-    apply: true,
-    newOwnerType: CAIXA_OWNER_TITULAR,
-    historyEvent: 'CAIXA_OWNER_AUTO_SET',
-  }
 }

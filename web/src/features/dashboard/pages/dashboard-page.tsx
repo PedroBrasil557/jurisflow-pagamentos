@@ -10,6 +10,7 @@ import { OwnerTypeChart } from '../components/owner-type-chart'
 import { ProductivityTab } from '../components/productivity/productivity-tab'
 import { StageTimingsTab } from '../components/stage-timings/stage-timings-tab'
 import { StatusDistributionChart } from '../components/status-distribution-chart'
+import { TitularCaixaTab } from '../components/titular-caixa/titular-caixa-tab'
 import { TopCreatorsChart } from '../components/top-creators-chart'
 import { TopHousingComplexesChart } from '../components/top-housing-complexes-chart'
 import { dashboardStatsOptions } from '../services/dashboard.queries'
@@ -33,12 +34,17 @@ export function DashboardPage() {
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Visao geral</TabsTrigger>
+          <TabsTrigger value="titular-caixa">Titular Caixa</TabsTrigger>
           <TabsTrigger value="productivity">Produtividade</TabsTrigger>
           <TabsTrigger value="stage-timings">Tempo entre etapas</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
           <OverviewSection />
+        </TabsContent>
+
+        <TabsContent value="titular-caixa">
+          <TitularCaixaTab />
         </TabsContent>
 
         <TabsContent value="productivity">

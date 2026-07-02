@@ -1,3 +1,4 @@
+import { AlertTriangle } from 'lucide-react'
 import { StatusBadge } from '@/shared/components/status-badge'
 import type { ProcessChecklistItem } from '../services/processes.service'
 
@@ -53,9 +54,12 @@ export function ChecklistStatusBadge({ status }: { status: string }) {
 export function ChecklistItemCard({
   item,
   onOpen,
+  flagged = false,
 }: {
   item: ProcessChecklistItem
   onOpen: (item: ProcessChecklistItem) => void
+  // Tem pendencia bloqueante (reviewFlag) ligada a este doc — eco do banner.
+  flagged?: boolean
 }) {
   const numberPrefix = item.documentType.number
     ? `${item.documentType.number}. `
@@ -75,6 +79,12 @@ export function ChecklistItemCard({
           <p className="text-sm text-muted-foreground">
             {getChecklistItemSecondaryLabel(item)}
           </p>
+          {flagged ? (
+            <span className="flex items-center gap-1 text-amber-600 text-xs dark:text-amber-400">
+              <AlertTriangle className="size-3" />
+              Pendência impede a conclusão — ver no topo
+            </span>
+          ) : null}
         </div>
 
         <ChecklistStatusBadge status={item.status} />

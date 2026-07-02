@@ -144,7 +144,7 @@ function KeyCard({
   )
 }
 
-type ScannerProvider = 'scanbot' | 'web' | 'docaligner'
+type ScannerProvider = 'scanbot' | 'docaligner'
 
 function ScannerProviderSelect({
   provider,
@@ -159,20 +159,15 @@ function ScannerProviderSelect({
 }) {
   const options = [
     {
+      value: 'docaligner' as const,
+      label: 'Navegador (IA)',
+      description:
+        'Deteccao de bordas por IA, sem license. Roda no navegador. Padrao.',
+    },
+    {
       value: 'scanbot' as const,
       label: 'Scanbot',
       description: 'Qualidade CamScanner. Requer a license configurada abaixo.',
-    },
-    {
-      value: 'docaligner' as const,
-      label: 'DocAligner (IA)',
-      description:
-        'Deteccao de bordas por IA, open-source. Sem license, roda no navegador.',
-    },
-    {
-      value: 'web' as const,
-      label: 'Scanner web',
-      description: 'Motor base (jscanify), sem license e funciona offline.',
     },
   ]
 
@@ -189,7 +184,7 @@ function ScannerProviderSelect({
           </p>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2">
           {options.map((option) => (
             <button
               className={cn(
@@ -391,11 +386,11 @@ export function SettingsPage() {
                   'Nao foi possivel salvar o servico de digitalizacao.',
                 )
               }
-              provider={status?.scanner?.provider ?? 'web'}
+              provider={status?.scanner?.provider ?? 'docaligner'}
               scanbotConfigured={status?.scanbot?.configured ?? false}
             />
             <KeyCard
-              description="License key do Scanbot Web SDK, usada no scanner de documentos (qualidade CamScanner, inclusive no iPhone). Sem ela, o scanner usa o modo alternativo (jscanify) com ajuste manual de bordas."
+              description="License key do Scanbot Web SDK, usada no scanner de documentos (qualidade CamScanner, inclusive no iPhone). Sem ela, o scanner do navegador (detecção por IA) é usado, com ajuste manual de bordas quando necessário."
               helpText="Cole a chave inteira (varias linhas). E travada por dominio; sem ela o scanner cai no modo alternativo."
               isBusy={saveScanbot.isPending || clearScanbot.isPending}
               isLoading={statusQuery.isLoading}

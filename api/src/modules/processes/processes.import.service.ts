@@ -4,7 +4,7 @@ import { logErrorEvent, logEvent } from '../../shared/observability/log'
 import type { AppBindings } from '../../shared/types/app'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
 import {
-  getProcessChecklist,
+  getChecklistSlotIdsByKey,
   uploadProcessChecklistFile,
 } from './processes.checklist.service'
 import { documentDisplayNumberByKey } from './processes.documents'
@@ -13,7 +13,9 @@ import { MAX_FILE_SIZE_IN_BYTES } from './processes.extraction.service'
 import type { ExtractedDocument } from './processes.extraction.types'
 import { splitPdfByDocuments } from './processes.pdf.splitter'
 
-type ProcessActor = NonNullable<AppBindings['Variables']['user']>
+// So o id do ator e usado (usuario autenticado OU bot do sistema na ingestao).
+// Tipar so o id permite { id } sem cast e impede leitura de campo inexistente.
+type ProcessActor = Pick<NonNullable<AppBindings['Variables']['user']>, 'id'>
 
 export const importBundleDocumentsSchema = z.array(
   z.object({
@@ -66,10 +68,10 @@ export async function importDocumentBundle(input: {
     )
   }
 
-  const checklist = await getProcessChecklist(processId, actor.id, perms)
-  const itemIdByKey = new Map(
-    checklist.items.map((item) => [item.documentType.key, item.id]),
-  )
+  // Slots de TODOS os tipos (inclui condicionais ocultos): um doc classificado pode
+  // ser anexado ao seu slot ANTES de o ownerType ser derivado. Sem isto, a compra e
+  // venda (slot condicional a nao_titular) era PULADA no import e nunca re-anexada.
+  const itemIdByKey = await getChecklistSlotIdsByKey(processId)
 
   const pdfBytes = new Uint8Array(await file.arrayBuffer())
   const splitStartedAt = performance.now()

@@ -166,9 +166,15 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
   })
   const watchedValues = useWatch({ control })
   const values = (watchedValues ?? initialValues) as ProcessFormValues
+  // So reseta o formulario com os valores vindos do servidor quando o usuario
+  // NAO tem edicoes pendentes. Sem o guard, o polling (2.5s enquanto caixa/
+  // quitacao processam) gera um novo objeto `draft` a cada refetch e apagaria o
+  // que o usuario esta digitando.
   useEffect(() => {
-    reset(initialValues)
-  }, [initialValues, reset])
+    if (!isDirty) {
+      reset(initialValues)
+    }
+  }, [initialValues, isDirty, reset])
 
   const queryClient = useQueryClient()
   // Ao concluir a ingestao (processing -> done/error), recarrega o processo
@@ -724,9 +730,11 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                 <ProcessRadioGroupField
                   error={errors.spouseContractSigned?.message}
                   label={
-                    values.ownerType === 'titular_contrato_caixa'
-                      ? 'Contrato com a caixa assinado junto com o conjuge?'
-                      : 'Contrato de compra e venda assinado junto com o conjuge?'
+                    // Titular e conjuge-titular adquiriram pelo contrato Caixa;
+                    // so o nao_titular assina contrato de compra e venda.
+                    values.ownerType === 'nao_titular_contrato_caixa'
+                      ? 'Contrato de compra e venda assinado junto com o conjuge?'
+                      : 'Contrato com a caixa assinado junto com o conjuge?'
                   }
                   onChange={(v) => updateValue('spouseContractSigned', v)}
                   options={[

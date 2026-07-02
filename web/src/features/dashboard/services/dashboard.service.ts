@@ -4,6 +4,8 @@ import { apiClient } from '@/shared/services/api-client'
 const dashboardStatsRoute = apiClient.api.dashboard.stats
 const dashboardProductivityRoute = apiClient.api.dashboard.productivity
 const dashboardStageTimingsRoute = apiClient.api.dashboard['stage-timings']
+const dashboardTitularCaixaRoute =
+  apiClient.api.dashboard['titular-caixa-stats']
 
 export type DashboardStats = InferResponseType<
   typeof dashboardStatsRoute.$get,
@@ -43,6 +45,21 @@ export async function fetchProductivityStats(
 
   if (!response.ok) {
     throw new Error('Erro ao carregar indicadores de produtividade.')
+  }
+
+  return response.json()
+}
+
+export type TitularCaixaStats = InferResponseType<
+  typeof dashboardTitularCaixaRoute.$get,
+  200
+>
+
+export async function fetchTitularCaixaStats(): Promise<TitularCaixaStats> {
+  const response = await dashboardTitularCaixaRoute.$get()
+
+  if (!response.ok) {
+    throw new Error('Erro ao carregar indicadores de Titular Caixa.')
   }
 
   return response.json()

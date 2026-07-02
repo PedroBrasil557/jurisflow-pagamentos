@@ -6,7 +6,7 @@ import { createAnthropicVisionProvider } from './processes.extraction.provider'
 import type {
   ExtractionInputFile,
   ExtractionMediaType,
-  ExtractionResult,
+  ExtractionRunResult,
 } from './processes.extraction.types'
 
 // O PDF empacotado reune varios documentos; limite alinhado ao Claude (~32 MB).
@@ -50,7 +50,7 @@ async function toExtractionInputFile(file: File): Promise<ExtractionInputFile> {
 // Stateless: nao grava nada e nao armazena os arquivos.
 export async function extractDocumentsFromFiles(
   files: File[],
-): Promise<ExtractionResult> {
+): Promise<ExtractionRunResult> {
   // Prioridade: chave salva no painel (banco) sobre a variavel de ambiente.
   const apiKey = (await getAnthropicApiKey()) ?? env.anthropic.apiKey
 
@@ -71,7 +71,19 @@ export async function extractDocumentsFromFiles(
   const inputFiles = await Promise.all(files.map(toExtractionInputFile))
 
   const provider = createAnthropicVisionProvider(apiKey, env.anthropic.model)
-  const raw = await provider.extract(inputFiles)
+  const { raw, model, usage } = await provider.extract(inputFiles)
 
-  return normalizeExtraction(raw)
+  return {
+    ...normalizeExtraction(raw),
+    meta: {
+      model,
+      usage,
+      paginas: raw.paginas ?? [],
+      outorgantes: raw.outorgantes,
+      compraVenda: raw.compraVenda,
+      termoCompradores: raw.termoCompradores,
+      procuracaoEndereco: raw.procuracaoEndereco,
+      procuracaoCidade: raw.procuracaoCidade,
+    },
+  }
 }

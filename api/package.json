@@ -3,6 +3,8 @@
   "scripts": {
     "create:admin": "bun run src/scripts/create-admin.ts",
     "dev": "bun run --hot src/index.ts",
+    "worker": "bun run src/worker.ts",
+    "worker:dev": "bun run --hot src/worker.ts",
     "db:generate": "drizzle-kit generate",
     "db:check": "bun run scripts/check-migrations.ts",
     "db:migrate": "bun run scripts/migrate.ts",
@@ -12,7 +14,9 @@
     "lint": "biome lint .",
     "check": "biome check .",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
-    "test": "bun test"
+    "test": "bun test",
+    "db:test:setup": "bun run scripts/setup-test-db.ts",
+    "test:integration": "RUN_INTEGRATION=1 DATABASE_URL=postgresql://postgres:postgres@localhost:3557/app_test bun test src/modules/processes/processes.ingestion.queue.integration.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
@@ -26,6 +30,8 @@
     "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1",
     "pg": "^8.20.0",
+    "unpdf": "^1.6.2",
+    "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {

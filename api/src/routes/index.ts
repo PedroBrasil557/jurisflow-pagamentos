@@ -14,10 +14,12 @@ import {
   permissionUserAdminRoutes,
 } from '../modules/permissions/permissions.admin.routes'
 import { processRoutes } from '../modules/processes/processes.routes'
+import { quitacaoQueueInternalRoutes } from '../modules/quitacao-queue/quitacao-queue.internal.routes'
 import {
   settingsAdminRoutes,
   settingsClientRoutes,
 } from '../modules/settings/settings.routes'
+import { titularesCaixaRoutes } from '../modules/titulares-caixa/titulares-caixa.routes'
 import { systemRoutes } from '../modules/system/system.routes'
 import { telemetryRoutes } from '../modules/telemetry/telemetry.routes'
 import { createCorsMiddleware } from '../shared/middleware/cors'
@@ -53,7 +55,9 @@ export function createAppRouter(options: CreateAppRouterOptions) {
     .route('/api/housing-complexes', housingComplexOptionsRoutes)
     .route('/api/dashboard', dashboardRoutes)
     .route('/api/processes', processRoutes)
+    .route('/api/titulares-caixa', titularesCaixaRoutes)
     .route('/api/internal/caixa-quitacao', caixaQuitacaoInternalRoutes)
+    .route('/api/internal/quitacao', quitacaoQueueInternalRoutes)
     .route('/api/telemetry', telemetryRoutes)
     .route('/api/system', systemRoutes)
     .get('/', (c) => {

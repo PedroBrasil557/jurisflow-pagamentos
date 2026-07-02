@@ -3,42 +3,112 @@ import { apiClient } from '@/shared/services/api-client'
 import { getErrorMessage } from '@/shared/services/api-error'
 import { reportClientError } from '@/shared/services/telemetry'
 
-const scanClientRoute = apiClient.api.processes.scan
+const presignScanRoute = apiClient.api.processes.scan.presign
+const completeScanRoute = apiClient.api.processes.scan.complete
 const presignImportRoute = apiClient.api.processes.import.presign
 const completeImportRoute = apiClient.api.processes.import.complete
 const reprocessImportClientRoute =
   apiClient.api.processes[':processId']['reprocess-import']
 
+type PresignScanResponse = InferResponseType<typeof presignScanRoute.$post, 200>
 export type CreateProcessViaScanResponse = InferResponseType<
-  typeof scanClientRoute.$post,
+  typeof completeScanRoute.$post,
   202
 >
 
-// Cria um processo RASCUNHO a partir do scan e dispara a ingestao em background.
-// Retorna na hora { processId, batchFileId }; o andamento e acompanhado pelo
-// splitStatus do lote (polling).
-export async function createProcessViaScanRequest(
-  file: File,
-): Promise<CreateProcessViaScanResponse> {
-  const formData = new FormData()
-  formData.append('file', file)
-
-  const response = await fetch(scanClientRoute.$url(), {
-    method: 'POST',
-    body: formData,
-    credentials: 'include',
+// PUT direto no S3 com progresso de upload (XHR expoe o evento `progress`, que o
+// fetch nao da). Necessario porque um PDF de 8-16MB em 3G/4G fraco demora e sem
+// barra o usuario acha que travou.
+function putToS3WithProgress(
+  url: string,
+  body: Blob,
+  onProgress?: (fraction: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', url)
+    xhr.setRequestHeader('Content-Type', 'application/pdf')
+    // Timeout: numa conexao semiaberta (handoff de torre) o PUT pode nunca
+    // completar nem falhar — sem isto o overlay "Enviando..." travaria a tela
+    // indefinidamente. Ao expirar, `ontimeout` rejeita e a UI libera para retry.
+    xhr.timeout = 120_000
+    if (onProgress) {
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          onProgress(event.loaded / event.total)
+        }
+      }
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve()
+      } else {
+        reject(new Error(`Falha ao enviar a digitalizacao (${xhr.status}).`))
+      }
+    }
+    xhr.onerror = () =>
+      reject(new Error('Falha de rede ao enviar a digitalizacao.'))
+    xhr.ontimeout = () =>
+      reject(new Error('O envio da digitalizacao expirou. Tente novamente.'))
+    xhr.onabort = () => reject(new Error('Envio da digitalizacao cancelado.'))
+    xhr.send(body)
   })
+}
 
-  if (!response.ok) {
+// Cria um processo RASCUNHO a partir do scan via upload PRE-ASSINADO S3 (o PDF vai
+// DIRETO ao S3, sem passar pela API — sem o teto de 10MB do API Gateway). Fluxo:
+// 1) presign (uploadId opaco, sem processo) -> 2) PUT no S3 -> 3) complete (cria
+// o rascunho + dispara a ingestao). Retorna { processId, batchFileId }; o
+// andamento e acompanhado pelo splitStatus do lote (polling). Idempotente: um
+// retry do complete devolve o mesmo processo.
+export async function createProcessViaScanRequest(
+  pdf: Blob,
+  onProgress?: (fraction: number) => void,
+): Promise<CreateProcessViaScanResponse> {
+  // 1) presign
+  const presignRes = await presignScanRoute.$post({
+    json: { contentType: 'application/pdf', size: pdf.size },
+  })
+  if (!presignRes.ok) {
     throw new Error(
       await getErrorMessage(
-        response,
+        presignRes,
         'Nao foi possivel iniciar a digitalizacao.',
       ),
     )
   }
+  const { uploadId, objectKey, uploadUrl } =
+    (await presignRes.json()) as PresignScanResponse
 
-  return (await response.json()) as CreateProcessViaScanResponse
+  // 2) PUT direto no S3.
+  try {
+    await putToS3WithProgress(uploadUrl, pdf, onProgress)
+  } catch (error) {
+    reportClientError('scan_s3_put_error', {
+      uploadId,
+      sizeBytes: pdf.size,
+      errorName: error instanceof Error ? error.name : 'unknown',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    })
+    throw new Error(
+      'Falha de rede ao enviar a digitalizacao (a conexao caiu ou foi bloqueada). Tente novamente.',
+    )
+  }
+
+  // 3) complete -> cria o rascunho, registra no lote e dispara a ingestao.
+  const completeRes = await completeScanRoute.$post({
+    json: { uploadId, objectKey },
+  })
+  if (!completeRes.ok) {
+    throw new Error(
+      await getErrorMessage(
+        completeRes,
+        'Nao foi possivel concluir a digitalizacao.',
+      ),
+    )
+  }
+
+  return (await completeRes.json()) as CreateProcessViaScanResponse
 }
 
 type PresignImportResponse = InferResponseType<

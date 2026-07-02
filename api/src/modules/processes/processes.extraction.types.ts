@@ -41,22 +41,67 @@ export interface RawEndereco {
   confianca?: number
 }
 
+// Conjuge extraido do TERMO DE ENTREGA/RECEBIMENTO (Caixa): presente apenas quando o
+// termo indica que o contrato foi assinado tambem pelo conjuge. Sua presenca marca
+// spouseContractSigned='sim' (condiciona o doc rg_cpf_cnh_conjuge).
+export interface RawConjuge {
+  fullName?: string
+  cpf?: string
+  birthDate?: string
+  confianca?: number
+}
+
 export interface RawPageClassification {
   pagina: number
   tipo: string
 }
 
+// Dados pessoais de uma PARTE (outorgante da procuracao, comprador/vendedor do
+// contrato de compra e venda). Usado pela derivacao de ownerType/quitacao (v3).
+export interface RawPerson {
+  nome?: string
+  cpf?: string
+  rg?: string
+  nascimento?: string // ISO yyyy-mm-dd
+}
+
+export interface RawCompraVenda {
+  vendedores?: RawPerson[]
+  compradores?: RawPerson[]
+  dataAssinatura?: string // ISO yyyy-mm-dd
+}
+
 export interface RawExtraction {
   titular?: RawTitular
   endereco?: RawEndereco
+  conjuge?: RawConjuge
+  // Outorgantes da PROCURACAO = titular(es) do processo (ancora de QUEM).
+  outorgantes?: RawPerson[]
+  // Partes + data do CONTRATO DE COMPRA E VENDA particular.
+  compraVenda?: RawCompraVenda
+  // Compradores do TERMO da Caixa, em ordem ([0]=titular do termo, [1]=co-comprador).
+  // Alimenta o fato termoCompradores (v3) — absorve a antiga analise caixa-owner.
+  termoCompradores?: RawPerson[]
+  // Endereco do OUTORGANTE na procuracao (texto completo + cidade), para casar o
+  // conjunto habitacional. Absorve a antiga analise procuracao-conjunto.
+  procuracaoEndereco?: string
+  procuracaoCidade?: string
   camposNaoEncontrados?: string[]
   paginas?: RawPageClassification[]
+}
+
+// Saida crua do provider + metadados da chamada (modelo resolvido e uso de
+// tokens) — necessarios para a auditoria de IA (ai_analysis), sem vazar bytes.
+export interface RawExtractionResult {
+  raw: RawExtraction
+  model: string
+  usage?: { inputTokens: number; outputTokens: number }
 }
 
 // Interface plugavel — permite trocar/empilhar provedores (Claude, etc.).
 export interface DocumentExtractionProvider {
   readonly name: string
-  extract(files: ExtractionInputFile[]): Promise<RawExtraction>
+  extract(files: ExtractionInputFile[]): Promise<RawExtractionResult>
 }
 
 // Resultado normalizado e validado, pronto para a tela de revisao.
@@ -87,3 +132,22 @@ export interface ExtractionResult {
   warnings: string[]
   documents: ExtractedDocument[]
 }
+
+// Metadados da chamada de IA usados pela auditoria (ai_analysis kind
+// document_extraction): modelo resolvido, uso de tokens e a classificacao crua
+// de TODAS as paginas (pagina -> tipo) — a evidencia do que a IA decidiu.
+export interface ExtractionMeta {
+  model: string
+  usage?: { inputTokens: number; outputTokens: number }
+  paginas: RawPageClassification[]
+  // Extracao por papel (v3) — alimenta os fatos da derivacao via auditoria.
+  outorgantes?: RawPerson[]
+  compraVenda?: RawCompraVenda
+  termoCompradores?: RawPerson[]
+  procuracaoEndereco?: string
+  procuracaoCidade?: string
+}
+
+// Resultado normalizado + metadados da chamada, devolvido por
+// extractDocumentsFromFiles para quem precisa auditar a classificacao.
+export type ExtractionRunResult = ExtractionResult & { meta: ExtractionMeta }

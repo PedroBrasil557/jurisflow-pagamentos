@@ -1,0 +1,1 @@
+ALTER TABLE "process_batch_file" ADD COLUMN "split_failure_count" integer DEFAULT 0 NOT NULL;

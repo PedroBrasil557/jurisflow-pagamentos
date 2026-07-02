@@ -22,7 +22,9 @@ export async function fetchCaixaAnalyses(
 ): Promise<ListAnalysesResponse> {
   const response = await aiAnalysesRoute.$get({
     param: { processId },
-    query: { kind: 'caixa_owner', limit: '5' },
+    // v3: a decisao de ownerType vive na evidencia unica process_derivation (a
+    // analise caixa_owner separada foi removida). Mantem alguns legados visiveis.
+    query: { kind: 'process_derivation', limit: '5' },
   })
 
   if (!response.ok) {

@@ -294,6 +294,12 @@ export const listProcessesQuerySchema = z.object({
     .optional(),
   createdFrom: z.coerce.date().optional(),
   createdTo: z.coerce.date().optional(),
+  // Query param chega como string — coerco explicito ('true'/'false'); ausente vira
+  // false. NAO usar z.coerce.boolean (qualquer string nao-vazia viraria true).
+  needsClassificationReview: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 })
@@ -323,6 +329,22 @@ export const processChecklistFileParamsSchema = z.object({
   fileId: z.string().trim().min(1, {
     message: 'Informe o arquivo.',
   }),
+})
+
+// Conteudo (bytes) inline de um arquivo do checklist para o viewer same-origin.
+// Sem processDocumentId: arquivos do conjunto (housing_complex) nao tem um; o
+// `source` distingue de onde carregar os bytes.
+export const processChecklistFileContentParamsSchema = z.object({
+  processId: z.string().trim().min(1, {
+    message: 'Informe o processo.',
+  }),
+  fileId: z.string().trim().min(1, {
+    message: 'Informe o arquivo.',
+  }),
+})
+
+export const processChecklistFileContentQuerySchema = z.object({
+  source: z.enum(['process', 'housing_complex']).default('process'),
 })
 
 export const processPdfModelParamsSchema = z.object({
@@ -434,4 +456,18 @@ export const completeImportBodySchema = z.object({
     )
     .min(1)
     .max(IMPORT_MAX_FILES),
+})
+
+// Scan via upload pre-assinado S3 (uma sessao = um PDF). Igual ao import, mas a
+// sessao e um uploadId opaco (sem processo ate o complete).
+export const presignScanBodySchema = z.object({
+  contentType: z.string().min(1).max(128),
+  size: z.number().int().positive(),
+})
+
+export const completeScanBodySchema = z.object({
+  // uuid: o presign sempre gera uuid; restringe o formato do PK controlado pelo
+  // cliente (reduz superficie de colisao/probe).
+  uploadId: z.string().uuid(),
+  objectKey: z.string().min(1).max(1024),
 })

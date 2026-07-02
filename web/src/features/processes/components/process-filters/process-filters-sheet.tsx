@@ -38,6 +38,7 @@ export type ProcessFiltersValue = {
   housingComplexIds: string[]
   createdFrom?: string
   createdTo?: string
+  needsClassificationReview: boolean
 }
 
 type ProcessFiltersSheetProps = {
@@ -61,6 +62,9 @@ export function ProcessFiltersSheet({
   )
   const [housingComplexIds, setHousingComplexIds] = useState<string[]>(
     value.housingComplexIds,
+  )
+  const [needsClassificationReview, setNeedsClassificationReview] = useState(
+    value.needsClassificationReview,
   )
   const [range, setRange] = useState<DateRange | undefined>(undefined)
   const [hcSearch, setHcSearch] = useState('')
@@ -96,6 +100,7 @@ export function ProcessFiltersSheet({
       setStatuses(value.statuses)
       setOwnerTypes(value.ownerTypes)
       setHousingComplexIds(value.housingComplexIds)
+      setNeedsClassificationReview(value.needsClassificationReview)
       setRange({
         from: isoToDate(value.createdFrom),
         to: isoToDate(value.createdTo),
@@ -108,6 +113,7 @@ export function ProcessFiltersSheet({
     value.housingComplexIds,
     value.createdFrom,
     value.createdTo,
+    value.needsClassificationReview,
   ])
 
   function toggleStatus(status: ProcessStatusValue) {
@@ -130,6 +136,7 @@ export function ProcessFiltersSheet({
     setStatuses([])
     setOwnerTypes([])
     setHousingComplexIds([])
+    setNeedsClassificationReview(false)
     setRange(undefined)
   }
 
@@ -140,6 +147,7 @@ export function ProcessFiltersSheet({
       housingComplexIds,
       createdFrom: dateToIso(range?.from),
       createdTo: dateToIso(range?.to ?? range?.from),
+      needsClassificationReview,
     })
     onOpenChange(false)
   }
@@ -257,6 +265,31 @@ export function ProcessFiltersSheet({
                 </PopoverContent>
               </Popover>
             </div>
+
+            <fieldset className="grid gap-3">
+              <legend className="text-sm font-medium text-foreground">
+                Classificação
+              </legend>
+              <label
+                className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground"
+                htmlFor={`${statusFieldId}-review`}
+              >
+                <Checkbox
+                  checked={needsClassificationReview}
+                  id={`${statusFieldId}-review`}
+                  onCheckedChange={(checked) =>
+                    setNeedsClassificationReview(checked === true)
+                  }
+                />
+                <span className="grid gap-0.5">
+                  Revisar classificação
+                  <span className="text-xs text-muted-foreground">
+                    A digitalização reconheceu um documento que não foi anexado,
+                    deixou páginas sem identificar ou de fora.
+                  </span>
+                </span>
+              </label>
+            </fieldset>
           </div>
         </div>
 

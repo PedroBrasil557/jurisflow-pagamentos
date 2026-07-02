@@ -32,7 +32,9 @@ const documentLabelByKey = new Map(
 )
 
 // Agrupa a classificacao por pagina em documentos (1 por tipo), na ordem dos
-// tipos do checklist. Descarta 'outro' e tipos desconhecidos.
+// tipos do checklist. Descarta 'nao_identificado' e tipos fora do checklist —
+// essas paginas nao sao anexadas automaticamente (tratadas por anexo manual);
+// a auditoria as registra para revisao.
 function buildDocuments(raw: RawExtraction): ExtractedDocument[] {
   const pagesByKey = new Map<string, Set<number>>()
 
@@ -78,6 +80,7 @@ function buildDocuments(raw: RawExtraction): ExtractedDocument[] {
 
 const ID_SOURCE = 'RG/CNH'
 const ADDRESS_SOURCE = 'Comprovante'
+const CONJUGE_SOURCE = 'Termo de entrega'
 
 function confidenceLevel(value?: number): ConfidenceLevel {
   if (value == null) return 'media'
@@ -91,7 +94,16 @@ function upper(value?: string): string {
 }
 
 function isIsoDate(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value)
+  // Formato E data de calendario real: o regex sozinho aceita "2024-02-31", que o
+  // Date faz roll-over para 2024-03-02 — gravando uma data errada na coluna `date`
+  // de um campo legal. O startsWith pega o roll-over (a normalizacao diverge).
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false
+  }
+  const parsed = new Date(`${value}T00:00:00Z`)
+  return (
+    !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value)
+  )
 }
 
 function formatZip(value: string): { value: string; valid: boolean } {
@@ -199,6 +211,79 @@ export function normalizeExtraction(raw: RawExtraction): ExtractionResult {
       if (!zip.valid) {
         warnings.push('O CEP lido nao tem 8 digitos — confira manualmente.')
       }
+    }
+  }
+
+  // Conjuge do termo de entrega: sua presenca indica contrato Caixa assinado em
+  // conjunto -> marca spouseContractSigned='sim' (condiciona rg_cpf_cnh_conjuge) e
+  // preenche os dados do conjuge. So entra com identidade minima (nome ou CPF).
+  const conjuge = raw.conjuge
+  if (conjuge && (conjuge.fullName || conjuge.cpf)) {
+    const conjugeConfidence = confidenceLevel(conjuge.confianca)
+
+    fields.push({
+      key: 'spouseContractSigned',
+      label: 'Contrato Caixa assinado com o conjuge',
+      value: 'sim',
+      confidence: conjugeConfidence,
+      valid: true,
+      source: CONJUGE_SOURCE,
+    })
+
+    // Conjuge no mesmo contrato Caixa -> mesmo endereco do titular (default).
+    fields.push({
+      key: 'spouseSameAddress',
+      label: 'Conjuge no mesmo endereco do titular',
+      value: 'sim',
+      confidence: conjugeConfidence,
+      valid: true,
+      source: CONJUGE_SOURCE,
+    })
+
+    if (conjuge.fullName) {
+      fields.push({
+        key: 'spouseFullName',
+        label: 'Nome do conjuge',
+        value: upper(conjuge.fullName),
+        confidence: conjugeConfidence,
+        valid: true,
+        source: CONJUGE_SOURCE,
+      })
+    }
+
+    if (conjuge.cpf) {
+      const valid = isValidCpf(conjuge.cpf)
+      fields.push({
+        key: 'spouseCpf',
+        label: 'CPF do conjuge',
+        value: formatCpf(conjuge.cpf),
+        confidence: valid ? conjugeConfidence : 'baixa',
+        valid,
+        warning: valid
+          ? undefined
+          : 'CPF do conjuge invalido (digito verificador).',
+        source: CONJUGE_SOURCE,
+      })
+      if (!valid) {
+        warnings.push(
+          'O CPF do conjuge nao passou na validacao — confira manualmente.',
+        )
+      }
+    }
+
+    if (conjuge.birthDate) {
+      const validDate = isIsoDate(conjuge.birthDate)
+      fields.push({
+        key: 'spouseBirthDate',
+        label: 'Data de nascimento do conjuge',
+        value: conjuge.birthDate,
+        confidence: validDate ? conjugeConfidence : 'baixa',
+        valid: validDate,
+        warning: validDate
+          ? undefined
+          : 'Data de nascimento do conjuge nao reconhecida — confira.',
+        source: CONJUGE_SOURCE,
+      })
     }
   }
 

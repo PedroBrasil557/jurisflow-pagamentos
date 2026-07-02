@@ -12,33 +12,51 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { cn } from '#/lib/utils'
 import { type DocAlignerStatus, useDocAlignerDetector } from './docaligner'
-import { enhanceWithFilter, type FilterMode } from './scan-enhance'
-import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
 import {
-  type CornerPoints,
-  createScanner,
-  detectCorners,
-  useScannerEngine,
-} from './scanner-engine'
+  canvasToJpegBlob,
+  decodeToWorkingCanvas,
+  downscaleCanvasToLongEdge,
+  releaseCanvas,
+} from './image-normalize'
+import { enhanceWithFilter, type FilterMode } from './scan-enhance'
+import {
+  clearScanSession,
+  deleteScanPage,
+  loadPendingScanSession,
+  type StoredScanPage,
+  saveScanPage,
+} from './scan-session-store'
+import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
+import { warpPerspectiveToCanvas } from './scan-warp'
+import type { CornerPoints } from './scanner-engine'
 
 type WebScannerDialogProps = {
   open: boolean
   onClose: () => void
-  onComplete: (file: File) => void
-  // Quando true, usa o DocAligner (IA) como detector primario de bordas, com o
-  // OpenCV/jscanify como fallback. Provider 'docaligner' nas Configuracoes.
-  useMl?: boolean
+  // scanSessionId: id da sessao de captura (IndexedDB) para o uploader limpar
+  // APOS o upload confirmar. null quando nao ha sessao persistida (ex.: Scanbot).
+  onComplete: (file: File, scanSessionId: string | null) => void
 }
 
 type ScannedPage = {
   id: string
-  originalDataUrl: string // quadro original (para reeditar)
+  sortOrder: number // ordem de captura; chave de ordenacao no IndexedDB
+  // Imagem NORMALIZADA (<=300 DPI) do quadro, para reeditar. Blob (disco/heap
+  // gerido pelo browser), nao dataUrl base64 — mantem o heap baixo.
+  originalBlob: Blob
   corners: CornerPoints
   filter: FilterMode
-  dataUrl: string // recorte + filtro (vai para o PDF)
+  blob: Blob // recorte + filtro (vai para o PDF e para o IndexedDB)
+  thumbUrl: string // object URL de `blob`, para a tira de revisao
   width: number
   height: number
 }
+
+// Teto de paginas por digitalizacao. Acima disso o PDF de imagens tende a
+// estourar limites da extracao por IA (tokens de saida / tamanho do payload
+// base64), causando dead-letter deterministico sem acao para o usuario. Manter
+// abaixo desse ponto e a prevencao na origem.
+const MAX_SCAN_PAGES = 15
 
 const CORNER_KEYS = [
   'topLeftCorner',
@@ -69,6 +87,18 @@ function defaultCorners(width: number, height: number): CornerPoints {
   }
 }
 
+// Cantos do quadro inteiro (recorte identidade). Usado em paginas recuperadas: a
+// imagem persistida JA e o recorte final, entao reeditar com estes cantos nao
+// recorta de novo (sem crop duplo); o usuario ainda pode arrastar para ajustar.
+function fullFrameCorners(width: number, height: number): CornerPoints {
+  return {
+    topLeftCorner: { x: 0, y: 0 },
+    topRightCorner: { x: width, y: 0 },
+    bottomRightCorner: { x: width, y: height },
+    bottomLeftCorner: { x: 0, y: height },
+  }
+}
+
 // No iOS (todos os browsers usam WebKit) a camera nativa (input capture) entrega
 // resolucao/foco superiores ao quadro do video — atalho util na revisao.
 function isLikelyIOS(): boolean {
@@ -83,33 +113,14 @@ function isLikelyIOS(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || iPadOS
 }
 
-function loadCanvas(src: string): Promise<HTMLCanvasElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image()
-    image.onload = () => {
-      const canvas = document.createElement('canvas')
-      canvas.width = image.naturalWidth
-      canvas.height = image.naturalHeight
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        reject(new Error('Nao foi possivel ler a imagem.'))
-        return
-      }
-      ctx.drawImage(image, 0, 0)
-      resolve(canvas)
-    }
-    image.onerror = () => reject(new Error('Nao foi possivel ler a imagem.'))
-    image.src = src
-  })
-}
-
-// Recorta pela perspectiva dos cantos e aplica o filtro, em resolucao cheia.
+// Recorta pela perspectiva dos cantos e aplica o filtro. Opera sobre a imagem JA
+// NORMALIZADA (<=300 DPI) — devolve o canvas resultante (o chamador converte em
+// Blob, sem passar por dataUrl base64).
 function renderCroppedPage(
   source: HTMLCanvasElement,
   corners: CornerPoints,
   filter: FilterMode,
-  engineReady: boolean,
-): { dataUrl: string; width: number; height: number } {
+): { canvas: HTMLCanvasElement; width: number; height: number } {
   const outWidth = Math.round(
     Math.max(
       distance(corners.topLeftCorner, corners.topRightCorner),
@@ -123,26 +134,32 @@ function renderCroppedPage(
     ),
   )
 
-  let extracted: HTMLCanvasElement | null = null
-  if (engineReady) {
-    try {
-      extracted = createScanner().extractPaper(
-        source,
-        outWidth || source.width,
-        outHeight || source.height,
-        corners,
-      )
-    } catch {
-      extracted = null
-    }
-  }
+  // Recorte + deskew por WebGL (substitui o warpPerspective do OpenCV). Sem WebGL
+  // ou em falha, warpPerspectiveToCanvas devolve a fonte nao recortada.
+  const extracted = warpPerspectiveToCanvas(
+    source,
+    corners,
+    outWidth || source.width,
+    outHeight || source.height,
+  )
 
-  const filtered = enhanceWithFilter(extracted ?? source, filter)
+  const filtered = enhanceWithFilter(extracted, filter)
   return {
-    dataUrl: filtered.toDataURL('image/jpeg', 0.92),
+    canvas: filtered,
     width: filtered.width,
     height: filtered.height,
   }
+}
+
+// Le um Blob para um dataUrl (usado so em momentos pontuais: preview da edicao e
+// montagem final do PDF — nunca para reter paginas no estado).
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(new Error('Nao foi possivel ler a imagem.'))
+    reader.readAsDataURL(blob)
+  })
 }
 
 type Screen = 'camera' | 'review' | 'edit'
@@ -161,43 +178,23 @@ export function WebScannerDialog({
   open,
   onClose,
   onComplete,
-  useMl = false,
 }: WebScannerDialogProps) {
-  const engineStatus = useScannerEngine(open)
-  const engineReady = engineStatus === 'ready'
+  // Detector DocAligner (IA): unico motor de deteccao no navegador. Se a IA nao
+  // achar os cantos (ou o modelo nao carregar), o usuario ajusta manualmente.
+  const { detector: mlDetector, status: mlStatus } = useDocAlignerDetector(open)
 
-  // Detector DocAligner (IA): so carrega quando o provider e 'docaligner'.
-  const { detector: mlDetector, status: mlStatus } = useDocAlignerDetector(
-    open && useMl,
-  )
-
-  // Deteccao "melhor disponivel": tenta o DocAligner (se pronto); se ele nao
-  // achar, cai no OpenCV/jscanify. Unico ponto de fallback do dialogo.
   const detectBest = useCallback(
-    async (
-      source: HTMLCanvasElement,
-      opts: { fallback?: boolean },
-    ): Promise<CornerPoints | null> => {
-      if (mlDetector) {
-        try {
-          const ml = await mlDetector.detect(source, { fallback: false })
-          if (ml) {
-            return ml
-          }
-        } catch {
-          // cai no OpenCV abaixo
-        }
+    async (source: HTMLCanvasElement): Promise<CornerPoints | null> => {
+      if (!mlDetector) {
+        return null
       }
-      if (engineReady) {
-        try {
-          return detectCorners(createScanner(), source, opts)
-        } catch {
-          return null
-        }
+      try {
+        return await mlDetector.detect(source, { fallback: false })
+      } catch {
+        return null
       }
-      return null
     },
-    [mlDetector, engineReady],
+    [mlDetector],
   )
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -205,12 +202,29 @@ export function WebScannerDialog({
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const pageIdRef = useRef(0)
+  // Id da sessao de captura (cliente). Chaveia as paginas persistidas em
+  // IndexedDB — durabilidade contra tab-kill. Criado na 1a captura (lazy).
+  const sessionIdRef = useRef<string>('')
+  // Espelho de `pages` para revogar os object URLs no cleanup sem re-derivar o
+  // callback a cada pagina.
+  const pagesRef = useRef<ScannedPage[]>([])
 
   const [screen, setScreen] = useState<Screen>('camera')
   const [pages, setPages] = useState<ScannedPage[]>([])
+  // Sessao pendente recuperavel (tab-kill/recarga): paginas achadas no IndexedDB.
+  const [recoverable, setRecoverable] = useState<{
+    sessionId: string
+    pages: StoredScanPage[]
+  } | null>(null)
   const [filter, setFilter] = useState<FilterMode>('color')
   const [error, setError] = useState('')
   const [flash, setFlash] = useState(false)
+  // Captura em voo: addPageFromCanvas faz um await (deteccao ~200-400ms) ANTES de
+  // inserir a pagina em `pages`. O guard impede (a) duplo-toque no shutter e (b)
+  // finalizar o PDF antes da pagina entrar — que dropava a ultima pagina
+  // silenciosamente. O ref e a trava sincrona; o state desabilita os botoes.
+  const [capturing, setCapturing] = useState(false)
+  const capturingRef = useRef(false)
 
   const [cameraReady, setCameraReady] = useState(false)
   const [cameraFailed, setCameraFailed] = useState(false)
@@ -339,7 +353,7 @@ export function WebScannerDialog({
   // pode ser assincrona (DocAligner), entao guardamos contra chamadas
   // concorrentes (`busy`) para nao acumular frames atrasados.
   useEffect(() => {
-    if (screen !== 'camera' || !cameraReady || !(engineReady || mlDetector)) {
+    if (screen !== 'camera' || !cameraReady || !mlDetector) {
       setLiveCorners(null)
       return
     }
@@ -354,7 +368,10 @@ export function WebScannerDialog({
     const HOLD_MS = 400
 
     const tick = async () => {
-      if (stopped || busy) {
+      // Gate cruzado com a captura: a inferencia da IA (worker ONNX) nao deve
+      // rodar concorrente consigo mesma. Se a captura esta detectando, ou o tick
+      // anterior ainda roda, pula este tick.
+      if (stopped || busy || capturingRef.current) {
         return
       }
       const video = videoRef.current
@@ -371,7 +388,7 @@ export function WebScannerDialog({
           return
         }
         ctx.drawImage(video, 0, 0, small.width, small.height)
-        const detected = await detectBest(small, { fallback: false })
+        const detected = await detectBest(small)
         if (stopped) {
           return
         }
@@ -400,7 +417,7 @@ export function WebScannerDialog({
       stopped = true
       window.clearInterval(interval)
     }
-  }, [screen, cameraReady, engineReady, mlDetector, detectBest])
+  }, [screen, cameraReady, mlDetector, detectBest])
 
   // Preview ao vivo do filtro na edicao (sobre a imagem inteira).
   useEffect(() => {
@@ -445,8 +462,20 @@ export function WebScannerDialog({
     return () => observer.disconnect()
   }, [screen, editStep])
 
+  // Mantem o espelho de paginas atualizado (para revogar object URLs no cleanup).
+  useEffect(() => {
+    pagesRef.current = pages
+  }, [pages])
+
   const resetAll = useCallback(() => {
     stopStream()
+    // Revoga os object URLs das miniaturas (evita vazamento).
+    for (const page of pagesRef.current) {
+      URL.revokeObjectURL(page.thumbUrl)
+    }
+    pagesRef.current = []
+    sessionIdRef.current = ''
+    pageIdRef.current = 0
     setScreen('camera')
     setPages([])
     setFilter('color')
@@ -457,6 +486,7 @@ export function WebScannerDialog({
     setVideoDim(null)
     setBoxSize(null)
     setLiveCorners(null)
+    setRecoverable(null)
     setEditingId(null)
     setEditCanvas(null)
     setEditCorners(null)
@@ -472,34 +502,152 @@ export function WebScannerDialog({
     }
   }, [open, resetAll])
 
+  // Durabilidade: ao abrir, procura uma sessao pendente (tab-kill/recarga) e
+  // varre sessoes velhas por TTL. Se houver paginas, oferece recuperacao.
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+    let cancelled = false
+    loadPendingScanSession().then((pending) => {
+      if (!cancelled && pending) {
+        setRecoverable(pending)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
   function handleClose() {
+    // Fechar (X / Esc / gesto-voltar / clique-fora) PRESERVA a sessao no
+    // IndexedDB — um fechamento acidental na revisao nao deve destruir as
+    // paginas. A limpeza ocorre em: sucesso do upload (na action), descarte
+    // EXPLICITO (handleDiscardAll) e TTL. Reabrir oferece recuperar.
     stopStream()
     onClose()
   }
 
-  async function addPageFromCanvas(canvas: HTMLCanvasElement) {
-    const detected = await detectBest(canvas, { fallback: true })
-    const corners = detected ?? defaultCorners(canvas.width, canvas.height)
-    const rendered = renderCroppedPage(canvas, corners, filter, engineReady)
+  // Descarte EXPLICITO (botao dedicado): apaga a sessao duravel e fecha.
+  function handleDiscardAll() {
+    if (sessionIdRef.current) {
+      void clearScanSession(sessionIdRef.current)
+    }
+    stopStream()
+    onClose()
+  }
 
-    pageIdRef.current += 1
-    setPages((prev) => [
-      ...prev,
-      {
-        id: `page-${pageIdRef.current}`,
-        originalDataUrl: canvas.toDataURL('image/jpeg', 0.92),
-        corners,
-        filter,
-        dataUrl: rendered.dataUrl,
+  // Recupera a sessao pendente: reconstroi as paginas a partir dos Blobs no
+  // IndexedDB (miniaturas via object URL) e retoma na revisao.
+  function handleRecoverSession() {
+    if (!recoverable) {
+      return
+    }
+    sessionIdRef.current = recoverable.sessionId
+    let maxOrder = 0
+    const restored: ScannedPage[] = recoverable.pages.map((stored) => {
+      maxOrder = Math.max(maxOrder, stored.sortOrder)
+      return {
+        id: stored.id,
+        sortOrder: stored.sortOrder,
+        // A imagem persistida ja e o recorte final; cantos de quadro cheio evitam
+        // recorte duplo se o usuario reabrir a edicao.
+        originalBlob: stored.blob,
+        corners: fullFrameCorners(stored.width, stored.height),
+        filter: 'color',
+        blob: stored.blob,
+        thumbUrl: URL.createObjectURL(stored.blob),
+        width: stored.width,
+        height: stored.height,
+      }
+    })
+    pageIdRef.current = maxOrder
+    setPages(restored)
+    setRecoverable(null)
+    setScreen('review')
+  }
+
+  function handleDiscardRecovery() {
+    if (recoverable) {
+      void clearScanSession(recoverable.sessionId)
+    }
+    setRecoverable(null)
+  }
+
+  async function addPageFromCanvas(sourceCanvas: HTMLCanvasElement) {
+    // Teto de paginas (previne dead-letter por documento grande demais na IA).
+    if (pagesRef.current.length >= MAX_SCAN_PAGES) {
+      setError(
+        `Limite de ${MAX_SCAN_PAGES} paginas por digitalizacao. Finalize e escaneie o restante em outro documento.`,
+      )
+      return
+    }
+    capturingRef.current = true
+    setCapturing(true)
+    try {
+      // 1o passo (critico para memoria): normaliza a <=300 DPI ANTES de detectar/
+      // recortar. A IA e o warp WebGL rodam sobre a imagem normalizada — nunca uma
+      // imagem de 50 MP.
+      const work = downscaleCanvasToLongEdge(sourceCanvas)
+      const detected = await detectBest(work)
+      const corners = detected ?? defaultCorners(work.width, work.height)
+      const rendered = renderCroppedPage(work, corners, filter)
+
+      // Blobs (fora do heap de strings), nao dataUrl base64.
+      const originalBlob = await canvasToJpegBlob(work)
+      const blob = await canvasToJpegBlob(rendered.canvas)
+      releaseCanvas(rendered.canvas)
+      if (work !== sourceCanvas) {
+        releaseCanvas(work)
+      }
+      releaseCanvas(sourceCanvas)
+
+      if (!sessionIdRef.current) {
+        sessionIdRef.current = crypto.randomUUID()
+      }
+      pageIdRef.current += 1
+      const id = `page-${pageIdRef.current}`
+      const sortOrder = pageIdRef.current
+      const thumbUrl = URL.createObjectURL(blob)
+      setPages((prev) => [
+        ...prev,
+        {
+          id,
+          sortOrder,
+          originalBlob,
+          corners,
+          filter,
+          blob,
+          thumbUrl,
+          width: rendered.width,
+          height: rendered.height,
+        },
+      ])
+
+      // Durabilidade: persiste a pagina em IndexedDB (best-effort). Se a aba
+      // morrer, a sessao pode ser recuperada ao reabrir.
+      void saveScanPage({
+        id,
+        sessionId: sessionIdRef.current,
+        sortOrder,
+        blob,
         width: rendered.width,
         height: rendered.height,
-      },
-    ])
+        createdAt: Date.now(),
+      })
+    } finally {
+      capturingRef.current = false
+      setCapturing(false)
+    }
   }
 
   function handleShutter() {
     const video = videoRef.current
     if (!video?.videoWidth) {
+      return
+    }
+    // Captura ainda em voo: ignora o toque (evita pagina duplicada).
+    if (capturingRef.current) {
       return
     }
     const canvas = document.createElement('canvas')
@@ -529,9 +677,9 @@ export function WebScannerDialog({
       return
     }
     try {
-      const url = URL.createObjectURL(file)
-      const canvas = await loadCanvas(url)
-      URL.revokeObjectURL(url)
+      // Decodifica JA REDUZIDO (createImageBitmap com resize) — nao materializa
+      // os 50 MP da camera nativa num canvas de ~200 MB.
+      const canvas = await decodeToWorkingCanvas(file)
       await addPageFromCanvas(canvas)
       setScreen('review')
     } catch {
@@ -541,7 +689,10 @@ export function WebScannerDialog({
 
   async function openEdit(page: ScannedPage) {
     try {
-      const canvas = await loadCanvas(page.originalDataUrl)
+      const canvas = await decodeToWorkingCanvas(page.originalBlob)
+      if (editCanvas) {
+        releaseCanvas(editCanvas) // libera o canvas de uma edicao anterior
+      }
       setEditingId(page.id)
       setEditCanvas(canvas)
       setEditCorners(page.corners)
@@ -576,40 +727,53 @@ export function WebScannerDialog({
     if (!editCanvas || !editCorners) {
       return
     }
-    const rendered = renderCroppedPage(
-      editCanvas,
-      editCorners,
-      filter,
-      engineReady,
-    )
-    setEditCroppedUrl(rendered.dataUrl)
+    const rendered = renderCroppedPage(editCanvas, editCorners, filter)
+    // Preview transitorio de uma imagem so — dataUrl e aceitavel aqui.
+    setEditCroppedUrl(rendered.canvas.toDataURL('image/jpeg', 0.85))
+    releaseCanvas(rendered.canvas)
     setEditStep('preview')
   }
 
-  function handleConfirmEdit() {
+  async function handleConfirmEdit() {
     if (!(editingId && editCanvas && editCorners)) {
       return
     }
-    const rendered = renderCroppedPage(
-      editCanvas,
-      editCorners,
-      filter,
-      engineReady,
-    )
+    const rendered = renderCroppedPage(editCanvas, editCorners, filter)
+    const blob = await canvasToJpegBlob(rendered.canvas)
+    releaseCanvas(rendered.canvas)
+    const thumbUrl = URL.createObjectURL(blob)
+    const editedId = editingId
+    const editedPage = pages.find((page) => page.id === editedId)
     setPages((prev) =>
-      prev.map((page) =>
-        page.id === editingId
-          ? {
-              ...page,
-              corners: editCorners,
-              filter,
-              dataUrl: rendered.dataUrl,
-              width: rendered.width,
-              height: rendered.height,
-            }
-          : page,
-      ),
+      prev.map((page) => {
+        if (page.id !== editedId) {
+          return page
+        }
+        URL.revokeObjectURL(page.thumbUrl) // libera o object URL antigo
+        return {
+          ...page,
+          corners: editCorners,
+          filter,
+          blob,
+          thumbUrl,
+          width: rendered.width,
+          height: rendered.height,
+        }
+      }),
     )
+    // Atualiza a copia duravel (mesmo id/sortOrder — carregado da propria pagina).
+    if (sessionIdRef.current && editedPage) {
+      void saveScanPage({
+        id: editedId,
+        sessionId: sessionIdRef.current,
+        sortOrder: editedPage.sortOrder,
+        blob,
+        width: rendered.width,
+        height: rendered.height,
+        createdAt: Date.now(),
+      })
+    }
+    releaseCanvas(editCanvas) // libera o canvas de trabalho da edicao
     setScreen('review')
     setEditingId(null)
     setEditCanvas(null)
@@ -620,22 +784,42 @@ export function WebScannerDialog({
   }
 
   function handleRemovePage(id: string) {
-    setPages((prev) => prev.filter((page) => page.id !== id))
+    setPages((prev) => {
+      const target = prev.find((page) => page.id === id)
+      if (target) {
+        URL.revokeObjectURL(target.thumbUrl)
+      }
+      return prev.filter((page) => page.id !== id)
+    })
+    void deleteScanPage(id)
   }
 
-  function handleFinish() {
+  async function handleFinish() {
     if (pages.length === 0) {
       return
     }
+    // Ha captura em voo: a pagina ainda nao entrou em `pages`. Bloqueia para nao
+    // gerar o PDF sem ela (o botao tambem fica desabilitado enquanto capturing).
+    if (capturingRef.current) {
+      return
+    }
     try {
-      const scanPages: ScanPage[] = pages.map((page) => ({
-        dataUrl: page.dataUrl,
-        width: page.width,
-        height: page.height,
-      }))
+      // Converte cada Blob (pequeno, normalizado) em dataUrl JUST-IN-TIME para o
+      // jsPDF — pico transitorio no finalizar, nao retencao ao longo da sessao.
+      const scanPages: ScanPage[] = await Promise.all(
+        pages.map(async (page) => ({
+          dataUrl: await blobToDataUrl(page.blob),
+          width: page.width,
+          height: page.height,
+        })),
+      )
       const file = pagesToPdfFile(scanPages, buildScanFileName(new Date()))
       stopStream()
-      onComplete(file)
+      // NAO limpa o IndexedDB aqui: o upload acontece depois (no parent) e pode
+      // falhar em rede movel — a sessao duravel precisa sobreviver a isso. O
+      // uploader limpa via `scanSessionId` APOS o upload confirmar. Fechar/cancelar
+      // (handleClose) e o TTL cobrem os demais casos.
+      onComplete(file, sessionIdRef.current || null)
     } catch (finishError) {
       setError(
         finishError instanceof Error
@@ -675,13 +859,43 @@ export function WebScannerDialog({
             </div>
           ) : null}
 
+          {recoverable ? (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 px-6">
+              <div className="w-full max-w-sm rounded-xl bg-background p-5 text-foreground shadow-xl">
+                <h2 className="text-base font-semibold">
+                  Recuperar digitalizacao?
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {`Encontramos ${recoverable.pages.length} ${recoverable.pages.length === 1 ? 'pagina' : 'paginas'} de uma sessao anterior que nao foi concluida.`}
+                </p>
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    className="flex-1"
+                    onClick={handleDiscardRecovery}
+                    type="button"
+                    variant="outline"
+                  >
+                    Descartar
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    onClick={handleRecoverSession}
+                    type="button"
+                  >
+                    Recuperar
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {screen === 'camera' ? (
             <CameraScreen
               boxRef={measureCameraBox}
               cameraFailed={cameraFailed}
               cameraReady={cameraReady}
-              engineStatus={engineStatus}
-              mlStatus={useMl ? mlStatus : null}
+              capturing={capturing}
+              mlStatus={mlStatus}
               filter={filter}
               fit={fit}
               liveCorners={liveCorners}
@@ -690,7 +904,7 @@ export function WebScannerDialog({
               onOpenReview={() => setScreen('review')}
               onShutter={handleShutter}
               pagesCount={pages.length}
-              lastThumb={lastPage?.dataUrl}
+              lastThumb={lastPage?.thumbUrl}
               setFilter={setFilter}
               videoDim={videoDim}
               videoRef={videoRef}
@@ -700,9 +914,11 @@ export function WebScannerDialog({
 
           {screen === 'review' ? (
             <ReviewScreen
+              capturing={capturing}
               onAddMore={() => setScreen('camera')}
               onClose={handleClose}
               onEdit={openEdit}
+              onDiscardAll={handleDiscardAll}
               onFinish={handleFinish}
               onNativeCapture={() => fileInputRef.current?.click()}
               onRemove={handleRemovePage}
@@ -869,7 +1085,7 @@ type CameraScreenProps = {
   boxRef: React.Ref<HTMLDivElement>
   cameraFailed: boolean
   cameraReady: boolean
-  engineStatus: string
+  capturing: boolean
   mlStatus: DocAlignerStatus | null
   filter: FilterMode
   fit: { left: number; top: number; width: number; height: number } | null
@@ -890,7 +1106,7 @@ function CameraScreen({
   boxRef,
   cameraFailed,
   cameraReady,
-  engineStatus,
+  capturing,
   mlStatus,
   filter,
   fit,
@@ -974,7 +1190,7 @@ function CameraScreen({
         <button
           aria-label="Capturar"
           className="flex size-18 items-center justify-center rounded-full ring-4 ring-white/80 disabled:opacity-40"
-          disabled={!cameraReady}
+          disabled={!cameraReady || capturing}
           onClick={onShutter}
           type="button"
         >
@@ -1012,17 +1228,7 @@ function CameraScreen({
       ) : null}
       {mlStatus === 'error' ? (
         <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-amber-300/90">
-          IA indisponivel — usando deteccao padrao.
-        </p>
-      ) : null}
-      {engineStatus === 'loading' ? (
-        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6rem)] text-center text-[11px] text-white/60">
-          Carregando deteccao de bordas...
-        </p>
-      ) : null}
-      {engineStatus === 'error' ? (
-        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6rem)] text-center text-[11px] text-amber-300/90">
-          Deteccao de bordas indisponivel — ajuste os cantos manualmente.
+          Deteccao automatica indisponivel — ajuste os cantos manualmente.
         </p>
       ) : null}
     </>
@@ -1030,8 +1236,10 @@ function CameraScreen({
 }
 
 type ReviewScreenProps = {
+  capturing: boolean
   onAddMore: () => void
   onClose: () => void
+  onDiscardAll: () => void
   onEdit: (page: ScannedPage) => void
   onFinish: () => void
   onNativeCapture: () => void
@@ -1041,8 +1249,10 @@ type ReviewScreenProps = {
 }
 
 function ReviewScreen({
+  capturing,
   onAddMore,
   onClose,
+  onDiscardAll,
   onEdit,
   onFinish,
   onNativeCapture,
@@ -1050,6 +1260,8 @@ function ReviewScreen({
   pages,
   preferNativeCapture,
 }: ReviewScreenProps) {
+  // Descarte exige confirmacao em dois toques (evita apagar tudo por engano).
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
       <div className="flex shrink-0 items-center justify-between border-b px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
@@ -1090,7 +1302,7 @@ function ReviewScreen({
                   <img
                     alt={`Pagina ${index + 1}`}
                     className="aspect-3/4 w-full object-cover"
-                    src={page.dataUrl}
+                    src={page.thumbUrl}
                   />
                 </button>
                 <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 text-[10px] font-medium text-white">
@@ -1116,9 +1328,48 @@ function ReviewScreen({
             Adicionar foto em alta resolucao
           </Button>
         ) : null}
-        <Button disabled={pages.length === 0} onClick={onFinish} type="button">
+        <Button
+          disabled={pages.length === 0 || capturing}
+          onClick={onFinish}
+          type="button"
+        >
           {`Anexar PDF (${pages.length})`}
         </Button>
+        {pages.length > 0 ? (
+          confirmingDiscard ? (
+            <div className="flex items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2">
+              <span className="text-xs text-destructive">
+                {`Descartar ${pages.length} ${pages.length === 1 ? 'pagina' : 'paginas'}?`}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setConfirmingDiscard(false)}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={onDiscardAll}
+                  size="sm"
+                  type="button"
+                  variant="destructive"
+                >
+                  Descartar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="text-center text-xs text-muted-foreground underline-offset-2 hover:underline"
+              onClick={() => setConfirmingDiscard(true)}
+              type="button"
+            >
+              Descartar digitalizacao
+            </button>
+          )
+        ) : null}
       </div>
     </div>
   )

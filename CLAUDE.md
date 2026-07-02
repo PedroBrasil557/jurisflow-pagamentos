@@ -4,12 +4,12 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 ## Project Overview
 
-Sistema OCR is a legal process management platform for Brazilian housing (MCMV) regularization. It handles process creation, document management, PDF generation, and workflow tracking. All UI text is in Portuguese (pt-BR).
+JurisFlow is a legal process management platform for Brazilian housing (MCMV) regularization. It handles process creation, document management, PDF generation, and workflow tracking. All UI text is in Portuguese (pt-BR).
 
 ## Repository Structure
 
 ```
-new-project/
+jurisflow/
 ├── api/                    # Backend (Hono + Drizzle + PostgreSQL)
 ├── web/                    # Frontend (React 19 + TanStack Start + shadcn/ui)
 ├── compose.yml             # Docker Compose (DB, MinIO, API, Web)
@@ -156,14 +156,18 @@ Routes pass minimal props (URL params/search only). Pages fetch their own data v
 ## Process Workflow
 
 ```
-EM_DOCUMENTACAO → DOCUMENTACAO_PRONTA → EM_PROCESSO → FINALIZADO
-       ↓                  ↓                  ↓
-    CANCELADO          CANCELADO          CANCELADO
+RASCUNHO → CADASTRADO → EM_DOCUMENTACAO → DOCUMENTACAO_PRONTA → EM_PROCESSO → FINALIZADO
+    ↓           ↓              ↓                   ↓                 ↓
+ CANCELADO   CANCELADO     CANCELADO           CANCELADO         CANCELADO
 ```
+
+Authoritative source: [api/src/modules/processes/processes.status.ts](api/src/modules/processes/processes.status.ts) (`processStatuses` + `processStatusTransitions`). `EM_LOTE` is **retired** — kept in the enum only as a transition *origin* so legacy records can drain to `EM_DOCUMENTACAO`/`CADASTRADO`; it is no longer produced. `splitStatus` is a separate field (async job health), not a business phase.
 
 | Status | Who | Actions |
 |--------|-----|---------|
-| EM_DOCUMENTACAO | Any user | Create, edit, upload docs. Auto-marks ready when all required docs complete |
+| RASCUNHO | Any user | Entry state of the digitization flow. Exits to CADASTRADO/EM_DOCUMENTACAO by completeness, or CANCELADO |
+| CADASTRADO | Any user | Default status on creation. Move to EM_DOCUMENTACAO or cancel |
+| EM_DOCUMENTACAO | Any user | Create, edit, upload docs. Auto-marks ready (DOCUMENTACAO_PRONTA) when all required docs complete |
 | DOCUMENTACAO_PRONTA | Attorney/Admin | Start legal process (requires number, cause value, protocol date) |
 | EM_PROCESSO | Attorney/Admin | Edit legal process data, finalize (requires legal fields filled), cancel |
 | FINALIZADO | — | Terminal. Read-only. No edit/cancel |
@@ -296,17 +300,19 @@ Always use `AppDialog` instead of raw Dialog primitives:
 
 ## Ruflo Workflow (persistent memory & guidance)
 
-This project uses the **ruflo** MCP server for cross-session memory and guidance. The runtime is healthy and memory is HNSW-backed; **use it on every non-trivial task** (load schemas via ToolSearch first — ruflo tools are deferred):
+This project uses the **ruflo** MCP server for cross-session memory and guidance (ruflo tools are deferred — load schemas via ToolSearch first). The goal is **outcome quality, not tool coverage**: ruflo exposes ~250 tools, but for a focused legal-tech CRUD app only a handful add value. The rules below are **defaults that direct usage**, not a cage — escalate beyond them per-task when a task genuinely demands it.
 
-1. **Task start** — `mcp__ruflo__memory_search` (namespace `jurisflow`) for prior decisions/patterns before re-deciding anything. For complex/multi-file features, also `mcp__ruflo__guidance_recommend`.
+**Always do (high-value, currently underused — these are firm triggers):**
+1. **Task start** — `mcp__ruflo__memory_search` (namespace `jurisflow`) for prior decisions/patterns before re-deciding anything. This is mandatory on non-trivial tasks, not optional; recall beats re-deriving.
 2. **After a key decision** (architecture, status model, data flow, naming, gotchas) — `mcp__ruflo__memory_store` (namespace `jurisflow`, `upsert: true`, with `tags`). One fact per entry.
 3. **Don't re-litigate** what's already in memory — search first.
+4. **Before a PR** — `analyze_diff` + `aidefence_has_pii` on the diff (CPF/process data → LGPD).
 
 Seeded entries (namespace `jurisflow`): `arch/status-model`, `arch/scan-flow`, `ops/docker-windows-hmr`, `ruflo/usage-policy`. The process **status model** and the **"Escanear documentos" (scan) flow** live there — recall them instead of re-deriving.
 
-**Namespaces** (the learning pipeline understands these): use `jurisflow` for project decisions, `patterns` for reusable code patterns (Hono route+Zod, web three-file pattern, AppDialog usage, status workflow), `tasks` for task outcomes, `feedback` for quality signals. For non-trivial tasks, optionally call `hooks_route` (agent/model routing) at start, and `analyze_diff`/`aidefence_has_pii` on the diff before a PR (CPF/process data → LGPD).
+**Namespaces** (the learning pipeline understands these): use `jurisflow` for project decisions, `patterns` for reusable code patterns (Hono route+Zod, web three-file pattern, AppDialog usage, status workflow), `tasks` for task outcomes, `feedback` for quality signals. On complex/multi-file features, also call `guidance_recommend` (and optionally `hooks_route`) at start.
 
-**Scope (what to use vs ignore):** use ruflo for **persistent memory + guidance + diff/PII analysis**. Do **not** use hive-mind/consensus or ruflo swarms for routine work — native Claude Code subagents (Plan/Explore) are simpler and sufficient. Background workers (`audit`/`testgaps`) only on demand, not as standing daemon jobs.
+**Default scope (default-with-escape, not a ban):** by **default** reach for ruflo's **memory + guidance + diff/PII** surface, and prefer **native Claude Code subagents (Plan/Explore)** for orchestration — they're simpler and deterministic. Hive-mind/consensus, ruflo swarms, and background workers (`audit`/`testgaps`) are **not the default** for routine work, but are **available**: escalate to them when task complexity justifies the extra cost/non-determinism, or when `guidance_recommend` surfaces a better-fit tool for that specific task. Discovery is always open via `ToolSearch`/`guidance_recommend` — the default never blocks reaching for a tool that genuinely fits.
 
 **Versioning:** ruflo is a host dev tool (not a build/runtime dep — not in `package.json`), so a bug only affects dev ergonomics, not production. Policy: **stay current, don't hard-pin** — keep CLI **and** daemon on the same version (`npm install -g ruflo@latest`, then `ruflo doctor` to confirm "Version Freshness: up to date" and no CLI↔daemon skew). Only pin a known-good version if you hit a regression. (Current known-good: 3.10.37.)
 

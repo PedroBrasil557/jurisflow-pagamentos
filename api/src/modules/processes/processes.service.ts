@@ -11,10 +11,14 @@ import {
   sql,
 } from 'drizzle-orm'
 import { db } from '../../shared/db'
-import { deleteStorageObject } from '../../shared/storage/s3'
+import {
+  buildStorageObjectKey,
+  deleteStorageObject,
+  listStorageObjects,
+  storageBuckets,
+} from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
 import { user } from '../auth/auth.schema'
-import { enqueueQuitacaoCheck } from '../caixa-quitacao/caixa-quitacao.service'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import {
   assertCan,
@@ -32,6 +36,7 @@ import {
 import {
   ensureProcessChecklistItems,
   getProcessChecklist,
+  reconcileProcessStatus,
   syncProcessStatusAfterChecklistChange,
 } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
@@ -328,25 +333,64 @@ async function updateProcessStatus(input: {
 
   assertValidStatusTransition(currentProcess.status, input.nextStatus)
 
-  const [updatedProcess] = await db
-    .update(process)
-    .set({
-      status: input.nextStatus,
-      ...input.extraValues,
+  return await db.transaction(async (tx) => {
+    const [updatedProcess] = await tx
+      .update(process)
+      .set({
+        status: input.nextStatus,
+        ...input.extraValues,
+      })
+      .where(eq(process.id, input.processId))
+      .returning()
+
+    await createProcessHistoryEntry({
+      processId: input.processId,
+      actorUserId: input.actor.id,
+      eventType: input.eventType,
+      fromStatus: currentProcess.status,
+      toStatus: input.nextStatus,
+      notes: input.notes ?? null,
+      executor: tx,
     })
-    .where(eq(process.id, input.processId))
-    .returning()
 
-  await createProcessHistoryEntry({
-    processId: input.processId,
-    actorUserId: input.actor.id,
-    eventType: input.eventType,
-    fromStatus: currentProcess.status,
-    toStatus: input.nextStatus,
-    notes: input.notes ?? null,
+    return updatedProcess
   })
+}
 
-  return updatedProcess
+// "Revisar classificacao": existe uma auditoria document_extraction com algo que
+// pede acao humana —
+//  (a) um doc reconhecido pulou um item de checklist OBRIGATORIO+ATIVO ainda
+//      PENDENTE (skip benigno — ex.: compra_venda do titular, que nem existe no
+//      checklist dele — nao casa);
+//  (b) ha pagina classificada como nao_identificado; ou
+//  (c) a IA OMITIU paginas (totalPages real > classifiedPages).
+// Derivado, sem estado novo, e AUTO-CURA: anexou o doc -> item deixa de ser
+// PENDENTE -> o processo sai do filtro. Auditorias antigas (@1, sem totalPages)
+// nao disparam (c) por causa do coalesce.
+function buildClassificationReviewFilter() {
+  return sql`EXISTS (
+    SELECT 1 FROM ai_analysis a
+    WHERE a.process_id = ${process.id}
+      AND a.kind = 'document_extraction'
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(coalesce(a.decision->'skipped', '[]'::jsonb)) s
+          JOIN process_document pd ON pd.process_id = a.process_id
+          JOIN process_document_type dt ON dt.id = pd.document_type_id
+          WHERE dt.key = s->>'documentTypeKey'
+            AND dt.is_required AND dt.is_active
+            AND pd.status = 'PENDENTE'
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(coalesce(a.output->'paginas', '[]'::jsonb)) pg
+          WHERE pg->>'tipo' = 'nao_identificado'
+        )
+        OR coalesce((a.input->>'totalPages')::int, 0)
+             > coalesce((a.input->>'classifiedPages')::int, 0)
+      )
+  )`
 }
 
 export async function listProcesses(
@@ -397,6 +441,10 @@ export async function listProcesses(
         ilike(process.housingComplex, searchTerm),
       ),
     )
+  }
+
+  if (query.needsClassificationReview) {
+    filters.push(buildClassificationReviewFilter())
   }
 
   const whereClause = filters.length > 0 ? and(...filters) : undefined
@@ -467,7 +515,10 @@ export async function listProcesses(
     db
       .select({
         processId: processBatchFile.processId,
-        hasProcessing: sql<boolean>`bool_or(${processBatchFile.splitStatus} = 'processing')`,
+        // 'queued' conta como "processando": o arquivo recem-escaneado fica em
+        // fila ate o worker reivindicar; sem isto o badge sumiria na janela de
+        // fila e o polling da lista pararia cedo demais.
+        hasProcessing: sql<boolean>`bool_or(${processBatchFile.splitStatus} in ('queued', 'processing'))`,
         hasError: sql<boolean>`bool_or(${processBatchFile.splitStatus} = 'error')`,
       })
       .from(processBatchFile)
@@ -662,8 +713,9 @@ export async function createProcess(
 
   await ensureProcessChecklistItems(processId)
 
-  // Dispara a consulta automatica de quitacao na Caixa (worker RPA).
-  await enqueueQuitacaoCheck(processId, createdProcess.cpf)
+  // A quitacao NAO e enfileirada aqui (v3): a fila so nasce quando o reconciliador
+  // conhece o(s) titular(es) do contrato Caixa (apos a derivacao). Enfileirar com o
+  // process.cpf na criacao consultaria o CPF errado no caso nao_titular.
 
   return createdProcess
 }
@@ -738,26 +790,31 @@ export async function createDraftProcess(
 // remove historico/checklist/lote, mas nao os arquivos no S3). Usado no rollback
 // do fluxo digitalizacao quando a ingestao nao pode ser iniciada.
 export async function deleteProcess(processId: string) {
-  const batchFiles = await db
-    .select({
-      bucketName: processBatchFile.bucketName,
-      objectKey: processBatchFile.objectKey,
-    })
-    .from(processBatchFile)
-    .where(eq(processBatchFile.processId, processId))
-
-  for (const batchFile of batchFiles) {
-    try {
-      await deleteStorageObject({
-        bucketName: batchFile.bucketName,
-        objectKey: batchFile.objectKey,
-      })
-    } catch (error) {
-      console.error('Falha ao remover objeto do storage no rollback', {
-        processId,
-        error: String(error),
-      })
+  // Limpa TODOS os objetos do processo por PREFIXO (`processes/<id>/`), nao so os
+  // que tem linha em processBatchFile. Isso pega orfaos sem linha — ex.: a janela
+  // entre copyStorageObject e o insert em finalizeScanUpload (um crash ali deixa
+  // o PDF de scan copiado sem registro; conteria PII e nao tem lifecycle). Cobre
+  // batch/, documents/ e generated/ do processo. Best-effort por objeto.
+  const bucketName = storageBuckets.processDocuments
+  const prefix = `${buildStorageObjectKey(['processes', processId])}/`
+  try {
+    const objects = await listStorageObjects({ bucketName, prefix })
+    for (const object of objects) {
+      try {
+        await deleteStorageObject({ bucketName, objectKey: object.objectKey })
+      } catch (error) {
+        console.error('Falha ao remover objeto do storage no rollback', {
+          processId,
+          objectKey: object.objectKey,
+          error: String(error),
+        })
+      }
     }
+  } catch (error) {
+    console.error('Falha ao listar objetos do processo para remocao', {
+      processId,
+      error: String(error),
+    })
   }
 
   await db.delete(process).where(eq(process.id, processId))
@@ -828,17 +885,14 @@ export async function updateProcess(
   if (
     changedFields.ownerType ||
     changedFields.spouseContractSigned ||
-    changedFields.propertyPaidOff
+    changedFields.propertyPaidOff ||
+    // Vincular/mudar o conjunto altera a obrigatoriedade dos docs de conjunto e o
+    // pre-requisito de completude (resolucao humana do caso "conjunto cadastrado
+    // depois") — reconcilia o status.
+    changedFields.housingComplex
   ) {
-    await ensureProcessChecklistItems(processId)
-    const checklist = await getProcessChecklist(processId, actor.id, perms)
-    const syncedProcess = await syncProcessStatusAfterChecklistChange({
-      processId,
-      actor,
-      checklist,
-    })
-
-    return syncedProcess
+    // O reconciliador le tudo fresco (status + checklist); nao monta snapshot aqui.
+    return syncProcessStatusAfterChecklistChange({ processId, actor })
   }
 
   return updatedProcess
@@ -849,32 +903,46 @@ export async function markProcessDocumentationReady(
   actor: ProcessActor,
   perms: ResolvedPermissions,
 ) {
-  const { relationship: rel } = await getProcessContextOrThrow({
-    processId,
-    userId: actor.id,
-    perms,
-  })
+  const { process: currentProcess, relationship: rel } =
+    await getProcessContextOrThrow({
+      processId,
+      userId: actor.id,
+      perms,
+    })
   assertProcessAction(perms, rel, 'markDocumentationReady')
 
-  const checklist = await getProcessChecklist(processId, actor.id, perms)
+  // Idempotente: o backend ja auto-avanca para DOCUMENTACAO_PRONTA quando completa.
+  if (currentProcess.status === 'DOCUMENTACAO_PRONTA') {
+    return currentProcess
+  }
 
-  if (checklist.summary.requiredPending > 0) {
+  // DELEGA ao reconciliador — fonte UNICA de verdade do "pode ser PRONTA"
+  // (documentacao obrigatoria completa E conjunto vinculado). NAO reimplementa o
+  // predicado aqui, para os dois caminhos (auto e manual) nunca divergirem.
+  const updated = await reconcileProcessStatus(processId, actor)
+
+  if (updated.status !== 'DOCUMENTACAO_PRONTA') {
+    // Nao avancou: explica o motivo (mesma regra do reconciliador).
+    const checklist = await getProcessChecklist(processId, actor.id, perms)
+    if (checklist.summary.requiredPending > 0) {
+      throw new ProcessServiceError(
+        409,
+        'Ainda existem documentos obrigatorios pendentes para este processo.',
+      )
+    }
+    if (updated.housingComplexId === null) {
+      throw new ProcessServiceError(
+        409,
+        'Vincule o conjunto habitacional antes de concluir a documentacao.',
+      )
+    }
     throw new ProcessServiceError(
       409,
-      'Ainda existem documentos obrigatorios pendentes para este processo.',
+      'A documentacao ainda nao pode ser concluida.',
     )
   }
 
-  return updateProcessStatus({
-    processId,
-    actor,
-    nextStatus: 'DOCUMENTACAO_PRONTA',
-    eventType: 'STATUS_CHANGED',
-    notes: 'Documentacao marcada como pronta.',
-    extraValues: {
-      documentationReadyAt: new Date(),
-    },
-  })
+  return updated
 }
 
 export async function startProcess(
@@ -887,12 +955,28 @@ export async function startProcess(
   },
   perms: ResolvedPermissions,
 ) {
-  const { relationship: rel } = await getProcessContextOrThrow({
-    processId,
-    userId: actor.id,
-    perms,
-  })
+  const { process: currentProcess, relationship: rel } =
+    await getProcessContextOrThrow({
+      processId,
+      userId: actor.id,
+      perms,
+    })
   assertProcessAction(perms, rel, 'startLegal')
+
+  // NAO confia no campo status (cache derivado, pode estar stale por corrida de
+  // reconcile concorrente): recomputa o invariante autoritativo AGORA. Fecha o
+  // caminho de dano "processo incompleto vira juridico" independente da causa da
+  // staleness — a transicao PRONTA->EM_PROCESSO so vale com a verdade conferida.
+  const checklist = await getProcessChecklist(processId, actor.id, perms)
+  if (
+    checklist.summary.requiredPending > 0 ||
+    currentProcess.housingComplexId === null
+  ) {
+    throw new ProcessServiceError(
+      409,
+      'A documentacao ainda nao esta completa: ha documentos obrigatorios pendentes ou o conjunto nao esta vinculado.',
+    )
+  }
 
   return updateProcessStatus({
     processId,
@@ -935,24 +1019,42 @@ export async function updateLegalProcess(
     )
   }
 
-  const [updatedProcess] = await db
-    .update(process)
-    .set({
-      legalProcessNumber: payload.legalProcessNumber,
-      causeValue: payload.causeValue,
-      protocolDate: payload.protocolDate,
+  const legalFieldDiff: ProcessHistoryChangedFields = {}
+  for (const fieldKey of [
+    'legalProcessNumber',
+    'causeValue',
+    'protocolDate',
+  ] as const) {
+    const before = currentProcess[fieldKey]
+    const after = payload[fieldKey]
+    if (before !== after) {
+      legalFieldDiff[fieldKey] = { before, after }
+    }
+  }
+
+  return await db.transaction(async (tx) => {
+    const [updatedProcess] = await tx
+      .update(process)
+      .set({
+        legalProcessNumber: payload.legalProcessNumber,
+        causeValue: payload.causeValue,
+        protocolDate: payload.protocolDate,
+      })
+      .where(eq(process.id, processId))
+      .returning()
+
+    await createProcessHistoryEntry({
+      processId,
+      actorUserId: actor.id,
+      eventType: 'UPDATED',
+      changedFields:
+        Object.keys(legalFieldDiff).length > 0 ? legalFieldDiff : null,
+      notes: 'Dados do processo juridico atualizados.',
+      executor: tx,
     })
-    .where(eq(process.id, processId))
-    .returning()
 
-  await createProcessHistoryEntry({
-    processId,
-    actorUserId: actor.id,
-    eventType: 'UPDATED',
-    notes: 'Dados do processo juridico atualizados.',
+    return updatedProcess
   })
-
-  return updatedProcess
 }
 
 export async function finalizeProcess(
@@ -1009,26 +1111,29 @@ export async function cancelProcess(
 
   const cancellationReason = payload.reason?.trim() || null
 
-  const [cancelledProcess] = await db
-    .update(process)
-    .set({
-      status: 'CANCELADO',
-      cancelledAt: new Date(),
-      cancellationReason,
+  return await db.transaction(async (tx) => {
+    const [cancelledProcess] = await tx
+      .update(process)
+      .set({
+        status: 'CANCELADO',
+        cancelledAt: new Date(),
+        cancellationReason,
+      })
+      .where(eq(process.id, processId))
+      .returning()
+
+    await createProcessHistoryEntry({
+      processId,
+      actorUserId: actor.id,
+      eventType: 'CANCELLED',
+      fromStatus: currentProcess.status,
+      toStatus: 'CANCELADO',
+      notes: cancellationReason ?? 'Processo cancelado.',
+      executor: tx,
     })
-    .where(eq(process.id, processId))
-    .returning()
 
-  await createProcessHistoryEntry({
-    processId,
-    actorUserId: actor.id,
-    eventType: 'CANCELLED',
-    fromStatus: currentProcess.status,
-    toStatus: 'CANCELADO',
-    notes: cancellationReason ?? 'Processo cancelado.',
+    return cancelledProcess
   })
-
-  return cancelledProcess
 }
 
 export async function setDocumentationAssignee(

@@ -1,5 +1,6 @@
 import {
   ClipboardCheck,
+  FileSpreadsheet,
   LayoutDashboard,
   Settings,
   ShieldCheck,
@@ -21,6 +22,13 @@ export const authenticatedNavigationItems = [
     description: 'Fluxo principal',
     to: '/processos',
     icon: ClipboardCheck,
+  },
+  {
+    label: 'Titulares Caixa',
+    description: 'Contratos e quitacao',
+    to: '/titulares-caixa',
+    icon: FileSpreadsheet,
+    isVisible: ({ permissions }) => permissions.isAdmin,
   },
   {
     label: 'Cadastros',

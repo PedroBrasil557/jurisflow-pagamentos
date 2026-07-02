@@ -13,18 +13,21 @@ O serviço é escolhido em **Configurações → Scanner** (admin) e exposto ao
 cliente pela API. O `<ScanButton>` lê essa escolha (`scannerProviderQuery`) em
 tempo de execução:
 
+- **`docaligner`** (padrão): scanner do navegador com **detecção de bordas por
+  IA** (modelo DocAligner em ONNX via `onnxruntime-web`, backend WASM SIMD) e
+  **recorte/deskew por WebGL** (homografia, ver [scan-warp.ts](./scan-warp.ts)).
+  Open-source, **sem license**. Ver [web-scanner-dialog.tsx](./web-scanner-dialog.tsx)
+  e [docaligner/](./docaligner/). Se a IA não achar os cantos (ou o modelo não
+  carregar), o usuário **ajusta os 4 cantos manualmente**.
 - **`scanbot`**: usa o **Scanbot Web SDK** (RTU UI ui2) — qualidade CamScanner
   (captura automática, ajuste de cantos, perspectiva, remoção de sombra) no
   navegador, inclusive no iPhone. Ver [scanbot-scan.ts](./scanbot-scan.ts).
   Requer license. **Falha dura** (sem license / SDK não inicia) cai no scanner
-  web **com aviso** (toast com o motivo) — digitalizar nunca fica 100% quebrado.
-- **`web`** (padrão): usa **jscanify + OpenCV.js** com ajuste manual dos 4
-  cantos e filtros. Ver [web-scanner-dialog.tsx](./web-scanner-dialog.tsx).
-- **`docaligner`**: mesmo diálogo do scanner web, mas com **detecção de bordas
-  por IA** (modelo DocAligner em ONNX via `onnxruntime-web`, backend WASM SIMD).
-  Open-source, **sem license**. Ver [docaligner/](./docaligner/). O `<ScanButton>`
-  abre o `WebScannerDialog` com `useMl`; se o modelo não carregar, cai no
-  jscanify/OpenCV automaticamente.
+  do navegador **com aviso** (toast com o motivo) — digitalizar nunca fica 100% quebrado.
+
+> O antigo provider `web` (OpenCV.js + jscanify) foi **removido**: a detecção é só
+> a IA e o warp é WebGL — sem os ~8.6 MB do `opencv.js`. Valores salvos `web` migram
+> para `docaligner` na leitura.
 
 Todos produzem um `File` PDF e entregam por `onComplete(file)`. O backend não
 muda (aceita PDF/qualquer mime até 25 MB).
@@ -33,23 +36,25 @@ muda (aceita PDF/qualquer mime até 25 MB).
 - `scan-button.tsx` — botão público; lê o provider e seleciona o motor (lazy import).
 - `scanbot-license.ts` — queries da license e do provider (Configurações via API).
 - `scanbot-scan.ts` — scanner via Scanbot Web SDK (import `scanbot-web-sdk/ui`, init + RTU UI + PDF).
-- `web-scanner-dialog.tsx` — scanner web (jscanify): câmera, cantos, filtros, revisão.
-- `scanner-engine.ts` — carrega OpenCV.js + jscanify sob demanda; detecção de cantos;
-  abstração `CornerDetector` compartilhada pelos motores.
+- `web-scanner-dialog.tsx` — scanner do navegador: câmera, cantos, filtros, revisão.
+- `scanner-engine.ts` — geometria pura dos cantos (`orderCorners`, `isPlausibleQuad`,
+  tipos, abstração `CornerDetector`). **Sem OpenCV.**
+- `scan-warp.ts` — recorte + deskew por **WebGL** (homografia 4-pontos). Substitui o
+  `cv.warpPerspective` do OpenCV; fallback devolve a imagem não recortada.
 - `docaligner/` — motor de detecção por IA (ONNX): `config`, `preprocess`,
   `postprocess`, `runtime` (onnxruntime-web), `worker` (inferência off-main-thread),
-  `detector`, `index` (hook). Só substitui a detecção de cantos; recorte/filtro/PDF
-  seguem no pipeline OpenCV. A inferência roda num **Web Worker** para o preview ao
+  `detector`, `index` (hook). A inferência roda num **Web Worker** para o preview ao
   vivo não travar o vídeo (cada inferência custa ~200–400 ms no WASM).
 - `scan-enhance.ts` — realce ("cara de escaneado"): iluminação, Sauvola, unsharp.
 - `scan-to-pdf.ts` — monta o PDF multipágina (jspdf). Coberto por testes.
 
 ## DocAligner (detecção por IA)
 
-1. Selecione **DocAligner (IA)** em Configurações → Scanner.
+1. O provider **Navegador (IA)** é o padrão em Configurações → Scanner.
 2. Coloque o modelo em `public/vendor/docaligner/model.onnx` (ver
    [public/vendor/docaligner/README.md](../../../../public/vendor/docaligner/README.md)).
-   Sem o modelo, cai no OpenCV (degradação graciosa).
+   Sem o modelo, não há detecção automática — o usuário ajusta os cantos manualmente
+   (o recorte por WebGL segue funcionando).
 3. O `.wasm` e o `.mjs` do `onnxruntime-web` são resolvidos pelo Vite via `?url`
    (a partir do `node_modules`, em `runtime.ts`) — **não** ficam em `public/`,
    pois o Vite proíbe importar módulos de `public/` no dev (o ORT faz `import()`
@@ -79,12 +84,8 @@ que roda automaticamente antes de `dev` e `build` (ver `package.json`). Ficam
 fora do git via `.gitignore`. No Docker, após instalar deps rode
 `docker compose exec web bun install` e reinicie o serviço web.
 
-### Vendoring do OpenCV.js
-`OpenCV.js` (~8 MB) e `jscanify.js` ficam em `web/public/vendor/` e são
-carregados **sob demanda** (somente ao abrir o scanner web), nunca no bundle
-inicial.
-
 ## Pontos de atenção
 - **HTTPS** é obrigatório para usar a câmera em mobile (`localhost` ok no dev).
-- O scanner web (jscanify) tem qualidade inferior ao Scanbot; o ajuste manual de
-  cantos cobre os casos em que a detecção automática falha.
+- A detecção automática é só a IA (DocAligner); o **ajuste manual dos 4 cantos**
+  cobre os casos em que ela falha ou o modelo não carrega.
+- O **warp** (recorte/deskew) é WebGL; sem WebGL, a imagem é usada sem recorte.

@@ -3,6 +3,7 @@ import {
   fetchDashboardStats,
   fetchProductivityStats,
   fetchStageTimings,
+  fetchTitularCaixaStats,
   type ProductivityQuery,
 } from './dashboard.service'
 
@@ -13,6 +14,7 @@ export const dashboardKeys = {
     [...dashboardKeys.all, 'productivity', query] as const,
   stageTimings: (query: ProductivityQuery) =>
     [...dashboardKeys.all, 'stage-timings', query] as const,
+  titularCaixa: () => [...dashboardKeys.all, 'titular-caixa'] as const,
 }
 
 export function dashboardStatsOptions() {
@@ -33,5 +35,12 @@ export function stageTimingsOptions(query: ProductivityQuery) {
   return queryOptions({
     queryKey: dashboardKeys.stageTimings(query),
     queryFn: () => fetchStageTimings(query),
+  })
+}
+
+export function titularCaixaStatsOptions() {
+  return queryOptions({
+    queryKey: dashboardKeys.titularCaixa(),
+    queryFn: fetchTitularCaixaStats,
   })
 }

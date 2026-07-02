@@ -55,6 +55,44 @@ services:
       timeout: 5s
       retries: 5
 
+  # Worker dedicado da fila de ingestao (scan/import). Mesma imagem/codebase da
+  # API, processo separado (`bun run worker`): isola o trabalho pesado (PDF/IA) do
+  # event-loop que atende requisicoes. Reivindica jobs do Postgres (claim+lease).
+  ingestion-worker:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.dev
+    working_dir: /workspace/api
+    command: ["bun", "run", "worker"]
+    # Reinicia automaticamente em crash (erro transitorio/OOM) — sem depender de
+    # humano. Pode escalar: `docker compose up -d --scale ingestion-worker=2`
+    # (o claim usa FOR UPDATE SKIP LOCKED, seguro com varias replicas).
+    restart: unless-stopped
+    environment:
+      BETTER_AUTH_SECRET: "dev-only-secret-change-me-before-production"
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/app"
+      S3_ENDPOINT: "http://minio:9000"
+      S3_PUBLIC_URL: "http://localhost:3558"
+      S3_ACCESS_KEY: "minioadmin"
+      S3_SECRET_KEY: "minioadmin123"
+      S3_FORCE_PATH_STYLE: "true"
+      S3_PROCESS_DOCUMENTS_BUCKET: "process-documents"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-opus-4-8}"
+      INTERNAL_API_TOKEN: "dev-internal-token-change-me"
+      INGESTION_POLL_MS: "3000"
+      INGESTION_CONCURRENCY: "2"
+      # Pool de conexoes baixo por replica (nao exaurir o Postgres ao escalar).
+      DB_POOL_MAX: "5"
+    volumes:
+      - ./:/workspace
+      - api_node_modules:/workspace/api/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      minio-create-buckets:
+        condition: service_completed_successfully
+
   db:
     image: postgres:18-alpine
     ports:
@@ -100,8 +138,11 @@ services:
         /usr/bin/mc anonymous set none local/process-documents
     restart: "no"
 
-  # Worker RPA: consulta o termo de quitacao no portal da Caixa (Playwright
-  # headless) e reporta o resultado a API pelos endpoints internos.
+  # Worker RPA UNIFICADO da quitacao: um unico processo consome AMBAS as filas
+  # (processos + titulares) com um POOL de slots concorrentes sobre um browser
+  # Playwright headless, sob um espacador GLOBAL em memoria. Requer processo unico
+  # (o espacador e em memoria) — nao escalar este servico (--scale) sem migrar o
+  # pacing para estado compartilhado.
   worker:
     build:
       context: ./worker
@@ -111,6 +152,13 @@ services:
       API_URL: "http://api:3556"
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
       POLL_MS: "5000"
+      # Espacamento global entre inicios de consulta ao portal da Caixa (freio
+      # educado). A concorrencia (abaixo) so preenche as janelas ociosas de render;
+      # a taxa de requisicoes continua governada por este intervalo.
+      CONSULTA_MIN_INTERVAL_MS: "5000"
+      # Slots concorrentes. Com L~24s de render e S=5s, ~5 slots saturam o freio
+      # (~720/h). Kill-switch de rollback sem redeploy: baixar para "1".
+      CONSULTA_CONCURRENCY: "5"
     volumes:
       - ./worker:/workspace/worker
       - worker_node_modules:/workspace/worker/node_modules

@@ -15,6 +15,7 @@ import {
 import { getProductivityStats } from './dashboard.productivity.service'
 import { getDashboardStats } from './dashboard.service'
 import { getStageTimingStats } from './dashboard.stage-timings.service'
+import { getTitularCaixaStats } from './dashboard.titular-caixa.service'
 
 const periodQuerySchema = z.object({
   period: z.enum(['7d', '30d', '90d']).default('30d'),
@@ -106,6 +107,27 @@ export const dashboardRoutes = new Hono<AppBindings>()
 
       const stats = await getProductivityStats(from, to)
       return c.json({ period: query.period, ...stats }, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get('/titular-caixa-stats', async (c) => {
+    try {
+      const currentUser = getAuthenticatedUser(c)
+      const perms = await resolveUserPermissions(
+        currentUser.id,
+        currentUser.role,
+      )
+
+      if (!perms.isAdmin) {
+        throw new ServiceError(
+          403,
+          'Voce nao tem permissao para acessar os indicadores de Titular Caixa.',
+        )
+      }
+
+      const stats = await getTitularCaixaStats()
+      return c.json(stats, 200)
     } catch (error) {
       return handleServiceError(c, error)
     }

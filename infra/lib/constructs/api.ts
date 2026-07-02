@@ -45,6 +45,10 @@ const CPU_THRESHOLD = 50;
 
 export class Api extends Construct {
   readonly apiUrl: string;
+  // Serviço ECS da API, exposto para permitir ordenar deploys que dependem de a
+  // API estar saudável (ex.: o worker RPA, que só deve subir DEPOIS da migração —
+  // que roda no boot da API, antes do health check passar).
+  readonly service: Ec2Service;
 
   constructor(scope: Construct, id: string, props: Props) {
     super(scope, id);
@@ -159,6 +163,7 @@ export class Api extends Construct {
         },
       ],
     });
+    this.service = service;
 
     const scalableTarget = service.autoScaleTaskCount({
       minCapacity: MIN_CAPACITY,
