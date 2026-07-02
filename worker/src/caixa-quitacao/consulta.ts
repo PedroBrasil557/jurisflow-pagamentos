@@ -53,9 +53,22 @@ async function readResultMessage(page: Page): Promise<string> {
 // upload do screenshot vinculado ao processo (S3) fica como evolucao futura.
 async function captureEvidence(page: Page, reason: string): Promise<void> {
   const emit = page.locator(SELECTORS.emitir)
+  const consultar = page.locator(SELECTORS.consultar)
   const markers = {
     reason,
     url: page.url(),
+    consultarVisible: await consultar.isVisible().catch(() => false),
+    consultarEnabled: await consultar.isEnabled().catch(() => false),
+    consultarDisabledAttr: await consultar
+      .getAttribute('disabled')
+      .then((v) => v !== null)
+      .catch(() => false),
+    // So a CONTAGEM de digitos que o campo registrou (nunca o valor — PII).
+    cpfDigitsTyped: await page
+      .locator(SELECTORS.cpf)
+      .inputValue()
+      .then((v) => v.replace(/\D/g, '').length)
+      .catch(() => -1),
     emitVisible: await emit.isVisible().catch(() => false),
     emitEnabled: await emit.isEnabled().catch(() => false),
     voltarVisible: await page
@@ -66,11 +79,32 @@ async function captureEvidence(page: Page, reason: string): Promise<void> {
       .getByText(NAO_ENCONTRADO)
       .count()
       .catch(() => 0),
-    hasIndisponivel: await page.getByText(INDISPONIVEL).count().catch(() => 0),
+    hasIndisponivel: await page
+      .getByText(INDISPONIVEL)
+      .count()
+      .catch(() => 0),
   }
   console.error(
     `[consulta] evidencia ${JSON.stringify({ ts: new Date().toISOString(), ...markers })}`,
   )
+}
+
+// Espera um locator ficar ENABLED (o waitFor do Playwright so cobre visibilidade,
+// nao o atributo disabled). Poll curto e best-effort: nunca lanca, retorna false
+// no timeout — o caller decide re-digitar ou desistir.
+async function waitForEnabled(
+  page: Page,
+  locator: ReturnType<Page['locator']>,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await locator.isEnabled().catch(() => false)) {
+      return true
+    }
+    await page.waitForTimeout(200)
+  }
+  return false
 }
 
 // Valida que os bytes sao um PDF real: assinatura "%PDF-" + tamanho minimo
@@ -127,15 +161,49 @@ export async function consultarQuitacao(
     }
   }
 
-  // PASSO 2: preenche o CPF e submete. O clique pode LANCAR (botao nao clicavel
-  // sob carga/site lento) — tratamos como desfecho transitorio + evidencia, nunca
-  // deixamos a excecao escapar para um 'erro' opaco.
+  // PASSO 2: preenche o CPF e ARMA o botao deterministicamente. #btnConsultar
+  // nasce `disabled`; so habilita quando o JS da pagina valida o CPF digitado.
+  // Se digitarmos antes desse JS anexar os listeners (site lento sob carga), as
+  // teclas caem no vazio e o botao nunca habilita — era a causa de ~50% das
+  // tentativas falharem. Por isso o laco: digita, VERIFICA que o valor pegou
+  // (inputValue) e que o botao habilitou; se nao, espera e re-digita. Re-tentar
+  // in-page e barato; falhar a tentativa custa slot do spacer + backoff na fila.
   const cpfInput = page.locator(SELECTORS.cpf)
-  await cpfInput.fill('').catch(() => {})
-  await cpfInput.pressSequentially(digits, { delay: 50 }).catch(() => {})
-  const submitted = await page
-    .locator(SELECTORS.consultar)
-    .click({ timeout: 15_000 })
+  const consultar = page.locator(SELECTORS.consultar)
+  const TYPE_RETRIES = 3
+  let armed = false
+  for (let attempt = 0; attempt < TYPE_RETRIES && !armed; attempt++) {
+    if (attempt > 0) {
+      // Folga para o JS do widget terminar de carregar antes de re-digitar.
+      await page.waitForTimeout(1_000)
+    }
+    const typed = await cpfInput
+      .fill('')
+      .then(() => cpfInput.pressSequentially(digits, { delay: 50 }))
+      .then(() => true)
+      .catch(() => false)
+    if (!typed) {
+      continue
+    }
+    // A mascara formata (000.000.000-00): compara so os digitos registrados.
+    const value = await cpfInput.inputValue().catch(() => '')
+    if (value.replace(/\D/g, '') !== digits) {
+      continue
+    }
+    armed = await waitForEnabled(page, consultar, 3_000)
+  }
+  if (!armed) {
+    await captureEvidence(page, 'consultar_nao_habilitou')
+    return {
+      result: 'erro',
+      message:
+        'Nao foi possivel acionar "Consultar" (pagina nao respondeu). Sera retentada.',
+      pdf: null,
+    }
+  }
+  // Botao ja esta enabled: o clique so falharia por instabilidade/overlay.
+  const submitted = await consultar
+    .click({ timeout: 10_000 })
     .then(() => true)
     .catch(() => false)
   if (!submitted) {
@@ -243,8 +311,7 @@ export async function consultarQuitacao(
     await captureEvidence(page, 'emitir_nao_clicavel')
     return {
       result: 'erro',
-      message:
-        'Nao foi possivel acionar "Emitir declaracao". Sera retentada.',
+      message: 'Nao foi possivel acionar "Emitir declaracao". Sera retentada.',
       pdf: null,
     }
   }
