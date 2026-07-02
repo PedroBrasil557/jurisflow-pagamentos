@@ -12,9 +12,27 @@ const pool = new pg.Pool({
   ...(isProduction ? { ssl: { rejectUnauthorized: false } } : {}),
 })
 
+// Serializa migradores CONCORRENTES (varias tasks da API bootando juntas num rolling
+// deploy). O migrator do drizzle NAO toma lock: sem isto, duas tasks leem a mesma
+// ultima migracao, ambas rodam o mesmo DDL, e a perdedora falha (ex.: "column already
+// exists") -> crash-restart. Um advisory lock cluster-wide (por chave) faz a 2a task
+// esperar; quando entra, ja esta tudo aplicado (no-op). Preso a UM client dedicado
+// (o lock pertence a conexao que o adquiriu — soltar no mesmo client evita, com o
+// pool, liberar na conexao errada).
+const MIGRATION_LOCK_KEY = 4523170
+
 console.log('Running database migrations...')
 const db = drizzle(pool)
-await migrate(db, { migrationsFolder: './drizzle' })
+const lockClient = await pool.connect()
+try {
+  await lockClient.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY])
+  await migrate(db, { migrationsFolder: './drizzle' })
+} finally {
+  await lockClient
+    .query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY])
+    .catch(() => {})
+  lockClient.release()
+}
 console.log('Migrations complete.')
 
 // Reseta APENAS desmembramentos orfaos do fluxo LEGADO de batch-split (sem lease):
