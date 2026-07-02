@@ -443,3 +443,15 @@ export const completeImportBodySchema = z.object({
     .min(1)
     .max(IMPORT_MAX_FILES),
 })
+
+// Scan via upload pre-assinado S3 (uma sessao = um PDF). Igual ao import, mas a
+// sessao e um uploadId opaco (sem processo ate o complete).
+export const presignScanBodySchema = z.object({
+  contentType: z.string().min(1).max(128),
+  size: z.number().int().positive(),
+})
+
+export const completeScanBodySchema = z.object({
+  uploadId: z.string().min(1).max(128),
+  objectKey: z.string().min(1).max(1024),
+})

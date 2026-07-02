@@ -4,6 +4,7 @@ import { ServiceError } from '../../shared/errors/service-error'
 import {
   buildImportStagingObjectKey,
   buildProcessBatchObjectKey,
+  buildScanStagingObjectKey,
   buildStorageObjectKey,
   copyStorageObject,
   createStorageObjectDownloadUrl,
@@ -793,90 +794,174 @@ export async function processClaimedIngestion(
   }
 }
 
-// Armazena o scan no lote (como fonte) e dispara a ingestao digitalizacao em background.
-// Gated por 'create' na rota. Retorna o id do arquivo p/ o front acompanhar.
-// Guarda UM arquivo no lote (S3 + processBatchFile 'processing'), pronto para a
-// ingestao. Nao dispara o trabalho — quem chama decide (single ou multi).
-async function storeIngestionFile(input: {
-  processId: string
-  file: File
-  actor: ProcessActor
-}): Promise<typeof processBatchFile.$inferSelect> {
-  assertBatchFile(input.file)
+// Nome fixo do arquivo do scan (uma sessao = um PDF). O uploadId ja individualiza
+// a chave no staging e o id do lote.
+const SCAN_PDF_FILE_NAME = 'scan.pdf'
 
-  if (input.file.type.toLowerCase() !== 'application/pdf') {
+// Violacao de chave unica no Postgres (SQLSTATE 23505). Usado para distinguir um
+// complete duplicado (idempotente) de um erro transitorio de banco.
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === '23505'
+  )
+}
+
+// SCAN pre-assinado — fase 1 (presign). Como o import, mas a sessao NAO cria
+// processo: retorna um uploadId opaco + URL de PUT direto no S3 (staging). O
+// rascunho so nasce no complete — logo presign sem complete NAO deixa RASCUNHO
+// orfao; o objeto abandonado expira pelo lifecycle do prefixo de staging.
+export async function presignScanUpload(input: {
+  contentType: string
+  size: number
+}): Promise<{ uploadId: string; objectKey: string; uploadUrl: string }> {
+  if (input.contentType.toLowerCase() !== 'application/pdf') {
+    throw new ProcessServiceError(415, 'A digitalizacao deve ser um PDF.')
+  }
+  if (input.size <= 0 || input.size > maxBatchFileSizeInBytes) {
     throw new ProcessServiceError(
-      415,
-      'Apenas arquivos PDF podem ser processados.',
+      413,
+      'A digitalizacao excede o limite de 25 MB.',
     )
   }
 
-  const fileId = crypto.randomUUID()
-  const bucketName = storageBuckets.processDocuments
-  const objectKey = buildProcessBatchObjectKey({
-    processId: input.processId,
-    fileId,
-    fileName: input.file.name,
+  const uploadId = crypto.randomUUID()
+  const objectKey = buildScanStagingObjectKey({ uploadId })
+  const uploadUrl = await createStorageObjectUploadUrl({
+    bucketName: storageBuckets.processDocuments,
+    objectKey,
+    contentType: 'application/pdf',
+    // Trava o tamanho do PUT no valor declarado (<=25MB ja validado acima).
+    contentLength: input.size,
   })
-  const fileBytes = new Uint8Array(await input.file.arrayBuffer())
 
-  try {
-    await uploadStorageObject({
-      bucketName,
-      objectKey,
-      contentType: 'application/pdf',
-      body: fileBytes,
+  return { uploadId, objectKey, uploadUrl }
+}
+
+// Idempotencia: se o complete ja rodou para este uploadId, o lote (id=uploadId)
+// existe. Retorna a conclusao anterior para um novo complete (retry em rede
+// movel) devolver o mesmo processo, sem criar um 2o rascunho.
+export async function findScanCompletion(
+  uploadId: string,
+): Promise<{ processId: string; batchFileId: string } | null> {
+  const [existing] = await db
+    .select({
+      processId: processBatchFile.processId,
+      batchFileId: processBatchFile.id,
     })
-  } catch {
+    .from(processBatchFile)
+    .where(eq(processBatchFile.id, uploadId))
+    .limit(1)
+
+  return existing ?? null
+}
+
+// SCAN pre-assinado — validacao do staging ANTES de criar o rascunho: chave
+// exata (anti-arbitraria), objeto existe, tamanho e assinatura PDF. Assim um
+// upload invalido nunca cria um rascunho orfao. Devolve o tamanho real.
+export async function validateScanStaging(input: {
+  uploadId: string
+  objectKey: string
+}): Promise<{ sizeInBytes: number }> {
+  const bucketName = storageBuckets.processDocuments
+  const stagingKey = buildScanStagingObjectKey({ uploadId: input.uploadId })
+  if (input.objectKey !== stagingKey) {
+    throw new ProcessServiceError(400, 'Chave de objeto invalida.')
+  }
+
+  const head = await headStorageObject({ bucketName, objectKey: stagingKey })
+  if (!head) {
     throw new ProcessServiceError(
-      503,
-      'Nao foi possivel enviar o documento para o storage. Tente novamente.',
+      400,
+      'O upload da digitalizacao nao foi encontrado (pode ja ter sido enviado).',
+    )
+  }
+  if (head.sizeInBytes > maxBatchFileSizeInBytes) {
+    await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+      () => {},
+    )
+    throw new ProcessServiceError(
+      413,
+      'A digitalizacao excede o limite de 25 MB.',
     )
   }
 
+  const prefix = await readStorageObjectPrefix({
+    bucketName,
+    objectKey: stagingKey,
+    length: PDF_MAGIC.length,
+  })
+  if (!hasPdfSignature(prefix)) {
+    await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+      () => {},
+    )
+    throw new ProcessServiceError(415, 'A digitalizacao nao e um PDF valido.')
+  }
+
+  return { sizeInBytes: head.sizeInBytes }
+}
+
+// SCAN pre-assinado — fase 2 (complete), com o rascunho JA criado pelo chamador.
+// Move do staging para o lote (id do lote = uploadId, o que da idempotencia via
+// PK) e enfileira a ingestao. Em conflito de PK (complete concorrente) lanca 409
+// para o chamador desfazer o rascunho e devolver a conclusao vencedora.
+export async function finalizeScanUpload(input: {
+  uploadId: string
+  processId: string
+  actor: ProcessActor
+  sizeInBytes: number
+}): Promise<{ batchFileId: string }> {
+  const bucketName = storageBuckets.processDocuments
+  const stagingKey = buildScanStagingObjectKey({ uploadId: input.uploadId })
+  const batchKey = buildProcessBatchObjectKey({
+    processId: input.processId,
+    fileId: input.uploadId,
+    fileName: SCAN_PDF_FILE_NAME,
+  })
+
+  await copyStorageObject({
+    bucketName,
+    sourceObjectKey: stagingKey,
+    destinationObjectKey: batchKey,
+  })
+
   try {
-    const [inserted] = await db
-      .insert(processBatchFile)
-      .values({
-        id: fileId,
-        processId: input.processId,
-        bucketName,
-        objectKey,
-        originalFileName: input.file.name,
-        mimeType: 'application/pdf',
-        sizeInBytes: input.file.size,
-        uploadedByUserId: input.actor.id,
-        // Entra na fila duravel: o worker reivindica (claim+lease) e processa.
-        splitStatus: 'queued',
-        splitUpdatedAt: new Date(),
-      })
-      .returning()
-    return inserted
+    await db.insert(processBatchFile).values({
+      // id = uploadId: um 2o complete (retry/corrida) colide na PK -> 409.
+      id: input.uploadId,
+      processId: input.processId,
+      bucketName,
+      objectKey: batchKey,
+      originalFileName: SCAN_PDF_FILE_NAME,
+      mimeType: 'application/pdf',
+      sizeInBytes: input.sizeInBytes,
+      uploadedByUserId: input.actor.id,
+      // Entra na fila duravel: o worker reivindica (claim+lease) e processa.
+      splitStatus: 'queued',
+      splitUpdatedAt: new Date(),
+    })
   } catch (error) {
-    try {
-      await deleteStorageObject({ bucketName, objectKey })
-    } catch {
-      // cleanup best-effort
+    await deleteStorageObject({ bucketName, objectKey: batchKey }).catch(
+      () => {},
+    )
+    // SO violacao de unicidade (PK) = complete duplicado -> 409 idempotente. Erro
+    // transitorio (deadlock/conexao) NAO deve virar "ja enviada": relanca para a
+    // rota tratar como falha retentavel (a rota ainda checa um vencedor).
+    if (isUniqueViolation(error)) {
+      throw new ProcessServiceError(409, 'Digitalizacao ja enviada.')
     }
     throw error
   }
-}
 
-export async function startScanIngestion(input: {
-  processId: string
-  file: File
-  actor: ProcessActor
-  perms: ResolvedPermissions
-}) {
-  const fileRecord = await storeIngestionFile({
-    processId: input.processId,
-    file: input.file,
-    actor: input.actor,
-  })
+  // Sucesso: remove o staging (a copia definitiva ja existe). Se falhar, o
+  // lifecycle do prefixo de staging limpa depois.
+  await deleteStorageObject({ bucketName, objectKey: stagingKey }).catch(
+    () => {},
+  )
 
-  // O arquivo ja entra como 'queued' (storeIngestionFile); o worker reivindica e
-  // processa em background. Retorna imediato — o front acompanha por splitStatus.
-  return { batchFileId: fileRecord.id }
+  return { batchFileId: input.uploadId }
 }
 
 // Reprocessa a ingestao dos arquivos que FALHARAM (splitStatus='error') de um

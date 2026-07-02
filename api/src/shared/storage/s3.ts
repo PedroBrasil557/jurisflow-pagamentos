@@ -98,6 +98,18 @@ export function buildImportStagingObjectKey(input: {
   ])
 }
 
+// Staging do scan pre-assinado: como o import, mas a sessao NAO tem processo
+// ainda (o rascunho so nasce no complete). A chave e deterministica a partir do
+// uploadId opaco, sob o mesmo prefixo importStagingPrefix — entao herda o
+// lifecycle de expiracao (uploads abandonados nao viram lixo permanente).
+export function buildScanStagingObjectKey(input: { uploadId: string }) {
+  return buildStorageObjectKey([
+    importStagingPrefix,
+    `scan-${input.uploadId}`,
+    'scan.pdf',
+  ])
+}
+
 export function buildProcessGeneratedDocumentObjectKey(input: {
   documentId: string
   fileName: string
