@@ -28,6 +28,10 @@ function putToS3WithProgress(
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', url)
     xhr.setRequestHeader('Content-Type', 'application/pdf')
+    // Timeout: numa conexao semiaberta (handoff de torre) o PUT pode nunca
+    // completar nem falhar — sem isto o overlay "Enviando..." travaria a tela
+    // indefinidamente. Ao expirar, `ontimeout` rejeita e a UI libera para retry.
+    xhr.timeout = 120_000
     if (onProgress) {
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
@@ -42,7 +46,10 @@ function putToS3WithProgress(
         reject(new Error(`Falha ao enviar a digitalizacao (${xhr.status}).`))
       }
     }
-    xhr.onerror = () => reject(new Error('Falha de rede ao enviar a digitalizacao.'))
+    xhr.onerror = () =>
+      reject(new Error('Falha de rede ao enviar a digitalizacao.'))
+    xhr.ontimeout = () =>
+      reject(new Error('O envio da digitalizacao expirou. Tente novamente.'))
     xhr.onabort = () => reject(new Error('Envio da digitalizacao cancelado.'))
     xhr.send(body)
   })

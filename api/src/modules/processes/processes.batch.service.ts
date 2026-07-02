@@ -50,7 +50,7 @@ import {
   renewIngestionLease,
 } from './processes.ingestion.queue'
 import { countPdfPages } from './processes.pdf.splitter'
-import { process, processBatchFile } from './processes.schema'
+import { process, processBatchFile, scanUpload } from './processes.schema'
 import type { ProcessStatus } from './processes.status'
 
 // Estas funcoes so usam o id do ator (usuario autenticado OU bot do sistema na
@@ -621,15 +621,28 @@ async function runIngestionWork(input: {
 
   // Auditoria (ai_analysis): registra a classificacao da IA + a decisao de anexo.
   // Vale inclusive com 0 anexos — e justamente o caso de misclassificacao.
-  await recordDocumentExtractionAudit({
-    processId: input.processId,
-    fileId: fileRecord.id,
-    totalPages: await countPdfPages(bytes),
-    meta,
-    outcome: result,
-    durationMs: Date.now() - startedAt,
-    triggeredByUserId: input.actor.id,
-  })
+  // BEST-EFFORT (nao FATAL): roda DEPOIS do anexo (importDocumentBundle). Se
+  // fosse fatal, uma falha transitoria aqui re-executaria o job e
+  // importDocumentBundle RE-ANEXARIA os mesmos documentos (nao idempotente) ->
+  // anexos duplicados. Perder um registro de auditoria e preferivel a duplicar
+  // documentos no checklist.
+  try {
+    await recordDocumentExtractionAudit({
+      processId: input.processId,
+      fileId: fileRecord.id,
+      totalPages: await countPdfPages(bytes),
+      meta,
+      outcome: result,
+      durationMs: Date.now() - startedAt,
+      triggeredByUserId: input.actor.id,
+    })
+  } catch (auditError) {
+    console.error('Falha ao registrar auditoria de extracao (best-effort)', {
+      processId: input.processId,
+      fileId: fileRecord.id,
+      error: String(auditError),
+    })
+  }
 
   // NOTA: a reconciliacao de ownerType/status NAO roda aqui — o split ainda esta
   // 'processing' (o caller so marca 'done' depois). Roda em processClaimedIngestion
@@ -816,6 +829,7 @@ function isUniqueViolation(error: unknown): boolean {
 export async function presignScanUpload(input: {
   contentType: string
   size: number
+  userId: string
 }): Promise<{ uploadId: string; objectKey: string; uploadUrl: string }> {
   if (input.contentType.toLowerCase() !== 'application/pdf') {
     throw new ProcessServiceError(415, 'A digitalizacao deve ser um PDF.')
@@ -837,14 +851,41 @@ export async function presignScanUpload(input: {
     contentLength: input.size,
   })
 
+  // Vincula o uploadId ao usuario: so o dono pode concluir/consultar depois.
+  await db.insert(scanUpload).values({ uploadId, userId: input.userId })
+
   return { uploadId, objectKey, uploadUrl }
 }
 
-// Idempotencia: se o complete ja rodou para este uploadId, o lote (id=uploadId)
-// existe. Retorna a conclusao anterior para um novo complete (retry em rede
-// movel) devolver o mesmo processo, sem criar um 2o rascunho.
+// Exige que o uploadId pertenca ao usuario (presignado por ele). Sem isto,
+// qualquer usuario autenticado poderia concluir o upload (PDF/PII) de outro.
+export async function assertScanUploadOwner(
+  uploadId: string,
+  userId: string,
+): Promise<void> {
+  const [owned] = await db
+    .select({ uploadId: scanUpload.uploadId })
+    .from(scanUpload)
+    .where(and(eq(scanUpload.uploadId, uploadId), eq(scanUpload.userId, userId)))
+    .limit(1)
+
+  if (!owned) {
+    throw new ProcessServiceError(403, 'Digitalizacao nao encontrada.')
+  }
+}
+
+// Remove a sessao de upload apos o complete consumi-la (best-effort).
+export async function deleteScanUpload(uploadId: string): Promise<void> {
+  await db.delete(scanUpload).where(eq(scanUpload.uploadId, uploadId))
+}
+
+// Idempotencia (escopada ao dono): se o complete ja rodou para este uploadId, o
+// lote (id=uploadId, uploadedByUserId=dono) existe. Retorna a conclusao anterior
+// para um retry (rede movel) devolver o mesmo processo — e NUNCA o processo de
+// outro usuario (o filtro por dono fecha o vazamento de id / IDOR).
 export async function findScanCompletion(
   uploadId: string,
+  userId: string,
 ): Promise<{ processId: string; batchFileId: string } | null> {
   const [existing] = await db
     .select({
@@ -852,7 +893,12 @@ export async function findScanCompletion(
       batchFileId: processBatchFile.id,
     })
     .from(processBatchFile)
-    .where(eq(processBatchFile.id, uploadId))
+    .where(
+      and(
+        eq(processBatchFile.id, uploadId),
+        eq(processBatchFile.uploadedByUserId, userId),
+      ),
+    )
     .limit(1)
 
   return existing ?? null

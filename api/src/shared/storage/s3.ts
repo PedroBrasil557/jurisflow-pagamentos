@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
@@ -206,6 +207,43 @@ export async function deleteStorageObject(input: {
       Key: input.objectKey,
     }),
   )
+}
+
+// Lista objetos sob um prefixo (paginado). Usado pelo GC de orfaos e pela
+// limpeza por prefixo ao apagar um processo.
+export async function listStorageObjects(input: {
+  bucketName: StorageBucketName
+  prefix: string
+}): Promise<Array<{ objectKey: string; lastModified: Date; size: number }>> {
+  const objects: Array<{
+    objectKey: string
+    lastModified: Date
+    size: number
+  }> = []
+  let continuationToken: string | undefined
+  do {
+    const response = await internalStorageClient.send(
+      new ListObjectsV2Command({
+        Bucket: input.bucketName,
+        Prefix: input.prefix,
+        ContinuationToken: continuationToken,
+      }),
+    )
+    for (const item of response.Contents ?? []) {
+      if (item.Key) {
+        objects.push({
+          objectKey: item.Key,
+          lastModified: item.LastModified ?? new Date(0),
+          size: item.Size ?? 0,
+        })
+      }
+    }
+    continuationToken = response.IsTruncated
+      ? response.NextContinuationToken
+      : undefined
+  } while (continuationToken)
+
+  return objects
 }
 
 // URL pre-assinada para VISUALIZACAO inline no navegador (sem forcar download):

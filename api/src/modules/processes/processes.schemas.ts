@@ -452,6 +452,8 @@ export const presignScanBodySchema = z.object({
 })
 
 export const completeScanBodySchema = z.object({
-  uploadId: z.string().min(1).max(128),
+  // uuid: o presign sempre gera uuid; restringe o formato do PK controlado pelo
+  // cliente (reduz superficie de colisao/probe).
+  uploadId: z.string().uuid(),
   objectKey: z.string().min(1).max(1024),
 })

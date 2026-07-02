@@ -28,6 +28,16 @@ export function processListOptions(query: ProcessListQuery) {
   return queryOptions({
     queryKey: processKeys.list(query),
     queryFn: () => fetchProcesses(query),
+    // Enquanto algum processo estiver com ingestao "processando" (scan/import na
+    // fila ou desmembrando), repete a consulta para o badge da lista avancar ate
+    // done/erro sem refresh manual — inclusive no fluxo "escanear da lista" (que
+    // nao navega).
+    refetchInterval: (query) =>
+      query.state.data?.items.some(
+        (item) => item.ingestionStatus === 'processing',
+      )
+        ? 3000
+        : false,
   })
 }
 
@@ -66,11 +76,15 @@ export function processBatchFilesOptions(processId: string) {
   return queryOptions({
     queryKey: processKeys.batch(processId),
     queryFn: () => fetchBatchFiles(processId),
-    // Enquanto algum arquivo estiver desmembrando, repete a consulta para
-    // acompanhar a conclusao (processing -> done/error) sem depender da resposta
-    // da requisicao longa (que pode estourar timeout de proxy).
+    // Enquanto algum arquivo estiver na fila OU desmembrando, repete a consulta
+    // para acompanhar a conclusao (queued -> processing -> done/error). Inclui
+    // 'queued': o worker so reivindica ~POLL_MS depois, e o backoff de retry
+    // volta o arquivo a 'queued' — sem isto o status "congelaria" ate refresh.
     refetchInterval: (query) =>
-      query.state.data?.files.some((file) => file.splitStatus === 'processing')
+      query.state.data?.files.some(
+        (file) =>
+          file.splitStatus === 'queued' || file.splitStatus === 'processing',
+      )
         ? 2000
         : false,
   })

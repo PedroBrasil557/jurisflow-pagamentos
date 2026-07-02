@@ -59,6 +59,12 @@ type ScannedPage = {
   height: number
 }
 
+// Teto de paginas por digitalizacao. Acima disso o PDF de imagens tende a
+// estourar limites da extracao por IA (tokens de saida / tamanho do payload
+// base64), causando dead-letter deterministico sem acao para o usuario. Manter
+// abaixo desse ponto e a prevencao na origem.
+const MAX_SCAN_PAGES = 15
+
 const CORNER_KEYS = [
   'topLeftCorner',
   'topRightCorner',
@@ -395,7 +401,11 @@ export function WebScannerDialog({
     const HOLD_MS = 400
 
     const tick = async () => {
-      if (stopped || busy) {
+      // Gate cruzado com a captura: OpenCV.js/jscanify (window.cv) e o mlDetector
+      // sao singletons NAO reentrantes. Se `addPageFromCanvas` esta rodando
+      // detectBest, pula o tick para nao rodar duas inferencias concorrentes no
+      // mesmo WASM (evita corromper o heap / recorte errado silencioso).
+      if (stopped || busy || capturingRef.current) {
         return
       }
       const video = videoRef.current
@@ -544,8 +554,16 @@ export function WebScannerDialog({
   }, [open])
 
   function handleClose() {
-    // Fechar explicitamente = descartar a sessao em andamento (o tab-kill, que
-    // NAO chama isto, e o unico caminho que preserva paginas para recuperar).
+    // Fechar (X / Esc / gesto-voltar / clique-fora) PRESERVA a sessao no
+    // IndexedDB — um fechamento acidental na revisao nao deve destruir as
+    // paginas. A limpeza ocorre em: sucesso do upload (na action), descarte
+    // EXPLICITO (handleDiscardAll) e TTL. Reabrir oferece recuperar.
+    stopStream()
+    onClose()
+  }
+
+  // Descarte EXPLICITO (botao dedicado): apaga a sessao duravel e fecha.
+  function handleDiscardAll() {
     if (sessionIdRef.current) {
       void clearScanSession(sessionIdRef.current)
     }
@@ -591,6 +609,13 @@ export function WebScannerDialog({
   }
 
   async function addPageFromCanvas(sourceCanvas: HTMLCanvasElement) {
+    // Teto de paginas (previne dead-letter por documento grande demais na IA).
+    if (pagesRef.current.length >= MAX_SCAN_PAGES) {
+      setError(
+        `Limite de ${MAX_SCAN_PAGES} paginas por digitalizacao. Finalize e escaneie o restante em outro documento.`,
+      )
+      return
+    }
     capturingRef.current = true
     setCapturing(true)
     try {
@@ -938,6 +963,7 @@ export function WebScannerDialog({
               onAddMore={() => setScreen('camera')}
               onClose={handleClose}
               onEdit={openEdit}
+              onDiscardAll={handleDiscardAll}
               onFinish={handleFinish}
               onNativeCapture={() => fileInputRef.current?.click()}
               onRemove={handleRemovePage}
@@ -1270,6 +1296,7 @@ type ReviewScreenProps = {
   capturing: boolean
   onAddMore: () => void
   onClose: () => void
+  onDiscardAll: () => void
   onEdit: (page: ScannedPage) => void
   onFinish: () => void
   onNativeCapture: () => void
@@ -1282,6 +1309,7 @@ function ReviewScreen({
   capturing,
   onAddMore,
   onClose,
+  onDiscardAll,
   onEdit,
   onFinish,
   onNativeCapture,
@@ -1289,6 +1317,8 @@ function ReviewScreen({
   pages,
   preferNativeCapture,
 }: ReviewScreenProps) {
+  // Descarte exige confirmacao em dois toques (evita apagar tudo por engano).
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
       <div className="flex shrink-0 items-center justify-between border-b px-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3">
@@ -1362,6 +1392,41 @@ function ReviewScreen({
         >
           {`Anexar PDF (${pages.length})`}
         </Button>
+        {pages.length > 0 ? (
+          confirmingDiscard ? (
+            <div className="flex items-center justify-between gap-2 rounded-md bg-destructive/10 px-3 py-2">
+              <span className="text-xs text-destructive">
+                {`Descartar ${pages.length} ${pages.length === 1 ? 'pagina' : 'paginas'}?`}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => setConfirmingDiscard(false)}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={onDiscardAll}
+                  size="sm"
+                  type="button"
+                  variant="destructive"
+                >
+                  Descartar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="text-center text-xs text-muted-foreground underline-offset-2 hover:underline"
+              onClick={() => setConfirmingDiscard(true)}
+              type="button"
+            >
+              Descartar digitalizacao
+            </button>
+          )
+        ) : null}
       </div>
     </div>
   )

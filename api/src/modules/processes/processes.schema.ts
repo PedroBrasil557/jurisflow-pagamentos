@@ -505,6 +505,19 @@ export const processBatchFile = pgTable(
   ],
 )
 
+// Sessao de upload pre-assinado do SCAN, antes de existir um processo. Liga o
+// uploadId (opaco) ao usuario que o presignou, para que o /scan/complete so
+// possa ser concluido pelo dono (sem isto, qualquer usuario autenticado poderia
+// completar/consultar um uploadId alheio). A linha e apagada no complete
+// bem-sucedido; orfas (presign sem complete) sao varridas por TTL/GC.
+export const scanUpload = pgTable('scan_upload', {
+  uploadId: text('upload_id').primaryKey(),
+  userId: text('user_id')
+    .notNull()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
 export const processBatchFileRelations = relations(
   processBatchFile,
   ({ one }) => ({

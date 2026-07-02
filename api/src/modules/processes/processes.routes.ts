@@ -28,8 +28,10 @@ import {
   resolveUserPermissions,
 } from '../permissions/permissions.service'
 import {
+  assertScanUploadOwner,
   completeDocumentImport,
   deleteBatchFile,
+  deleteScanUpload,
   downloadAllBatchFiles,
   downloadAllBatchFilesZip,
   finalizeScanUpload,
@@ -149,7 +151,11 @@ export const processRoutes = new Hono<AppBindings>()
       assertCan(perms, 'uploadChecklist')
       const { contentType, size } = c.req.valid('json')
 
-      const result = await presignScanUpload({ contentType, size })
+      const result = await presignScanUpload({
+        contentType,
+        size,
+        userId: currentUser.id,
+      })
 
       logEvent('scan.presign', {
         requestId: c.get('requestId'),
@@ -172,11 +178,15 @@ export const processRoutes = new Hono<AppBindings>()
       assertCan(perms, 'uploadChecklist')
       const { uploadId, objectKey } = c.req.valid('json')
 
-      // Idempotencia: retry de um complete ja concluido devolve o mesmo processo.
-      const alreadyDone = await findScanCompletion(uploadId)
+      // Idempotencia (escopada ao dono): retry de um complete ja concluido
+      // devolve o mesmo processo — e nunca o de outro usuario.
+      const alreadyDone = await findScanCompletion(uploadId, currentUser.id)
       if (alreadyDone) {
         return c.json(alreadyDone, 202)
       }
+
+      // Autorizacao: o uploadId tem que ter sido presignado por este usuario.
+      await assertScanUploadOwner(uploadId, currentUser.id)
 
       // Valida o staging ANTES de criar o rascunho (upload invalido nao cria
       // rascunho orfao).
@@ -190,6 +200,9 @@ export const processRoutes = new Hono<AppBindings>()
           actor: currentUser,
           sizeInBytes,
         })
+
+        // Consome a sessao de upload (best-effort; o GC/TTL cobre o resto).
+        await deleteScanUpload(uploadId).catch(() => {})
 
         logEvent('scan.complete', {
           requestId: c.get('requestId'),
@@ -205,7 +218,7 @@ export const processRoutes = new Hono<AppBindings>()
         // Em QUALQUER erro (409 de PK duplicada, ou copy/insert que falhou porque
         // um complete concorrente ja moveu/apagou o staging), se ha um vencedor
         // gravado para este uploadId, devolve a conclusao dele — idempotente.
-        const winner = await findScanCompletion(uploadId)
+        const winner = await findScanCompletion(uploadId, currentUser.id)
         if (winner) {
           return c.json(winner, 202)
         }

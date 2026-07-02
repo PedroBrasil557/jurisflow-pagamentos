@@ -11,7 +11,12 @@ import {
   sql,
 } from 'drizzle-orm'
 import { db } from '../../shared/db'
-import { deleteStorageObject } from '../../shared/storage/s3'
+import {
+  buildStorageObjectKey,
+  deleteStorageObject,
+  listStorageObjects,
+  storageBuckets,
+} from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
 import { user } from '../auth/auth.schema'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
@@ -510,7 +515,10 @@ export async function listProcesses(
     db
       .select({
         processId: processBatchFile.processId,
-        hasProcessing: sql<boolean>`bool_or(${processBatchFile.splitStatus} = 'processing')`,
+        // 'queued' conta como "processando": o arquivo recem-escaneado fica em
+        // fila ate o worker reivindicar; sem isto o badge sumiria na janela de
+        // fila e o polling da lista pararia cedo demais.
+        hasProcessing: sql<boolean>`bool_or(${processBatchFile.splitStatus} in ('queued', 'processing'))`,
         hasError: sql<boolean>`bool_or(${processBatchFile.splitStatus} = 'error')`,
       })
       .from(processBatchFile)
@@ -782,26 +790,31 @@ export async function createDraftProcess(
 // remove historico/checklist/lote, mas nao os arquivos no S3). Usado no rollback
 // do fluxo digitalizacao quando a ingestao nao pode ser iniciada.
 export async function deleteProcess(processId: string) {
-  const batchFiles = await db
-    .select({
-      bucketName: processBatchFile.bucketName,
-      objectKey: processBatchFile.objectKey,
-    })
-    .from(processBatchFile)
-    .where(eq(processBatchFile.processId, processId))
-
-  for (const batchFile of batchFiles) {
-    try {
-      await deleteStorageObject({
-        bucketName: batchFile.bucketName,
-        objectKey: batchFile.objectKey,
-      })
-    } catch (error) {
-      console.error('Falha ao remover objeto do storage no rollback', {
-        processId,
-        error: String(error),
-      })
+  // Limpa TODOS os objetos do processo por PREFIXO (`processes/<id>/`), nao so os
+  // que tem linha em processBatchFile. Isso pega orfaos sem linha — ex.: a janela
+  // entre copyStorageObject e o insert em finalizeScanUpload (um crash ali deixa
+  // o PDF de scan copiado sem registro; conteria PII e nao tem lifecycle). Cobre
+  // batch/, documents/ e generated/ do processo. Best-effort por objeto.
+  const bucketName = storageBuckets.processDocuments
+  const prefix = `${buildStorageObjectKey(['processes', processId])}/`
+  try {
+    const objects = await listStorageObjects({ bucketName, prefix })
+    for (const object of objects) {
+      try {
+        await deleteStorageObject({ bucketName, objectKey: object.objectKey })
+      } catch (error) {
+        console.error('Falha ao remover objeto do storage no rollback', {
+          processId,
+          objectKey: object.objectKey,
+          error: String(error),
+        })
+      }
     }
+  } catch (error) {
+    console.error('Falha ao listar objetos do processo para remocao', {
+      processId,
+      error: String(error),
+    })
   }
 
   await db.delete(process).where(eq(process.id, processId))

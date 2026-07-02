@@ -1,4 +1,5 @@
 import { processClaimedIngestion } from './modules/processes/processes.batch.service'
+import { sweepOrphans } from './modules/processes/processes.ingestion.gc'
 import { emitQueueMetrics } from './modules/processes/processes.ingestion.metrics'
 import { claimNextIngestionJob } from './modules/processes/processes.ingestion.queue'
 import { closeDb } from './shared/db'
@@ -16,9 +17,14 @@ const CONCURRENCY = Number(process.env.INGESTION_CONCURRENCY ?? '2')
 // Intervalo de emissao da metrica de fila (EMF). Desacoplado do POLL_MS: poll e
 // curto (latencia de claim), metrica e ~1/min (evita volume desnecessario no log).
 const METRICS_INTERVAL_MS = 60_000
+// GC de orfaos (staging/scan_upload/rascunhos vazios). Baixa frequencia: e
+// limpeza de retencao, nao caminho critico. Desligavel via env.
+const GC_INTERVAL_MS = Number(process.env.GC_INTERVAL_MS ?? String(6 * 60 * 60 * 1000))
+const GC_ENABLED = process.env.GC_ENABLED !== 'false'
 
 let running = true
 let lastMetricsAt = 0
+let lastGcAt = 0
 const inFlight = new Set<Promise<void>>()
 
 // Reivindica ate encher a concorrencia; cada job roda em paralelo ate o limite.
@@ -65,6 +71,15 @@ async function loop(): Promise<void> {
     if (now - lastMetricsAt >= METRICS_INTERVAL_MS) {
       lastMetricsAt = now
       await emitQueueMetrics()
+    }
+
+    // GC de orfaos (retencao/LGPD): fecha a janela copy->insert, presign sem
+    // complete e uploads abandonados. Best-effort, nunca derruba o worker.
+    if (GC_ENABLED && now - lastGcAt >= GC_INTERVAL_MS) {
+      lastGcAt = now
+      await sweepOrphans().catch((error) => {
+        console.error('worker: sweepOrphans falhou', { error: String(error) })
+      })
     }
 
     await new Promise((resolve) => setTimeout(resolve, POLL_MS))
