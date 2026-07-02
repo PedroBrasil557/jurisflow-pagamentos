@@ -1,0 +1,1 @@
+ALTER TABLE "process" ADD COLUMN "caixa_quitacao_claim_token" text;

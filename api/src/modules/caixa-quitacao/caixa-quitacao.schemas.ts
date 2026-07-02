@@ -2,6 +2,10 @@ import { z } from 'zod'
 
 export const quitacaoResultSchema = z.object({
   processId: z.string().min(1),
+  // Token do claim vigente (fencing): so aceita /result do worker que detem o claim.
+  // Opcional por compat. de rolling deploy (worker legado nao envia); quando presente,
+  // a service exige que case com o claim vigente. O worker novo sempre envia.
+  claimToken: z.string().min(1).max(100).optional(),
   // Resultado POR CPF que o worker tentou (na ordem; para no primeiro 'quitado').
   consultas: z
     .array(

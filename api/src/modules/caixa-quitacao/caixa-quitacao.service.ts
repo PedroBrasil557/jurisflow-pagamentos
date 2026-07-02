@@ -52,7 +52,11 @@ export async function requestQuitacaoRecheck(
   return { status: 'pending' }
 }
 
-export type QuitacaoJob = { processId: string; cpfs: string[] } | null
+export type QuitacaoJob = {
+  processId: string
+  cpfs: string[]
+  claimToken: string
+} | null
 
 // Apos esgotar as tentativas, um 'erro' transitorio vira terminal. Com o backoff
 // abaixo, 6 tentativas se espalham por ~43min antes do terminal (-> recheck
@@ -74,11 +78,17 @@ const BACKOFF_CAP_SECONDS = 900
 // as tentativas. FOR UPDATE SKIP LOCKED no subselect torna o claim seguro com
 // multiplos workers (ex.: overlap de rolling deploy) — sem dupla reivindicacao.
 export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
+  // Token novo por claim (fencing): correlaciona o /result com ESTE claim. Um
+  // /result de um claim re-reivindicado por staleness casa 0 linhas (token
+  // diferente) e vira no-op, em vez de sobrescrever o estado vivo.
+  const claimToken = crypto.randomUUID()
+
   const claimed = await db
     .update(process)
     .set({
       caixaQuitacaoStatus: 'processing',
       caixaQuitacaoStartedAt: sql`now()`,
+      caixaQuitacaoClaimToken: claimToken,
       caixaQuitacaoAttempts: sql`${process.caixaQuitacaoAttempts} + 1`,
     })
     .where(
@@ -129,11 +139,17 @@ export async function claimNextQuitacaoJob(): Promise<QuitacaoJob> {
       .where(eq(process.id, row.id))
     return null
   }
-  return { processId: row.id, cpfs }
+  return { processId: row.id, cpfs, claimToken }
 }
 
 export type QuitacaoResultInput = {
   processId: string
+  // Token do claim vigente (fencing): correlaciona o resultado com ESTE claim.
+  // OPCIONAL por compatibilidade de rolling deploy: um worker antigo (sem o
+  // patch) posta /result sem token — nesse caso cai no gate por status apenas
+  // (comportamento legado, seguro pois o worker antigo e single-flight). O worker
+  // novo SEMPRE envia, entao o fence fica ativo sob concorrencia.
+  claimToken?: string
   // Resultado POR CPF que o worker tentou (na ordem; para no primeiro quitado).
   consultas: Array<{
     cpf: string
@@ -156,6 +172,7 @@ export async function recordQuitacaoResult(
       status: process.caixaQuitacaoStatus,
       attempts: process.caixaQuitacaoAttempts,
       consultas: process.quitacaoConsultas,
+      claimToken: process.caixaQuitacaoClaimToken,
     })
     .from(process)
     .where(eq(process.id, input.processId))
@@ -179,17 +196,24 @@ export async function recordQuitacaoResult(
   })
 
   // Correlaciona o resultado com o claim: so aceita /result para um processo
-  // 'processing' (estado em que so o claim do worker poe o processo). Bloqueia
-  // /result forjado/replay (que injetaria uma declaracao falsa).
-  if (proc.status !== 'processing') {
+  // 'processing' (estado em que so o claim do worker poe o processo) E — quando o
+  // worker envia o token — cujo token de claim casa. Bloqueia /result forjado/replay
+  // (declaracao falsa) e /result de um claim OBSOLETO (re-reivindicado por staleness
+  // enquanto o worker original ainda processava) — que sob concorrencia sobrescreveria
+  // o estado vivo ou perderia uma quitacao ja confirmada. Token ausente (worker legado
+  // no rolling deploy) cai no gate por status apenas — seguro pois e single-flight.
+  const staleToken =
+    input.claimToken != null && proc.claimToken !== input.claimToken
+  if (proc.status !== 'processing' || staleToken) {
     logEvent('quitacao.result_rejected', {
       processId: input.processId,
       procStatus: proc.status,
-      reason: 'not_processing',
+      reason:
+        proc.status !== 'processing' ? 'not_processing' : 'stale_claim_token',
     })
     throw new ServiceError(
       409,
-      'Nenhuma consulta de quitacao em andamento para este processo.',
+      'Nenhuma consulta de quitacao em andamento para este processo (claim invalido).',
     )
   }
 
@@ -264,8 +288,9 @@ export async function recordQuitacaoResult(
     input.consultas[0]?.message ??
     ''
 
-  // Transicao atomica guardada por status='processing': um /result fora de ordem
-  // ou repetido nao sobrescreve o estado vivo.
+  // Transicao atomica guardada por status='processing' + token do claim vigente:
+  // um /result fora de ordem, repetido, ou de um claim obsoleto casa 0 linhas e
+  // NAO sobrescreve o estado vivo.
   const updated = await db
     .update(process)
     .set({
@@ -278,6 +303,10 @@ export async function recordQuitacaoResult(
       and(
         eq(process.id, input.processId),
         eq(process.caixaQuitacaoStatus, 'processing'),
+        // Fence pelo token so quando o worker o envia (ver nota no gate).
+        input.claimToken != null
+          ? eq(process.caixaQuitacaoClaimToken, input.claimToken)
+          : undefined,
       ),
     )
     .returning({ id: process.id })

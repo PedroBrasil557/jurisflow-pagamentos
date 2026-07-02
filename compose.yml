@@ -138,8 +138,11 @@ services:
         /usr/bin/mc anonymous set none local/process-documents
     restart: "no"
 
-  # Worker RPA: consulta o termo de quitacao no portal da Caixa (Playwright
-  # headless) e reporta o resultado a API pelos endpoints internos.
+  # Worker RPA UNIFICADO da quitacao: um unico processo consome AMBAS as filas
+  # (processos + titulares) com um POOL de slots concorrentes sobre um browser
+  # Playwright headless, sob um espacador GLOBAL em memoria. Requer processo unico
+  # (o espacador e em memoria) — nao escalar este servico (--scale) sem migrar o
+  # pacing para estado compartilhado.
   worker:
     build:
       context: ./worker
@@ -149,34 +152,13 @@ services:
       API_URL: "http://api:3556"
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
       POLL_MS: "5000"
-      # Portal da Caixa e um recurso GLOBAL unico e o pacing e por-worker. Com dois
-      # workers (processos + titulares), 10s cada mantem a carga combinada ~= a de um
-      # worker a 5s, evitando que se estrangulem mutuamente.
-      CONSULTA_MIN_INTERVAL_MS: "10000"
-    volumes:
-      - ./worker:/workspace/worker
-      - worker_node_modules:/workspace/worker/node_modules
-    depends_on:
-      api:
-        condition: service_healthy
-
-  # Worker RPA dos TITULARES de contrato Caixa: mesma imagem/robo do worker de
-  # processos, mas roda o entrypoint proprio (src/titulares/index.ts) que consome a
-  # FILA GENERICA (/api/internal/quitacao). Processo separado — a feature de
-  # titulares e independente/desacoplada de processos.
-  titulares-worker:
-    build:
-      context: ./worker
-      dockerfile: Dockerfile.dev
-    working_dir: /workspace/worker
-    command: ["node", "--import", "tsx", "src/titulares/index.ts"]
-    environment:
-      API_URL: "http://api:3556"
-      INTERNAL_API_TOKEN: "dev-internal-token-change-me"
-      POLL_MS: "5000"
-      # Ver nota no servico `worker`: 10s por worker mantem a carga total do portal
-      # polida quando processos e titulares rodam ao mesmo tempo.
-      CONSULTA_MIN_INTERVAL_MS: "10000"
+      # Espacamento global entre inicios de consulta ao portal da Caixa (freio
+      # educado). A concorrencia (abaixo) so preenche as janelas ociosas de render;
+      # a taxa de requisicoes continua governada por este intervalo.
+      CONSULTA_MIN_INTERVAL_MS: "5000"
+      # Slots concorrentes. Com L~24s de render e S=5s, ~5 slots saturam o freio
+      # (~720/h). Kill-switch de rollback sem redeploy: baixar para "1".
+      CONSULTA_CONCURRENCY: "5"
     volumes:
       - ./worker:/workspace/worker
       - worker_node_modules:/workspace/worker/node_modules

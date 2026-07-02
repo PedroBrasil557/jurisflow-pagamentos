@@ -1,146 +1,195 @@
-import { type Browser, chromium } from 'playwright'
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { BrowserHolder } from './browser.ts'
 import { consultarQuitacao } from './caixa-quitacao/consulta.ts'
+import { GlobalSpacer } from './rate-limiter.ts'
+import {
+  ClaimError,
+  type ClaimedJob,
+  type ConsultaPdf,
+  createProcessosSource,
+  createTitularesSource,
+  type PerCpfResult,
+  type Source,
+} from './sources.ts'
+
+// Worker RPA UNIFICADO da quitacao. Um unico processo consome AMBAS as filas
+// (processos + titulares) com um POOL de N slots concorrentes, sobre UM browser
+// Playwright. Um espacador GLOBAL em memoria (GlobalSpacer) governa a taxa de
+// INICIO das consultas ao portal da Caixa — a concorrencia so preenche as janelas
+// ociosas de render (~24s) sem elevar o pico de requisicoes. Requer processo UNICO
+// (o espacador e em memoria); o claim das duas filas ja e atomico (SKIP LOCKED) e
+// fenceado por token, entao N slots nunca reivindicam/sobrescrevem o mesmo job.
 
 // Remove barra(s) finais: o API Gateway (HttpApi.url) vem com '/' no fim e a
-// concatenacao `${API_URL}/api/...` geraria '//api/...' (barra dupla) -> 404 no
-// Hono. Local (sem barra) nao expunha isso; prod expunha.
+// concatenacao geraria '//api/...' -> 404 no Hono.
 const API_URL = (process.env.API_URL ?? 'http://localhost:3556').replace(
   /\/+$/,
   '',
 )
 const TOKEN = process.env.INTERNAL_API_TOKEN ?? 'dev-internal-token-change-me'
-// Fallback robusto: um POLL_MS invalido (ex.: "5s") nao pode virar NaN ->
-// setTimeout(NaN)=0 -> busy-loop martelando o /claim.
-const parsedPoll = Number(process.env.POLL_MS)
-const POLL_MS =
-  Number.isFinite(parsedPoll) && parsedPoll > 0 ? parsedPoll : 5000
-// Pacing GLOBAL: intervalo minimo entre QUAISQUER consultas ao site da Caixa
-// (educado / evita o throttling por taxa). Como ha 1 worker, uma variavel em
-// memoria controla a taxa global. Default 5s.
-const parsedInterval = Number(process.env.CONSULTA_MIN_INTERVAL_MS)
-const MIN_INTERVAL_MS =
-  Number.isFinite(parsedInterval) && parsedInterval >= 0 ? parsedInterval : 5000
-const USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-// Backoff maior ao detectar erro de CONFIGURACAO (404/401): nao adianta martelar
-// a cada POLL_MS uma URL/rota/token errados — espera mais e mantem o log limpo.
+
+// Fallbacks robustos: um valor invalido (ex.: "5s") nao pode virar NaN.
+function envInt(name: string, fallback: number, min: number): number {
+  const parsed = Number(process.env[name])
+  return Number.isFinite(parsed) && parsed >= min ? parsed : fallback
+}
+const POLL_MS = envInt('POLL_MS', 5000, 1)
+// Espacamento global fixo entre inicios de consulta (freio educado ao portal).
+const MIN_INTERVAL_MS = envInt('CONSULTA_MIN_INTERVAL_MS', 5000, 0)
+// Slots concorrentes. Default 1 (comportamento single-flight seguro se nao setado);
+// prod/compose setam explicitamente. Kill-switch: voltar para 1 recua sem redeploy.
+const CONCURRENCY = envInt('CONSULTA_CONCURRENCY', 1, 1)
+// Backoff maior ao detectar erro de CONFIGURACAO (404/401): nao adianta martelar a
+// cada POLL_MS uma URL/rota/token errados.
 const CONFIG_ERROR_BACKOFF_MS = 60_000
 
-// Os CPFs sao do(s) titular(es) do contrato Caixa (1-2: titular + conjuge/
-// co-comprador). Consulta-se CADA um ate o primeiro emitir o termo (short-circuit).
-type Job = { processId: string; cpfs: string[] }
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms))
 
-// Erro do claim classificado: 'config' (404/401/403 — URL/rota/versao da API ou
-// token errados; NAO e transitorio) vs 'transient' (5xx/rede — tentar de novo).
-class ClaimError extends Error {
-  constructor(
-    readonly kind: 'config' | 'transient',
-    message: string,
-  ) {
-    super(message)
-    this.name = 'ClaimError'
-  }
-}
-
-async function claimJob(): Promise<Job | null> {
-  let res: Response
+// Liveness: um timer toca este arquivo enquanto o event-loop estiver vivo. O
+// healthcheck do ECS checa a idade do arquivo (mtime) e reinicia a task se o
+// processo travar — mitiga o SPOF do worker unico (crash ja e coberto pelo ECS).
+const HEARTBEAT_FILE =
+  process.env.HEARTBEAT_FILE ?? join(tmpdir(), 'worker-heartbeat')
+function touchHeartbeat(): void {
   try {
-    res = await fetch(`${API_URL}/api/internal/caixa-quitacao/claim`, {
-      method: 'POST',
-      headers: { 'x-internal-token': TOKEN },
-    })
-  } catch (error) {
-    // Falha de rede (DNS/conexao): nao alcancou a API. Transitorio.
-    throw new ClaimError(
-      'transient',
-      `rede: ${error instanceof Error ? error.message : 'falha'}`,
-    )
-  }
-
-  // 4xx de claim = CONFIGURACAO, nao "fila vazia": rota inexistente (404 — ex.:
-  // API_URL/versao da API errada), ou token invalido (401/403).
-  if (res.status === 404 || res.status === 401 || res.status === 403) {
-    throw new ClaimError(
-      'config',
-      `HTTP ${res.status} em ${API_URL}/api/internal/caixa-quitacao/claim — confira API_URL, se a rota existe nessa versao da API, e o INTERNAL_API_TOKEN.`,
-    )
-  }
-  if (!res.ok) {
-    throw new ClaimError('transient', `HTTP ${res.status}`)
-  }
-
-  const data = (await res.json()) as { job: Job | null }
-  return data.job
-}
-
-async function reportResult(
-  processId: string,
-  consultas: Array<{
-    cpf: string
-    result: 'quitado' | 'nao_encontrado' | 'erro'
-    message?: string
-  }>,
-  pdf: { filename: string; bytes: Buffer } | null,
-): Promise<void> {
-  const res = await fetch(`${API_URL}/api/internal/caixa-quitacao/result`, {
-    method: 'POST',
-    headers: { 'x-internal-token': TOKEN, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      processId,
-      consultas,
-      pdfBase64: pdf ? pdf.bytes.toString('base64') : null,
-      pdfFilename: pdf?.filename ?? null,
-    }),
-  })
-  if (!res.ok) {
-    throw new Error(`result HTTP ${res.status}`)
+    writeFileSync(HEARTBEAT_FILE, String(Date.now()))
+  } catch {
+    // best-effort: sem heartbeat, o healthcheck reinicia (fail-safe).
   }
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+// Estado compartilhado pelos slots (single-thread; sem corrida real).
+type SharedState = { running: boolean; connectedLogged: boolean }
 
-async function main(): Promise<void> {
-  let browser: Browser = await chromium.launch({ headless: true })
-  let running = true
-  const stop = () => {
-    running = false
-  }
-  process.on('SIGTERM', stop)
-  process.on('SIGINT', stop)
-  console.log(
-    `[worker] iniciado. API=${API_URL} poll=${POLL_MS}ms interval=${MIN_INTERVAL_MS}ms`,
-  )
-
-  // Timestamp do inicio da ultima consulta — base do pacing global.
-  let lastConsultaAt = 0
-  // Sinal POSITIVO de boot: confirma no log que o worker alcancou a API (claim
-  // OK) na primeira vez — "ausencia de erro" nao e confirmacao.
-  let connectedLogged = false
-
-  while (running) {
-    let job: Job | null = null
+// Reivindica de QUALQUER fila, em ordem rotativa (round-robin) para nenhuma faminta.
+// Retorna o 1o job encontrado. So propaga erro se TODAS as fontes falharem sem job
+// (config vence transitorio na classificacao feita pelo caller).
+async function claimAny(
+  sources: Source[],
+  rr: { i: number },
+): Promise<ClaimedJob | null> {
+  const n = sources.length
+  const start = rr.i++
+  let configError: ClaimError | null = null
+  let otherError: Error | null = null
+  for (let k = 0; k < n; k++) {
+    const src = sources[(start + k) % n]
     try {
-      job = await claimJob()
+      const job = await src.claim()
+      if (job) {
+        return job
+      }
     } catch (error) {
-      // Config (404/401): erro de DEPLOY/configuracao — loga ALTO + backoff maior
-      // (a 1a iteracao do loop ja funciona como probe de boot). Transitorio
-      // (5xx/rede): loga e tenta de novo no ritmo normal.
+      if (error instanceof ClaimError && error.kind === 'config') {
+        configError = error
+      } else {
+        otherError = error as Error
+      }
+    }
+  }
+  if (configError) {
+    throw configError
+  }
+  if (otherError) {
+    throw otherError
+  }
+  return null
+}
+
+// Consulta os CPFs do job em sequencia, parando no 1o 'quitado' (short-circuit) —
+// preserva a economia de nao consultar o 2o CPF quando o 1o ja quitou. Reporta o
+// desfecho por CPF pela fonte de origem. Cada consulta passa pelo espacador global.
+async function processJob(
+  id: number,
+  job: ClaimedJob,
+  holder: BrowserHolder,
+  spacer: GlobalSpacer,
+): Promise<void> {
+  console.log(
+    `[worker#${id}] consultando ${job.label} (${job.cpfs.length} CPF(s))`,
+  )
+  const consultas: PerCpfResult[] = []
+  let pdf: ConsultaPdf = null
+  try {
+    for (const cpf of job.cpfs) {
+      // Pacing GLOBAL: >= MIN_INTERVAL desde o inicio de QUALQUER consulta anterior
+      // (entre CPFs do mesmo job e entre slots concorrentes).
+      await spacer.acquire()
+      const outcome = await holder.withContext((page) =>
+        consultarQuitacao(page, cpf),
+      )
+      consultas.push({
+        cpf,
+        result: outcome.result,
+        message: outcome.message,
+      })
+      // quitado -> emitiu para este CPF: guarda o pdf e PARA (short-circuit).
+      // erro -> transitorio: para e re-tenta o job depois (backoff na fila).
+      // nao_encontrado -> tenta o proximo CPF (se houver).
+      if (outcome.result === 'quitado') {
+        pdf = outcome.pdf
+        break
+      }
+      if (outcome.result === 'erro') {
+        break
+      }
+    }
+    await job.report(consultas, pdf)
+    console.log(
+      `[worker#${id}] ${job.label} -> ${consultas.map((c) => c.result).join(',')}`,
+    )
+  } catch (error) {
+    console.error(
+      `[worker#${id}] erro em ${job.label}:`,
+      (error as Error).message,
+    )
+    // Erro inesperado (browser/crash): marca todos os CPFs como 'erro' (retry).
+    await job
+      .report(
+        job.cpfs.map((cpf) => ({
+          cpf,
+          result: 'erro' as const,
+          message: (error as Error).message?.slice(0, 300) ?? 'erro inesperado',
+        })),
+        null,
+      )
+      .catch(() => {})
+  }
+}
+
+// Loop de UM slot do pool: claim -> processa -> repete, ate o shutdown.
+async function runSlot(
+  id: number,
+  sources: Source[],
+  holder: BrowserHolder,
+  spacer: GlobalSpacer,
+  rr: { i: number },
+  state: SharedState,
+): Promise<void> {
+  while (state.running) {
+    let job: ClaimedJob | null = null
+    try {
+      job = await claimAny(sources, rr)
+    } catch (error) {
       if (error instanceof ClaimError && error.kind === 'config') {
         console.error(
-          `[worker] ERRO DE CONFIGURACAO no claim: ${error.message}`,
+          `[worker#${id}] ERRO DE CONFIGURACAO no claim: ${error.message}`,
         )
         await sleep(CONFIG_ERROR_BACKOFF_MS)
         continue
       }
       console.error(
-        `[worker] claim falhou (transitorio): ${(error as Error).message}`,
+        `[worker#${id}] claim falhou (transitorio): ${(error as Error).message}`,
       )
       await sleep(POLL_MS)
       continue
     }
 
-    if (!connectedLogged) {
-      connectedLogged = true
+    if (!state.connectedLogged) {
+      state.connectedLogged = true
       console.log(`[worker] conectado a API (${API_URL}) — claim OK.`)
     }
 
@@ -149,91 +198,45 @@ async function main(): Promise<void> {
       continue
     }
 
-    console.log(
-      `[worker] consultando processo=${job.processId} (${job.cpfs.length} CPF(s))`,
-    )
-    // Consulta SEQUENCIAL dos CPFs do contrato Caixa, parando no primeiro que
-    // emitir o termo (short-circuit). nao_encontrado -> tenta o proximo CPF; quitado
-    // -> reporta e para; erro (transitorio) -> reporta erro e para (o job inteiro
-    // re-tenta depois). Assim consulta-se o 2o CPF SO quando o 1o da negativa.
-    // Resultado POR CPF (na ordem tentada). pdf vem do CPF que emitiu (quitado).
-    const consultas: Array<{
-      cpf: string
-      result: 'quitado' | 'nao_encontrado' | 'erro'
-      message?: string
-    }> = []
-    let pdf: { filename: string; bytes: Buffer } | null = null
-    try {
-      for (const cpf of job.cpfs) {
-        // Pacing GLOBAL por CONSULTA: >= MIN_INTERVAL_MS desde o inicio da anterior
-        // antes de bater no site de novo (vale entre CPFs do mesmo job tambem).
-        const waitMs = lastConsultaAt + MIN_INTERVAL_MS - Date.now()
-        if (waitMs > 0) {
-          await sleep(waitMs)
-        }
-        lastConsultaAt = Date.now()
-
-        let outcome: Awaited<ReturnType<typeof consultarQuitacao>>
-        let ctx: Awaited<ReturnType<Browser['newContext']>> | null = null
-        try {
-          if (!browser.isConnected()) {
-            console.warn('[worker] browser desconectado; relancando')
-            browser = await chromium.launch({ headless: true })
-          }
-          ctx = await browser.newContext({
-            acceptDownloads: true,
-            userAgent: USER_AGENT,
-          })
-          const page = await ctx.newPage()
-          outcome = await consultarQuitacao(page, cpf)
-        } finally {
-          if (ctx) {
-            await ctx.close().catch(() => {})
-          }
-        }
-
-        consultas.push({
-          cpf,
-          result: outcome.result,
-          message: outcome.message,
-        })
-        // quitado -> emitiu para este CPF: guarda o pdf e PARA (short-circuit).
-        // erro -> transitorio: para e re-tenta o job depois.
-        // nao_encontrado -> tenta o proximo CPF (se houver).
-        if (outcome.result === 'quitado') {
-          pdf = outcome.pdf
-          break
-        }
-        if (outcome.result === 'erro') {
-          break
-        }
-      }
-
-      await reportResult(job.processId, consultas, pdf)
-      console.log(
-        `[worker] processo=${job.processId} -> ${consultas
-          .map((c) => c.result)
-          .join(',')}`,
-      )
-    } catch (error) {
-      console.error(
-        `[worker] erro no processo=${job.processId}:`,
-        (error as Error).message,
-      )
-      // Erro inesperado (browser/crash): marca todos os CPFs como 'erro' (retry).
-      await reportResult(
-        job.processId,
-        job.cpfs.map((cpf) => ({
-          cpf,
-          result: 'erro' as const,
-          message: (error as Error).message?.slice(0, 300) ?? 'erro inesperado',
-        })),
-        null,
-      ).catch(() => {})
-    }
+    await processJob(id, job, holder, spacer)
   }
+}
 
-  await browser.close()
+async function main(): Promise<void> {
+  const cfg = { apiUrl: API_URL, token: TOKEN }
+  const sources: Source[] = [
+    createProcessosSource(cfg),
+    createTitularesSource(cfg),
+  ]
+  const holder = new BrowserHolder()
+  const spacer = new GlobalSpacer({ minIntervalMs: MIN_INTERVAL_MS })
+  const state: SharedState = { running: true, connectedLogged: false }
+  const rr = { i: 0 }
+
+  const stop = () => {
+    state.running = false
+  }
+  process.on('SIGTERM', stop)
+  process.on('SIGINT', stop)
+
+  // Heartbeat de liveness (independente do trabalho dos slots): detecta travamento
+  // do event-loop. unref() para nao segurar o processo no shutdown.
+  touchHeartbeat()
+  const heartbeat = setInterval(touchHeartbeat, 10_000)
+  heartbeat.unref()
+
+  console.log(
+    `[worker] iniciado. API=${API_URL} poll=${POLL_MS}ms interval=${MIN_INTERVAL_MS}ms concurrency=${CONCURRENCY}`,
+  )
+
+  // Pool: N slots concorrentes drenando as duas filas sob um espacador global.
+  const slots = Array.from({ length: CONCURRENCY }, (_, i) =>
+    runSlot(i + 1, sources, holder, spacer, rr, state),
+  )
+  // Shutdown gracioso: cada slot encerra apos terminar o job em voo.
+  await Promise.all(slots)
+
+  await holder.close()
   console.log('[worker] encerrado')
   process.exit(0)
 }

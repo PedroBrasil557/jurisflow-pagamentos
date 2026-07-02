@@ -82,6 +82,11 @@ export const process = pgTable(
     caixaQuitacaoCheckedAt: timestamp('caixa_quitacao_checked_at'),
     // Heartbeat do job de quitacao: setado SO no claim. Base do staleness.
     caixaQuitacaoStartedAt: timestamp('caixa_quitacao_started_at'),
+    // Fencing token por-claim (RPA concorrente): setado a cada claim; o /result so
+    // e aceito se casar com o token vigente. Sem isto, um /result de um claim
+    // re-reivindicado por staleness sobrescreveria o estado vivo / perderia uma
+    // quitacao ja confirmada (paridade com o leaseToken da fila generica).
+    caixaQuitacaoClaimToken: text('caixa_quitacao_claim_token'),
     caixaQuitacaoAttempts: integer('caixa_quitacao_attempts')
       .default(0)
       .notNull(),
