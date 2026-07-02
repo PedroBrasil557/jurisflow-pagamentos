@@ -16,7 +16,7 @@ export type SettingsStatus = InferResponseType<
   200
 >
 export type KeyStatus = SettingsStatus['anthropic']
-export type ScannerProvider = 'scanbot' | 'web' | 'docaligner'
+export type ScannerProvider = 'scanbot' | 'docaligner'
 
 export async function fetchSettingsStatus(): Promise<SettingsStatus> {
   const response = await settingsClientRoute.$get()

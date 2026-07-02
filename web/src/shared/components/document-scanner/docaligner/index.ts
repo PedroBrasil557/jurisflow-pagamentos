@@ -8,7 +8,8 @@ export { createDocAlignerDetector }
 
 // Carrega o modelo DocAligner sob demanda (num Web Worker, so quando `enabled`)
 // e devolve o detector pronto + status. Em erro (modelo ausente, incompativel,
-// worker falhou), status 'error' e detector null — o chamador usa o OpenCV.
+// worker falhou), status 'error' e detector null — o usuario ajusta os cantos
+// manualmente (nao ha mais fallback classico).
 export function useDocAlignerDetector(enabled: boolean): {
   detector: CornerDetector | null
   status: DocAlignerStatus
@@ -37,7 +38,7 @@ export function useDocAlignerDetector(enabled: boolean): {
       })
       .catch((error) => {
         console.warn(
-          '[docaligner] IA indisponível — usando OpenCV:',
+          '[docaligner] IA indisponível — ajuste manual dos cantos:',
           error instanceof Error ? error.message : error,
         )
         detector.dispose()

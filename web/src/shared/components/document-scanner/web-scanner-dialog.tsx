@@ -23,16 +23,12 @@ import {
   clearScanSession,
   deleteScanPage,
   loadPendingScanSession,
-  saveScanPage,
   type StoredScanPage,
+  saveScanPage,
 } from './scan-session-store'
 import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
-import {
-  type CornerPoints,
-  createScanner,
-  detectCorners,
-  useScannerEngine,
-} from './scanner-engine'
+import { warpPerspectiveToCanvas } from './scan-warp'
+import type { CornerPoints } from './scanner-engine'
 
 type WebScannerDialogProps = {
   open: boolean
@@ -40,9 +36,6 @@ type WebScannerDialogProps = {
   // scanSessionId: id da sessao de captura (IndexedDB) para o uploader limpar
   // APOS o upload confirmar. null quando nao ha sessao persistida (ex.: Scanbot).
   onComplete: (file: File, scanSessionId: string | null) => void
-  // Quando true, usa o DocAligner (IA) como detector primario de bordas, com o
-  // OpenCV/jscanify como fallback. Provider 'docaligner' nas Configuracoes.
-  useMl?: boolean
 }
 
 type ScannedPage = {
@@ -127,7 +120,6 @@ function renderCroppedPage(
   source: HTMLCanvasElement,
   corners: CornerPoints,
   filter: FilterMode,
-  engineReady: boolean,
 ): { canvas: HTMLCanvasElement; width: number; height: number } {
   const outWidth = Math.round(
     Math.max(
@@ -142,21 +134,16 @@ function renderCroppedPage(
     ),
   )
 
-  let extracted: HTMLCanvasElement | null = null
-  if (engineReady) {
-    try {
-      extracted = createScanner().extractPaper(
-        source,
-        outWidth || source.width,
-        outHeight || source.height,
-        corners,
-      )
-    } catch {
-      extracted = null
-    }
-  }
+  // Recorte + deskew por WebGL (substitui o warpPerspective do OpenCV). Sem WebGL
+  // ou em falha, warpPerspectiveToCanvas devolve a fonte nao recortada.
+  const extracted = warpPerspectiveToCanvas(
+    source,
+    corners,
+    outWidth || source.width,
+    outHeight || source.height,
+  )
 
-  const filtered = enhanceWithFilter(extracted ?? source, filter)
+  const filtered = enhanceWithFilter(extracted, filter)
   return {
     canvas: filtered,
     width: filtered.width,
@@ -191,43 +178,23 @@ export function WebScannerDialog({
   open,
   onClose,
   onComplete,
-  useMl = false,
 }: WebScannerDialogProps) {
-  const engineStatus = useScannerEngine(open)
-  const engineReady = engineStatus === 'ready'
+  // Detector DocAligner (IA): unico motor de deteccao no navegador. Se a IA nao
+  // achar os cantos (ou o modelo nao carregar), o usuario ajusta manualmente.
+  const { detector: mlDetector, status: mlStatus } = useDocAlignerDetector(open)
 
-  // Detector DocAligner (IA): so carrega quando o provider e 'docaligner'.
-  const { detector: mlDetector, status: mlStatus } = useDocAlignerDetector(
-    open && useMl,
-  )
-
-  // Deteccao "melhor disponivel": tenta o DocAligner (se pronto); se ele nao
-  // achar, cai no OpenCV/jscanify. Unico ponto de fallback do dialogo.
   const detectBest = useCallback(
-    async (
-      source: HTMLCanvasElement,
-      opts: { fallback?: boolean },
-    ): Promise<CornerPoints | null> => {
-      if (mlDetector) {
-        try {
-          const ml = await mlDetector.detect(source, { fallback: false })
-          if (ml) {
-            return ml
-          }
-        } catch {
-          // cai no OpenCV abaixo
-        }
+    async (source: HTMLCanvasElement): Promise<CornerPoints | null> => {
+      if (!mlDetector) {
+        return null
       }
-      if (engineReady) {
-        try {
-          return detectCorners(createScanner(), source, opts)
-        } catch {
-          return null
-        }
+      try {
+        return await mlDetector.detect(source, { fallback: false })
+      } catch {
+        return null
       }
-      return null
     },
-    [mlDetector, engineReady],
+    [mlDetector],
   )
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -386,7 +353,7 @@ export function WebScannerDialog({
   // pode ser assincrona (DocAligner), entao guardamos contra chamadas
   // concorrentes (`busy`) para nao acumular frames atrasados.
   useEffect(() => {
-    if (screen !== 'camera' || !cameraReady || !(engineReady || mlDetector)) {
+    if (screen !== 'camera' || !cameraReady || !mlDetector) {
       setLiveCorners(null)
       return
     }
@@ -401,10 +368,9 @@ export function WebScannerDialog({
     const HOLD_MS = 400
 
     const tick = async () => {
-      // Gate cruzado com a captura: OpenCV.js/jscanify (window.cv) e o mlDetector
-      // sao singletons NAO reentrantes. Se `addPageFromCanvas` esta rodando
-      // detectBest, pula o tick para nao rodar duas inferencias concorrentes no
-      // mesmo WASM (evita corromper o heap / recorte errado silencioso).
+      // Gate cruzado com a captura: a inferencia da IA (worker ONNX) nao deve
+      // rodar concorrente consigo mesma. Se a captura esta detectando, ou o tick
+      // anterior ainda roda, pula este tick.
       if (stopped || busy || capturingRef.current) {
         return
       }
@@ -422,7 +388,7 @@ export function WebScannerDialog({
           return
         }
         ctx.drawImage(video, 0, 0, small.width, small.height)
-        const detected = await detectBest(small, { fallback: false })
+        const detected = await detectBest(small)
         if (stopped) {
           return
         }
@@ -451,7 +417,7 @@ export function WebScannerDialog({
       stopped = true
       window.clearInterval(interval)
     }
-  }, [screen, cameraReady, engineReady, mlDetector, detectBest])
+  }, [screen, cameraReady, mlDetector, detectBest])
 
   // Preview ao vivo do filtro na edicao (sobre a imagem inteira).
   useEffect(() => {
@@ -620,12 +586,12 @@ export function WebScannerDialog({
     setCapturing(true)
     try {
       // 1o passo (critico para memoria): normaliza a <=300 DPI ANTES de detectar/
-      // recortar. O OpenCV/extractPaper roda sobre a imagem pequena — nunca uma
-      // Mat de 50 MP no heap do WASM.
+      // recortar. A IA e o warp WebGL rodam sobre a imagem normalizada — nunca uma
+      // imagem de 50 MP.
       const work = downscaleCanvasToLongEdge(sourceCanvas)
-      const detected = await detectBest(work, { fallback: true })
+      const detected = await detectBest(work)
       const corners = detected ?? defaultCorners(work.width, work.height)
-      const rendered = renderCroppedPage(work, corners, filter, engineReady)
+      const rendered = renderCroppedPage(work, corners, filter)
 
       // Blobs (fora do heap de strings), nao dataUrl base64.
       const originalBlob = await canvasToJpegBlob(work)
@@ -761,12 +727,7 @@ export function WebScannerDialog({
     if (!editCanvas || !editCorners) {
       return
     }
-    const rendered = renderCroppedPage(
-      editCanvas,
-      editCorners,
-      filter,
-      engineReady,
-    )
+    const rendered = renderCroppedPage(editCanvas, editCorners, filter)
     // Preview transitorio de uma imagem so — dataUrl e aceitavel aqui.
     setEditCroppedUrl(rendered.canvas.toDataURL('image/jpeg', 0.85))
     releaseCanvas(rendered.canvas)
@@ -777,12 +738,7 @@ export function WebScannerDialog({
     if (!(editingId && editCanvas && editCorners)) {
       return
     }
-    const rendered = renderCroppedPage(
-      editCanvas,
-      editCorners,
-      filter,
-      engineReady,
-    )
+    const rendered = renderCroppedPage(editCanvas, editCorners, filter)
     const blob = await canvasToJpegBlob(rendered.canvas)
     releaseCanvas(rendered.canvas)
     const thumbUrl = URL.createObjectURL(blob)
@@ -939,8 +895,7 @@ export function WebScannerDialog({
               cameraFailed={cameraFailed}
               cameraReady={cameraReady}
               capturing={capturing}
-              engineStatus={engineStatus}
-              mlStatus={useMl ? mlStatus : null}
+              mlStatus={mlStatus}
               filter={filter}
               fit={fit}
               liveCorners={liveCorners}
@@ -1131,7 +1086,6 @@ type CameraScreenProps = {
   cameraFailed: boolean
   cameraReady: boolean
   capturing: boolean
-  engineStatus: string
   mlStatus: DocAlignerStatus | null
   filter: FilterMode
   fit: { left: number; top: number; width: number; height: number } | null
@@ -1153,7 +1107,6 @@ function CameraScreen({
   cameraFailed,
   cameraReady,
   capturing,
-  engineStatus,
   mlStatus,
   filter,
   fit,
@@ -1275,17 +1228,7 @@ function CameraScreen({
       ) : null}
       {mlStatus === 'error' ? (
         <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+8rem)] text-center text-[11px] text-amber-300/90">
-          IA indisponivel — usando deteccao padrao.
-        </p>
-      ) : null}
-      {engineStatus === 'loading' ? (
-        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6rem)] text-center text-[11px] text-white/60">
-          Carregando deteccao de bordas...
-        </p>
-      ) : null}
-      {engineStatus === 'error' ? (
-        <p className="absolute inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+6rem)] text-center text-[11px] text-amber-300/90">
-          Deteccao de bordas indisponivel — ajuste os cantos manualmente.
+          Deteccao automatica indisponivel — ajuste os cantos manualmente.
         </p>
       ) : null}
     </>

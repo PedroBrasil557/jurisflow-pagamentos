@@ -28,24 +28,32 @@ export const scanbotLicenseQuery = queryOptions({
 })
 
 // Chave efetiva no cliente: a salva no painel (via API) tem prioridade; sem ela,
-// usa o env de build. Vazia => Scanbot indisponivel (cai no jscanify).
+// usa o env de build. Vazia => Scanbot indisponivel (cai no scanner do navegador).
 export function resolveScanbotKey(apiKey: string | null | undefined): string {
   return (apiKey ?? '').trim() || envKey
 }
 
 // --- Servico de digitalizacao escolhido no painel ---
-export type ScannerProvider = 'scanbot' | 'web' | 'docaligner'
+// 'docaligner' = scanner do navegador com deteccao por IA (padrao). 'scanbot' =
+// SDK licenciado. O antigo 'web' (OpenCV/jscanify) foi removido.
+export type ScannerProvider = 'scanbot' | 'docaligner'
+
+// Normaliza o valor salvo: migra o legado 'web' (e qualquer valor desconhecido)
+// para 'docaligner'. So 'scanbot' permanece scanbot.
+function normalizeProvider(value: string | null | undefined): ScannerProvider {
+  return value === 'scanbot' ? 'scanbot' : 'docaligner'
+}
 
 async function fetchScannerProvider(): Promise<ScannerProvider> {
   try {
     const response = await apiClient.api.settings['scanner-provider'].$get()
     if (!response.ok) {
-      return 'web'
+      return 'docaligner'
     }
-    const data = (await response.json()) as { provider: ScannerProvider }
-    return data.provider
+    const data = (await response.json()) as { provider: string | null }
+    return normalizeProvider(data.provider)
   } catch {
-    return 'web'
+    return 'docaligner'
   }
 }
 
