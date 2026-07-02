@@ -21,16 +21,24 @@ export class JurisflowAppStack extends cdk.Stack {
 
     const { bucket: documentsBucket } = new Storage(this, 'Storage');
 
-    const { apiUrl } = new Api(this, 'Api', {
+    const api = new Api(this, 'Api', {
       databaseUrl,
       vpc,
       documentsBucket,
     });
+    const { apiUrl } = api;
 
-    new Worker(this, 'Worker', {
+    const worker = new Worker(this, 'Worker', {
       vpc,
       apiUrl,
     });
+    // Ordena o deploy: o serviço ECS do worker só é atualizado DEPOIS de o serviço
+    // da API estabilizar (novas tasks saudáveis). Como a migração (0031) roda no
+    // boot da API antes do health check passar, isso garante que o worker novo (C=5,
+    // que envia o claim_token) só sobe quando a API nova já tem a coluna e o fence.
+    // Sem isto, o CloudFormation poderia atualizar os dois em paralelo/ordem
+    // arbitraria e um worker concorrente bateria numa API velha sem fence.
+    worker.node.addDependency(api.service);
 
     // Worker da fila de ingestao (scan/import): processo dedicado, multi-replica,
     // que drena a fila duravel no Postgres (claim+lease, SKIP LOCKED). Substitui o
