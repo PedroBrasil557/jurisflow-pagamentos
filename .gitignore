@@ -14,3 +14,10 @@ agentdb.rvf.lock
 # enquanto o time não decide adotar o ruflo no projeto
 .claude/
 .mcp.json
+
+# ─── Dados reais com PII (LGPD) — nunca versionar ───
+# Planilhas da Caixa com CPF/nomes de mutuários (insumo do import de titulares)
+docs/lista_titular_contrato_caixa*.xlsx
+
+# Artefato gerado a partir do .md
+docs/fluxo-ingestao-pipeline.html
