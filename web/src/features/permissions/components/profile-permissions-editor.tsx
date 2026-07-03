@@ -6,6 +6,7 @@ import {
   FileText,
   Gavel,
   Layers,
+  UserCog,
   XCircle,
 } from 'lucide-react'
 import { Checkbox } from '#/components/ui/checkbox'
@@ -17,7 +18,8 @@ type PermissionItem = {
     | keyof ProfilePermissions['process']
     | keyof ProfilePermissions['sections']
     | keyof ProfilePermissions['titularCaixa']
-  section: 'process' | 'sections' | 'titularCaixa'
+    | keyof ProfilePermissions['cadastros']
+  section: 'process' | 'sections' | 'titularCaixa' | 'cadastros'
   label: string
   description?: string
 }
@@ -153,6 +155,29 @@ const permissionGroups: PermissionGroup[] = [
     ],
   },
   {
+    label: 'Cadastros',
+    icon: UserCog,
+    items: [
+      {
+        key: 'usuarios',
+        section: 'cadastros',
+        label: 'Gerenciar usuarios',
+        description: 'Criar, editar e resetar usuarios (nao administradores)',
+      },
+      {
+        key: 'conjuntos',
+        section: 'cadastros',
+        label: 'Gerenciar conjuntos habitacionais',
+      },
+      {
+        key: 'permissoes',
+        section: 'cadastros',
+        label: 'Gerenciar perfis de permissao',
+        description: 'Criar perfis e atribui-los a usuarios',
+      },
+    ],
+  },
+  {
     label: 'Secoes visiveis',
     icon: Eye,
     items: [
@@ -196,7 +221,7 @@ export function ProfilePermissionsEditor({
   disabled = false,
 }: ProfilePermissionsEditorProps) {
   function toggle(
-    section: 'process' | 'sections' | 'titularCaixa',
+    section: 'process' | 'sections' | 'titularCaixa' | 'cadastros',
     key: string,
     checked: boolean,
   ) {
@@ -235,9 +260,13 @@ export function ProfilePermissionsEditor({
                       ? value.sections[
                           item.key as keyof ProfilePermissions['sections']
                         ]
-                      : value.titularCaixa[
-                          item.key as keyof ProfilePermissions['titularCaixa']
-                        ]
+                      : item.section === 'titularCaixa'
+                        ? value.titularCaixa[
+                            item.key as keyof ProfilePermissions['titularCaixa']
+                          ]
+                        : value.cadastros[
+                            item.key as keyof ProfilePermissions['cadastros']
+                          ]
 
                 const id = `perm-${item.section}-${item.key}`
 

@@ -1,9 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
-import {
-  getAuthenticatedUser,
-  requireRole,
-} from '../../shared/middleware/auth-guard'
+import { getAuthenticatedUser } from '../../shared/middleware/auth-guard'
 import { handleServiceError } from '../../shared/middleware/error-handler'
 import type { AppBindings } from '../../shared/types/app'
 import {
@@ -22,6 +19,7 @@ import {
   updateProfile,
   updateUserHousingComplexes,
 } from './permissions.admin.service'
+import { requirePermission } from './permissions.middleware'
 import {
   assignProfilePayloadSchema,
   createProfilePayloadSchema,
@@ -42,7 +40,8 @@ const profileUsersQuerySchema = z.object({
 })
 
 export const permissionProfileAdminRoutes = new Hono<AppBindings>()
-  .use('*', requireRole('admin'))
+  // Flag cadastros.permissoes do perfil (master e admin com a flag passam).
+  .use('*', requirePermission('cadastros', 'permissoes'))
 
   // --- Perfis ---
 
@@ -119,7 +118,8 @@ export const permissionProfileAdminRoutes = new Hono<AppBindings>()
   )
 
 export const permissionUserAdminRoutes = new Hono<AppBindings>()
-  .use('*', requireRole('admin'))
+  // Flag cadastros.permissoes do perfil (master e admin com a flag passam).
+  .use('*', requirePermission('cadastros', 'permissoes'))
 
   // --- Perfil do usuário ---
 

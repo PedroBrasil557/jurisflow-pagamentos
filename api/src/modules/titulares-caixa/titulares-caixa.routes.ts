@@ -1,4 +1,3 @@
-import type { Context, Next } from 'hono'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { getAuthenticatedUser } from '../../shared/middleware/auth-guard'
@@ -10,8 +9,7 @@ import {
   paramsValidator,
   queryValidator,
 } from '../../shared/validation/validators'
-import { resolveUserPermissions } from '../permissions/permissions.service'
-import type { ProfilePermissions } from '../permissions/permissions.types'
+import { requirePermission } from '../permissions/permissions.middleware'
 import { importTitularesFromXlsx } from './titulares-caixa.import.service'
 import {
   exportTitularesQuerySchema,
@@ -38,30 +36,11 @@ const MULTIPART_OVERHEAD_BYTES = 1024 * 1024
 
 // Acesso liberado por permissao de perfil (grupo titularCaixa), nao por role
 // fixa: 'view' cobre lista/filtros/termos; export, import e reconsultar tem
-// flags proprias (dados sensiveis: CPF/PIS -> LGPD; import em massa). Sem
-// bypass de admin aqui: as flags ja chegam resolvidas (master = tudo true;
-// admin comum = do perfil atribuido).
-function requireTitularCaixa(action: keyof ProfilePermissions['titularCaixa']) {
-  return async (c: Context<AppBindings>, next: Next) => {
-    const user = c.get('user')
-    if (!user) {
-      return c.json({ message: 'Sessao invalida.' }, 401)
-    }
-    const perms = await resolveUserPermissions(user.id, user.role)
-    if (!perms.permissions.titularCaixa[action]) {
-      return c.json(
-        { message: 'Voce nao tem permissao para acessar este recurso.' },
-        403,
-      )
-    }
-    await next()
-  }
-}
-
+// flags proprias (dados sensiveis: CPF/PIS -> LGPD; import em massa).
 export const titularesCaixaRoutes = new Hono<AppBindings>()
   .get(
     '/',
-    requireTitularCaixa('view'),
+    requirePermission('titularCaixa', 'view'),
     queryValidator(listTitularesQuerySchema),
     async (c) => {
       try {
@@ -75,7 +54,7 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
   // Export Excel (.xlsx) respeitando os filtros atuais da tela.
   .get(
     '/export',
-    requireTitularCaixa('export'),
+    requirePermission('titularCaixa', 'export'),
     queryValidator(exportTitularesQuerySchema),
     async (c) => {
       try {
@@ -96,26 +75,34 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
     },
   )
   // Opcoes distintas de empreendimento para o filtro multiselect.
-  .get('/opcoes/empreendimento', requireTitularCaixa('view'), async (c) => {
-    try {
-      const result = await listEmpreendimentoOptions()
-      return c.json(result, 200)
-    } catch (error) {
-      return handleServiceError(c, error)
-    }
-  })
+  .get(
+    '/opcoes/empreendimento',
+    requirePermission('titularCaixa', 'view'),
+    async (c) => {
+      try {
+        const result = await listEmpreendimentoOptions()
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   // Opcoes distintas de logradouro para o filtro multiselect.
-  .get('/opcoes/logradouro', requireTitularCaixa('view'), async (c) => {
-    try {
-      const result = await listLogradouroOptions()
-      return c.json(result, 200)
-    } catch (error) {
-      return handleServiceError(c, error)
-    }
-  })
+  .get(
+    '/opcoes/logradouro',
+    requirePermission('titularCaixa', 'view'),
+    async (c) => {
+      try {
+        const result = await listLogradouroOptions()
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .post(
     '/import',
-    requireTitularCaixa('import'),
+    requirePermission('titularCaixa', 'import'),
     bodyLimit({
       maxSize: MAX_XLSX_BYTES + MULTIPART_OVERHEAD_BYTES,
       onError: (c) =>
@@ -151,7 +138,7 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
   )
   .post(
     '/reconsultar',
-    requireTitularCaixa('reconsultar'),
+    requirePermission('titularCaixa', 'reconsultar'),
     jsonValidator(reconsultarPayloadSchema),
     async (c) => {
       try {
@@ -165,7 +152,7 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
   )
   .get(
     '/:id/documentos/:docId',
-    requireTitularCaixa('view'),
+    requirePermission('titularCaixa', 'view'),
     paramsValidator(titularDocumentoParamsSchema),
     async (c) => {
       try {
@@ -183,7 +170,7 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
   // Preview inline (renderiza no navegador/iframe, sem forcar download).
   .get(
     '/:id/documentos/:docId/preview',
-    requireTitularCaixa('view'),
+    requirePermission('titularCaixa', 'view'),
     paramsValidator(titularDocumentoParamsSchema),
     async (c) => {
       try {
@@ -199,7 +186,7 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
   // CORS/redirect ao MinIO. Cookie-auth.
   .get(
     '/:id/documentos/:docId/conteudo',
-    requireTitularCaixa('view'),
+    requirePermission('titularCaixa', 'view'),
     paramsValidator(titularDocumentoParamsSchema),
     async (c) => {
       try {

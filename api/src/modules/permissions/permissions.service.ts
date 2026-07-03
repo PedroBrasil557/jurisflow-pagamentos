@@ -25,8 +25,8 @@ export async function resolveUserPermissions(
 ): Promise<ResolvedPermissions> {
   if (userRole === 'admin') {
     // MASTER (CPF em MASTER_ADMIN_CPFS) tem bypass total. Admin comum mantem os
-    // poderes administrativos, mas titulares Caixa vem do PERFIL atribuido —
-    // sem perfil (ou sem as flags), nao acessa.
+    // poderes administrativos, mas titulares Caixa e Cadastros vem do PERFIL
+    // atribuido — sem perfil (ou sem as flags), nao acessa.
     const [row] = await db
       .select({ username: user.username })
       .from(user)
@@ -54,9 +54,11 @@ export async function resolveUserPermissions(
         .where(eq(userProfile.userId, userId))
         .limit(1)
 
-      adminPermissions.titularCaixa = normalizeProfilePermissions(
+      const profilePermissions = normalizeProfilePermissions(
         assignment?.permissions,
-      ).titularCaixa
+      )
+      adminPermissions.titularCaixa = profilePermissions.titularCaixa
+      adminPermissions.cadastros = profilePermissions.cadastros
       profileId = assignment?.profileId ?? null
       profileName = assignment?.profileName ?? null
     }
@@ -162,6 +164,11 @@ function buildAdminPermissions(): ProfilePermissions {
       export: true,
       import: true,
       reconsultar: true,
+    },
+    cadastros: {
+      usuarios: true,
+      conjuntos: true,
+      permissoes: true,
     },
   }
 }

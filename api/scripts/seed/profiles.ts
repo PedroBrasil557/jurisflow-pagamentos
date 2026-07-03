@@ -47,6 +47,7 @@ export const customProfilesSeed: CustomProfileSeed[] = [
         batch: true,
       },
       titularCaixa: DEFAULT_USER_PERMISSIONS.titularCaixa,
+      cadastros: DEFAULT_USER_PERMISSIONS.cadastros,
     },
   },
   {
@@ -82,6 +83,7 @@ export const customProfilesSeed: CustomProfileSeed[] = [
         batch: true,
       },
       titularCaixa: DEFAULT_USER_PERMISSIONS.titularCaixa,
+      cadastros: DEFAULT_USER_PERMISSIONS.cadastros,
     },
   },
   {
@@ -124,6 +126,7 @@ export const customProfilesSeed: CustomProfileSeed[] = [
         import: false,
         reconsultar: false,
       },
+      cadastros: DEFAULT_USER_PERMISSIONS.cadastros,
     },
   },
 ]

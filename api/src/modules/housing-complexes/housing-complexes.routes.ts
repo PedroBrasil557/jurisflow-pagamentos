@@ -3,7 +3,6 @@ import { bodyLimit } from 'hono/body-limit'
 import {
   getAuthenticatedUser,
   requireAuth,
-  requireRole,
 } from '../../shared/middleware/auth-guard'
 import { handleServiceError } from '../../shared/middleware/error-handler'
 import type { AppBindings } from '../../shared/types/app'
@@ -12,6 +11,7 @@ import {
   paramsValidator,
   queryValidator,
 } from '../../shared/validation/validators'
+import { requirePermission } from '../permissions/permissions.middleware'
 import { syncProcessesForHousingComplex } from '../processes/processes.checklist.service'
 import {
   deleteHousingComplexFile,
@@ -45,7 +45,8 @@ const uploadDocumentBodyLimit = bodyLimit({
 })
 
 export const housingComplexAdminRoutes = new Hono<AppBindings>()
-  .use('*', requireRole('admin'))
+  // Flag cadastros.conjuntos do perfil (master e admin com a flag passam).
+  .use('*', requirePermission('cadastros', 'conjuntos'))
   .get('/', queryValidator(listHousingComplexesQuerySchema), async (c) => {
     try {
       const result = await listHousingComplexes(c.req.valid('query'))

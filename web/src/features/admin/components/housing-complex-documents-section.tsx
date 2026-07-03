@@ -149,7 +149,9 @@ export function HousingComplexDocumentsSection({
       </div>
 
       {isLoading ? (
-        <p className="text-sm text-muted-foreground">Carregando documentos...</p>
+        <p className="text-sm text-muted-foreground">
+          Carregando documentos...
+        </p>
       ) : (
         <div className="grid gap-2">
           {CONJUNTO_DOC_TYPES.map((type) => {

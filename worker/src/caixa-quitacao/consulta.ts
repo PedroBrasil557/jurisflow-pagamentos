@@ -22,10 +22,28 @@ const SELECTORS = {
   voltar: '#btnVoltar',
 } as const
 
+// Motivo LEGIVEL POR MAQUINA do desfecho (nao a mensagem humana). Preenchido nos
+// caminhos de erro reusando os MESMOS literais passados ao captureEvidence — a
+// telemetria e o breaker consomem isto sem string-matching da mensagem. Ausente
+// (undefined) nos desfechos de sucesso (quitado / nao_encontrado).
+export type ConsultaReason =
+  | 'cpf_invalido'
+  | 'pagina_inesperada'
+  | 'consultar_nao_habilitou'
+  | 'consultar_nao_clicavel'
+  | 'indisponivel'
+  | 'resultado_nao_carregou'
+  | 'estado_inesperado'
+  | 'emitir_nao_clicavel'
+  | 'download_nao_iniciou'
+  | 'download_falhou'
+  | 'declaracao_invalida'
+
 export type ConsultaQuitacaoOutcome = {
   result: ConsultaQuitacaoResult
   message: string
   pdf: { filename: string; bytes: Buffer } | null
+  reason?: ConsultaReason
 }
 
 // Le a mensagem do bloco "Resultado" (o container que envolve os botoes
@@ -136,6 +154,7 @@ export async function consultarQuitacao(
       result: 'erro',
       message: `CPF invalido para consulta (${digits.length} digito(s)).`,
       pdf: null,
+      reason: 'cpf_invalido',
     }
   }
 
@@ -158,6 +177,7 @@ export async function consultarQuitacao(
       message:
         'Pagina inesperada da Caixa (estrutura alterada ou em manutencao): campo CPF nao encontrado.',
       pdf: null,
+      reason: 'pagina_inesperada',
     }
   }
 
@@ -199,6 +219,7 @@ export async function consultarQuitacao(
       message:
         'Nao foi possivel acionar "Consultar" (pagina nao respondeu). Sera retentada.',
       pdf: null,
+      reason: 'consultar_nao_habilitou',
     }
   }
   // Botao ja esta enabled: o clique so falharia por instabilidade/overlay.
@@ -213,6 +234,7 @@ export async function consultarQuitacao(
       message:
         'Nao foi possivel acionar "Consultar" (pagina nao respondeu). Sera retentada.',
       pdf: null,
+      reason: 'consultar_nao_clicavel',
     }
   }
 
@@ -249,6 +271,7 @@ export async function consultarQuitacao(
       message:
         'Consulta indisponivel no site da Caixa no momento ("tente mais tarde"). Sera retentada.',
       pdf: null,
+      reason: 'indisponivel',
     }
   }
 
@@ -261,6 +284,7 @@ export async function consultarQuitacao(
       message:
         'O resultado da consulta nao carregou a tempo (site lento/instavel). Sera retentada.',
       pdf: null,
+      reason: 'resultado_nao_carregou',
     }
   }
 
@@ -287,6 +311,7 @@ export async function consultarQuitacao(
       message:
         'Resultado da consulta em estado inesperado (a estrutura da pagina pode ter mudado).',
       pdf: null,
+      reason: 'estado_inesperado',
     }
   }
 
@@ -313,6 +338,7 @@ export async function consultarQuitacao(
       result: 'erro',
       message: 'Nao foi possivel acionar "Emitir declaracao". Sera retentada.',
       pdf: null,
+      reason: 'emitir_nao_clicavel',
     }
   }
   const download = await downloadPromise
@@ -325,6 +351,7 @@ export async function consultarQuitacao(
       message:
         'A declaracao nao foi gerada (download nao iniciou). Sera retentada.',
       pdf: null,
+      reason: 'download_nao_iniciou',
     }
   }
 
@@ -336,6 +363,7 @@ export async function consultarQuitacao(
       result: 'erro',
       message: `Falha no download da declaracao (${failure}). Sera retentada.`,
       pdf: null,
+      reason: 'download_falhou',
     }
   }
 
@@ -350,6 +378,7 @@ export async function consultarQuitacao(
       message:
         'A declaracao baixada nao e um PDF valido (vazio/corrompido). Sera retentada.',
       pdf: null,
+      reason: 'declaracao_invalida',
     }
   }
 

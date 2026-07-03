@@ -84,3 +84,27 @@ test('jitter mantem o espacamento dentro de [min*(1-ratio), min*(1+ratio)]', asy
     )
   }
 })
+
+test('intervalo via PROVIDER e resolvido por acquire (o freio ajusta a taxa em tempo real)', async () => {
+  const { now, sleep } = fakeClock()
+  // O provider modela max(base, piso do freio) * fator: aqui variamos o valor
+  // entre os acquire para provar que cada chamada le o intervalo vigente.
+  let interval = 5000
+  const spacer = new GlobalSpacer({
+    minIntervalMs: () => interval,
+    now,
+    sleep,
+    random: () => 0.5, // jitter zero
+  })
+
+  const starts: number[] = []
+  await spacer.acquire()
+  starts.push(now()) // 1000; nextAllowedAt = 6000 (interval 5000 vigente)
+  interval = 2000 // freio "afrouxa"/desacelera muda o intervalo
+  await spacer.acquire()
+  starts.push(now()) // espera ate 6000 (governado pelo acquire anterior)
+  await spacer.acquire()
+  starts.push(now()) // agora o gap usa o novo intervalo (2000): 6000 -> 8000
+
+  assert.deepEqual(starts, [1000, 6000, 8000])
+})
