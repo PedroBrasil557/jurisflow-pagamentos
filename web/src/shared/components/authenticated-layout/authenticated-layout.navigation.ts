@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   UserPlus,
 } from 'lucide-react'
+import { canAccessCadastros } from '@/features/admin/lib/cadastros-access'
 import { canAccessDashboard } from '@/features/processes/lib/process-access'
 import { canViewTitularesCaixa } from '@/features/titulares-caixa/lib/titulares-access'
 import type { AuthenticatedNavigationItem } from './authenticated-layout.types'
@@ -36,7 +37,7 @@ export const authenticatedNavigationItems = [
     description: 'Area administrativa',
     to: '/cadastros',
     icon: UserPlus,
-    isVisible: ({ permissions }) => permissions.isAdmin,
+    isVisible: ({ permissions }) => canAccessCadastros(permissions),
   },
   {
     label: 'Seguranca',

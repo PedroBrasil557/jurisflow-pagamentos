@@ -40,6 +40,11 @@ export type ProfilePermissions = {
     import: boolean
     reconsultar: boolean
   }
+  cadastros: {
+    usuarios: boolean
+    conjuntos: boolean
+    permissoes: boolean
+  }
 }
 
 export type ResolvedPermissions = {

@@ -1,12 +1,14 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
+import { canAccessCadastros } from '@/features/admin/lib/cadastros-access'
 import { RegistersPage } from '@/features/admin/pages/registers-page'
 import { parseAdminUsersSearch } from '@/features/admin/schemas/admin-users-search.schema'
 
 export const Route = createFileRoute('/_protected/cadastros')({
   validateSearch: (search: Record<string, unknown>) =>
     parseAdminUsersSearch(search),
+  // Acesso por permissao de perfil (grupo cadastros) — qualquer aba liberada.
   beforeLoad: ({ context }) => {
-    if (!context.permissions.isAdmin) {
+    if (!canAccessCadastros(context.permissions)) {
       throw redirect({ to: '/' })
     }
   },

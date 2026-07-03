@@ -35,6 +35,11 @@ const profilePermissionsSchema = z.object({
     import: z.boolean(),
     reconsultar: z.boolean(),
   }),
+  cadastros: z.object({
+    usuarios: z.boolean(),
+    conjuntos: z.boolean(),
+    permissoes: z.boolean(),
+  }),
 })
 
 export const createProfilePayloadSchema = z.object({

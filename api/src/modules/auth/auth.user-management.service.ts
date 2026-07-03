@@ -299,6 +299,20 @@ export async function createPlatformUser(input: CreatePlatformUserInput) {
   }
 }
 
+// Role atual de um usuario (null se nao existir) — usado pelo guard
+// anti-escalada do cadastro de usuarios.
+export async function getPlatformUserRole(
+  userId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ role: userTable.role })
+    .from(userTable)
+    .where(eq(userTable.id, userId))
+    .limit(1)
+
+  return row?.role ?? null
+}
+
 export async function resetUserAccount(userId: string) {
   const authContext = await auth.$context
 

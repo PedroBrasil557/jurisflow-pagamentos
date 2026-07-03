@@ -33,6 +33,11 @@ export const DEFAULT_USER_PERMISSIONS: ProfilePermissions = {
     import: false,
     reconsultar: false,
   },
+  cadastros: {
+    usuarios: false,
+    conjuntos: false,
+    permissoes: false,
+  },
 }
 
 export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
@@ -67,5 +72,10 @@ export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
     export: false,
     import: false,
     reconsultar: false,
+  },
+  cadastros: {
+    usuarios: false,
+    conjuntos: false,
+    permissoes: false,
   },
 }

@@ -23,6 +23,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '#/components/ui/dropdown-menu'
+import {
+  canManageConjuntos,
+  canManagePermissoes,
+  canManageUsuarios,
+} from '@/features/admin/lib/cadastros-access'
 import { getUserRoleLabel } from '@/features/auth/auth.roles'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { DeleteProfileDialog } from '@/features/permissions/components/delete-profile-dialog'
@@ -181,9 +186,19 @@ export function RegistersPage({
   currentPage,
   currentSearch,
 }: RegistersPageProps) {
-  const { user } = useSession()
+  const { user, permissions } = useSession()
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<ActiveTab>('users')
+  // Cada aba segue a flag do grupo cadastros; a inicial e a primeira liberada.
+  const showUsuarios = canManageUsuarios(permissions)
+  const showConjuntos = canManageConjuntos(permissions)
+  const showPermissoes = canManagePermissoes(permissions)
+  const [activeTab, setActiveTab] = useState<ActiveTab>(
+    showUsuarios
+      ? 'users'
+      : showConjuntos
+        ? 'housing-complexes'
+        : 'permissions',
+  )
 
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
   const [resetTarget, setResetTarget] = useState<AdminUserListItem | null>(null)
@@ -212,29 +227,32 @@ export function RegistersPage({
   const debouncedProfileSearch = useDebouncedValue(profileSearch)
   const [profilePage, setProfilePage] = useState(1)
 
-  const usersQuery = useQuery(
-    adminUserListOptions({
+  const usersQuery = useQuery({
+    ...adminUserListOptions({
       limit: defaultAdminUsersPageLimit,
       page: currentPage,
       search: debouncedSearch,
     }),
-  )
+    enabled: showUsuarios,
+  })
 
-  const hcQuery = useQuery(
-    adminHousingComplexListOptions({
+  const hcQuery = useQuery({
+    ...adminHousingComplexListOptions({
       limit: defaultHousingComplexPageLimit,
       page: hcPage,
       search: debouncedHcSearch,
     }),
-  )
+    enabled: showConjuntos,
+  })
 
-  const profilesQuery = useQuery(
-    profileListOptions({
+  const profilesQuery = useQuery({
+    ...profileListOptions({
       limit: defaultProfilesPageLimit,
       page: profilePage,
       search: debouncedProfileSearch,
     }),
-  )
+    enabled: showPermissoes,
+  })
 
   const usersData = usersQuery.data
   const hcData = hcQuery.data
@@ -334,10 +352,12 @@ export function RegistersPage({
                 <Pencil className="size-4" />
                 Editar
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setPermissionsTarget(item)}>
-                <ShieldCheck className="size-4" />
-                Permissoes
-              </DropdownMenuItem>
+              {showPermissoes ? (
+                <DropdownMenuItem onClick={() => setPermissionsTarget(item)}>
+                  <ShieldCheck className="size-4" />
+                  Permissoes
+                </DropdownMenuItem>
+              ) : null}
               {item.id !== user.id ? (
                 <DropdownMenuItem onClick={() => setResetTarget(item)}>
                   <KeyRound className="size-4" />
@@ -349,7 +369,7 @@ export function RegistersPage({
         ),
       },
     ],
-    [user.id],
+    [user.id, showPermissoes],
   )
 
   const hcColumns = useMemo<readonly DataTableColumn<HousingComplexListItem>[]>(
@@ -493,24 +513,36 @@ export function RegistersPage({
 
       <SettingsLayout
         items={[
-          {
-            icon: Users,
-            isActive: activeTab === 'users',
-            label: 'Usuarios',
-            onClick: () => handleTabChange('users'),
-          },
-          {
-            icon: Building2,
-            isActive: activeTab === 'housing-complexes',
-            label: 'Conjuntos',
-            onClick: () => handleTabChange('housing-complexes'),
-          },
-          {
-            icon: ShieldCheck,
-            isActive: activeTab === 'permissions',
-            label: 'Permissoes',
-            onClick: () => handleTabChange('permissions'),
-          },
+          ...(showUsuarios
+            ? [
+                {
+                  icon: Users,
+                  isActive: activeTab === 'users',
+                  label: 'Usuarios',
+                  onClick: () => handleTabChange('users'),
+                },
+              ]
+            : []),
+          ...(showConjuntos
+            ? [
+                {
+                  icon: Building2,
+                  isActive: activeTab === 'housing-complexes',
+                  label: 'Conjuntos',
+                  onClick: () => handleTabChange('housing-complexes'),
+                },
+              ]
+            : []),
+          ...(showPermissoes
+            ? [
+                {
+                  icon: ShieldCheck,
+                  isActive: activeTab === 'permissions',
+                  label: 'Permissoes',
+                  onClick: () => handleTabChange('permissions'),
+                },
+              ]
+            : []),
         ]}
       >
         {activeTab === 'users' ? (
@@ -606,12 +638,14 @@ export function RegistersPage({
                                 <Pencil className="size-4" />
                                 Editar
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                onClick={() => setPermissionsTarget(item)}
-                              >
-                                <ShieldCheck className="size-4" />
-                                Permissoes
-                              </DropdownMenuItem>
+                              {showPermissoes ? (
+                                <DropdownMenuItem
+                                  onClick={() => setPermissionsTarget(item)}
+                                >
+                                  <ShieldCheck className="size-4" />
+                                  Permissoes
+                                </DropdownMenuItem>
+                              ) : null}
                               {item.id !== user.id ? (
                                 <DropdownMenuItem
                                   onClick={() => setResetTarget(item)}

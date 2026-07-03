@@ -59,6 +59,14 @@ export type ProfilePermissions = {
     /** Reenfileirar a consulta de quitação */
     reconsultar: boolean
   }
+  cadastros: {
+    /** Aba Usuários: listar, criar, editar e resetar usuários (não-admin) */
+    usuarios: boolean
+    /** Aba Conjuntos: gerenciar conjuntos habitacionais e seus documentos */
+    conjuntos: boolean
+    /** Aba Permissões: perfis de permissão e atribuição a usuários */
+    permissoes: boolean
+  }
 }
 
 export type ResolvedPermissions = {
