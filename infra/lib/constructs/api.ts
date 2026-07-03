@@ -142,6 +142,9 @@ export class Api extends Construct {
         S3_PROCESS_DOCUMENTS_BUCKET: documentsBucket.bucketName,
         SLACK_BOT_TOKEN: env.slackBotToken,
         INTERNAL_API_TOKEN: env.internalApiToken,
+        // Admin master (bypass total de permissoes). Demais admins recebem
+        // titulares Caixa via perfil de permissoes.
+        MASTER_ADMIN_CPFS: '00305852280',
       },
       logging: LogDriver.awsLogs({
         streamPrefix: getEnvName('jurisflow-api'),

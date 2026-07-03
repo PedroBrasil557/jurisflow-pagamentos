@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm'
+import { env } from '../../shared/config/env'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
+import { user } from '../auth/auth.schema'
 import {
   FALLBACK_PERMISSIONS,
   normalizeProfilePermissions,
@@ -22,13 +24,51 @@ export async function resolveUserPermissions(
   userRole: string,
 ): Promise<ResolvedPermissions> {
   if (userRole === 'admin') {
+    // MASTER (CPF em MASTER_ADMIN_CPFS) tem bypass total. Admin comum mantem os
+    // poderes administrativos, mas titulares Caixa vem do PERFIL atribuido —
+    // sem perfil (ou sem as flags), nao acessa.
+    const [row] = await db
+      .select({ username: user.username })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1)
+    const isMaster =
+      row?.username != null && env.masterAdminCpfs.includes(row.username)
+
+    const adminPermissions = buildAdminPermissions()
+    let profileId: string | null = null
+    let profileName: string | null = null
+
+    if (!isMaster) {
+      const [assignment] = await db
+        .select({
+          profileId: userProfile.profileId,
+          profileName: permissionProfile.name,
+          permissions: permissionProfile.permissions,
+        })
+        .from(userProfile)
+        .innerJoin(
+          permissionProfile,
+          eq(userProfile.profileId, permissionProfile.id),
+        )
+        .where(eq(userProfile.userId, userId))
+        .limit(1)
+
+      adminPermissions.titularCaixa = normalizeProfilePermissions(
+        assignment?.permissions,
+      ).titularCaixa
+      profileId = assignment?.profileId ?? null
+      profileName = assignment?.profileName ?? null
+    }
+
     return {
       isAdmin: true,
+      isMaster,
       processScope: 'all',
       allowedHousingComplexIds: [],
-      permissions: buildAdminPermissions(),
-      profileId: null,
-      profileName: null,
+      permissions: adminPermissions,
+      profileId,
+      profileName,
     }
   }
 
@@ -69,6 +109,7 @@ export async function resolveUserPermissions(
   if (!assignment) {
     return {
       isAdmin: false,
+      isMaster: false,
       processScope: 'own',
       allowedHousingComplexIds,
       permissions: FALLBACK_PERMISSIONS,
@@ -79,6 +120,7 @@ export async function resolveUserPermissions(
 
   return {
     isAdmin: false,
+    isMaster: false,
     processScope: assignment.processScope,
     allowedHousingComplexIds,
     permissions: normalizeProfilePermissions(assignment.permissions),
@@ -125,13 +167,13 @@ function buildAdminPermissions(): ProfilePermissions {
 }
 
 /**
- * Verifica uma permissão de titulares Caixa. Admins sempre passam.
+ * Verifica uma permissão de titulares Caixa. Sem bypass de admin comum: as
+ * flags já chegam resolvidas (master = tudo true; admin comum = do perfil).
  */
 export function assertTitularCaixaCan(
   perms: ResolvedPermissions,
   action: keyof ProfilePermissions['titularCaixa'],
 ): void {
-  if (perms.isAdmin) return
   if (!perms.permissions.titularCaixa[action]) {
     throw new ServiceError(
       403,

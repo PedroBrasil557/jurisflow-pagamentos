@@ -63,6 +63,11 @@ export type ProfilePermissions = {
 
 export type ResolvedPermissions = {
   isAdmin: boolean
+  /**
+   * Administrador MASTER (role admin + CPF em MASTER_ADMIN_CPFS): único com
+   * bypass total. Admins comuns recebem titulares Caixa via perfil.
+   */
+  isMaster: boolean
   processScope: ProcessScope
   /** IDs dos conjuntos habitacionais acessíveis (union: perfil + usuário individual) */
   allowedHousingComplexIds: string[]

@@ -38,7 +38,9 @@ const MULTIPART_OVERHEAD_BYTES = 1024 * 1024
 
 // Acesso liberado por permissao de perfil (grupo titularCaixa), nao por role
 // fixa: 'view' cobre lista/filtros/termos; export, import e reconsultar tem
-// flags proprias (dados sensiveis: CPF/PIS -> LGPD; import em massa).
+// flags proprias (dados sensiveis: CPF/PIS -> LGPD; import em massa). Sem
+// bypass de admin aqui: as flags ja chegam resolvidas (master = tudo true;
+// admin comum = do perfil atribuido).
 function requireTitularCaixa(action: keyof ProfilePermissions['titularCaixa']) {
   return async (c: Context<AppBindings>, next: Next) => {
     const user = c.get('user')
@@ -46,7 +48,7 @@ function requireTitularCaixa(action: keyof ProfilePermissions['titularCaixa']) {
       return c.json({ message: 'Sessao invalida.' }, 401)
     }
     const perms = await resolveUserPermissions(user.id, user.role)
-    if (!perms.isAdmin && !perms.permissions.titularCaixa[action]) {
+    if (!perms.permissions.titularCaixa[action]) {
       return c.json(
         { message: 'Voce nao tem permissao para acessar este recurso.' },
         403,
