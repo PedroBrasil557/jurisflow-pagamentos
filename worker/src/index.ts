@@ -2,7 +2,11 @@ import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BrowserHolder } from './browser.ts'
-import { consultarQuitacao } from './caixa-quitacao/consulta.ts'
+import {
+  type ConsultaQuitacaoOutcome,
+  consultarQuitacao,
+} from './caixa-quitacao/consulta.ts'
+import { type BreakerSignal, PortalBreaker } from './circuit-breaker.ts'
 import { GlobalSpacer } from './rate-limiter.ts'
 import {
   ClaimError,
@@ -21,6 +25,11 @@ import {
 // ociosas de render (~24s) sem elevar o pico de requisicoes. Requer processo UNICO
 // (o espacador e em memoria); o claim das duas filas ja e atomico (SKIP LOCKED) e
 // fenceado por token, entao N slots nunca reivindicam/sobrescrevem o mesmo job.
+//
+// Seguranca ao acelerar (degrau 5 = ~5.000/h): um FREIO automatico (PortalBreaker)
+// que SO DESACELERA governa a taxa em tempo real (desacelera/pausa/trava piso quando
+// o portal reclama); um SLOW-START rampa a concorrencia na partida para o breaker
+// acumular sinais antes de saturar; e cada consulta emite telemetria PII-safe.
 
 // Remove barra(s) finais: o API Gateway (HttpApi.url) vem com '/' no fim e a
 // concatenacao geraria '//api/...' -> 404 no Hono.
@@ -36,11 +45,19 @@ function envInt(name: string, fallback: number, min: number): number {
   return Number.isFinite(parsed) && parsed >= min ? parsed : fallback
 }
 const POLL_MS = envInt('POLL_MS', 5000, 1)
-// Espacamento global fixo entre inicios de consulta (freio educado ao portal).
+// Espacamento global BASE entre inicios de consulta (o "botao de taxa" / degrau).
+// O freio nunca acelera abaixo disto; so pode ficar mais lento (piso travado/slow).
 const MIN_INTERVAL_MS = envInt('CONSULTA_MIN_INTERVAL_MS', 5000, 0)
 // Slots concorrentes. Default 1 (comportamento single-flight seguro se nao setado);
 // prod/compose setam explicitamente. Kill-switch: voltar para 1 recua sem redeploy.
 const CONCURRENCY = envInt('CONSULTA_CONCURRENCY', 1, 1)
+// Rampa de partida: sobe a concorrencia de 0 -> CONCURRENCY ao longo deste tempo,
+// para o breaker acumular ~10 amostras antes de saturar (0 desliga = abre tudo ja).
+const SLOW_START_MS = envInt('SLOW_START_MS', 0, 0)
+// Freio de seguranca (default ligado; '0' desliga — so debug, ligado e mais seguro).
+const BREAKER_ENABLED = (process.env.BREAKER_ENABLED ?? '1') !== '0'
+// Bloqueio de recursos nao-essenciais por consulta (imagens/fontes/analytics).
+const BLOCK_RESOURCES = (process.env.BLOCK_RESOURCES ?? '0') === '1'
 // Backoff maior ao detectar erro de CONFIGURACAO (404/401): nao adianta martelar a
 // cada POLL_MS uma URL/rota/token errados.
 const CONFIG_ERROR_BACKOFF_MS = 60_000
@@ -63,6 +80,22 @@ function touchHeartbeat(): void {
 
 // Estado compartilhado pelos slots (single-thread; sem corrida real).
 type SharedState = { running: boolean; connectedLogged: boolean }
+
+// Mapeia o desfecho de uma consulta ao sinal que o freio consome. 'cpf_invalido'
+// e nossa validacao local (nunca tocou o portal) -> nao conta. 'pagina_inesperada'
+// e o sentinela (captcha/manutencao). Qualquer outro 'erro' e estresse do portal.
+function breakerSignal(outcome: ConsultaQuitacaoOutcome): BreakerSignal | null {
+  if (outcome.result === 'quitado' || outcome.result === 'nao_encontrado') {
+    return 'ok'
+  }
+  if (outcome.reason === 'cpf_invalido') {
+    return null
+  }
+  if (outcome.reason === 'pagina_inesperada') {
+    return 'sentinel'
+  }
+  return 'stress'
+}
 
 // Reivindica de QUALQUER fila, em ordem rotativa (round-robin) para nenhuma faminta.
 // Retorna o 1o job encontrado. So propaga erro se TODAS as fontes falharem sem job
@@ -99,14 +132,23 @@ async function claimAny(
   return null
 }
 
+// Contexto de pacing/telemetria passado aos slots.
+type Pacing = {
+  spacer: GlobalSpacer
+  breaker: PortalBreaker
+  // Intervalo efetivo AGORA (base, piso travado e fator do freio) — so p/ telemetria.
+  currentIntervalMs: () => number
+}
+
 // Consulta os CPFs do job em sequencia, parando no 1o 'quitado' (short-circuit) —
 // preserva a economia de nao consultar o 2o CPF quando o 1o ja quitou. Reporta o
-// desfecho por CPF pela fonte de origem. Cada consulta passa pelo espacador global.
+// desfecho por CPF pela fonte de origem. Cada consulta passa pelo espacador global,
+// alimenta o freio e emite uma linha de telemetria PII-safe.
 async function processJob(
   id: number,
   job: ClaimedJob,
   holder: BrowserHolder,
-  spacer: GlobalSpacer,
+  pacing: Pacing,
 ): Promise<void> {
   console.log(
     `[worker#${id}] consultando ${job.label} (${job.cpfs.length} CPF(s))`,
@@ -115,17 +157,38 @@ async function processJob(
   let pdf: ConsultaPdf = null
   try {
     for (const cpf of job.cpfs) {
-      // Pacing GLOBAL: >= MIN_INTERVAL desde o inicio de QUALQUER consulta anterior
+      // Pacing GLOBAL: >= intervalo desde o inicio de QUALQUER consulta anterior
       // (entre CPFs do mesmo job e entre slots concorrentes).
-      await spacer.acquire()
+      await pacing.spacer.acquire()
+      const intervalMs = pacing.currentIntervalMs()
+      const startedAt = Date.now()
       const outcome = await holder.withContext((page) =>
         consultarQuitacao(page, cpf),
       )
+      const durationMs = Date.now() - startedAt
       consultas.push({
         cpf,
         result: outcome.result,
         message: outcome.message,
       })
+      // Telemetria PII-safe (NUNCA o CPF): insumo de L (durationMs), taxa de erro
+      // (result/reason) e mix p/ os go/no-go da rampa via Logs Insights.
+      console.log(
+        `[telemetria] ${JSON.stringify({
+          ts: new Date().toISOString(),
+          source: job.source,
+          result: outcome.result,
+          reason: outcome.reason ?? null,
+          durationMs,
+          intervalMs: Math.round(intervalMs),
+        })}`,
+      )
+      if (BREAKER_ENABLED) {
+        const signal = breakerSignal(outcome)
+        if (signal) {
+          pacing.breaker.record(signal)
+        }
+      }
       // quitado -> emitiu para este CPF: guarda o pdf e PARA (short-circuit).
       // erro -> transitorio: para e re-tenta o job depois (backoff na fila).
       // nao_encontrado -> tenta o proximo CPF (se houver).
@@ -165,11 +228,22 @@ async function runSlot(
   id: number,
   sources: Source[],
   holder: BrowserHolder,
-  spacer: GlobalSpacer,
+  pacing: Pacing,
   rr: { i: number },
   state: SharedState,
 ): Promise<void> {
   while (state.running) {
+    // Gate de pausa do freio: ANTES do claim (nunca com job em maos — pausar
+    // segurando um job estouraria o lease de 600s e permitiria re-claim duplicado).
+    if (BREAKER_ENABLED) {
+      const until = pacing.breaker.pausedUntilMs()
+      const now = Date.now()
+      if (until > now) {
+        await sleep(Math.min(POLL_MS, until - now))
+        continue
+      }
+    }
+
     let job: ClaimedJob | null = null
     try {
       job = await claimAny(sources, rr)
@@ -198,7 +272,7 @@ async function runSlot(
       continue
     }
 
-    await processJob(id, job, holder, spacer)
+    await processJob(id, job, holder, pacing)
   }
 }
 
@@ -208,8 +282,21 @@ async function main(): Promise<void> {
     createProcessosSource(cfg),
     createTitularesSource(cfg),
   ]
-  const holder = new BrowserHolder()
-  const spacer = new GlobalSpacer({ minIntervalMs: MIN_INTERVAL_MS })
+  const holder = new BrowserHolder({ blockResources: BLOCK_RESOURCES })
+  const breaker = new PortalBreaker()
+  // Intervalo efetivo = max(base, piso travado do freio) * fator do freio. O freio
+  // SO desacelera: max(...) garante que nunca fica abaixo do BASE configurado.
+  const currentIntervalMs = (): number => {
+    if (!BREAKER_ENABLED) {
+      return MIN_INTERVAL_MS
+    }
+    return (
+      Math.max(MIN_INTERVAL_MS, breaker.floorIntervalMs()) *
+      breaker.intervalFactor()
+    )
+  }
+  const spacer = new GlobalSpacer({ minIntervalMs: currentIntervalMs })
+  const pacing: Pacing = { spacer, breaker, currentIntervalMs }
   const state: SharedState = { running: true, connectedLogged: false }
   const rr = { i: 0 }
 
@@ -226,13 +313,26 @@ async function main(): Promise<void> {
   heartbeat.unref()
 
   console.log(
-    `[worker] iniciado. API=${API_URL} poll=${POLL_MS}ms interval=${MIN_INTERVAL_MS}ms concurrency=${CONCURRENCY}`,
+    `[worker] iniciado. API=${API_URL} poll=${POLL_MS}ms base_interval=${MIN_INTERVAL_MS}ms concurrency=${CONCURRENCY} slow_start=${SLOW_START_MS}ms breaker=${BREAKER_ENABLED} block_resources=${BLOCK_RESOURCES}`,
   )
 
   // Pool: N slots concorrentes drenando as duas filas sob um espacador global.
-  const slots = Array.from({ length: CONCURRENCY }, (_, i) =>
-    runSlot(i + 1, sources, holder, spacer, rr, state),
-  )
+  // SLOW-START: cria os slots escalonados (0 -> N ao longo de SLOW_START_MS) para
+  // o freio acumular sinais durante a subida e poder frear/pausar antes de saturar.
+  const stepMs =
+    SLOW_START_MS > 0 && CONCURRENCY > 1
+      ? Math.floor(SLOW_START_MS / CONCURRENCY)
+      : 0
+  const slots: Promise<void>[] = []
+  for (let i = 0; i < CONCURRENCY; i++) {
+    if (!state.running) {
+      break
+    }
+    slots.push(runSlot(i + 1, sources, holder, pacing, rr, state))
+    if (stepMs > 0 && i < CONCURRENCY - 1) {
+      await sleep(stepMs)
+    }
+  }
   // Shutdown gracioso: cada slot encerra apos terminar o job em voo.
   await Promise.all(slots)
 

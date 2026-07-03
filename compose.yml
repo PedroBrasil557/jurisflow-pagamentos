@@ -155,13 +155,20 @@ services:
       API_URL: "http://api:3556"
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
       POLL_MS: "5000"
-      # Espacamento global entre inicios de consulta ao portal da Caixa (freio
-      # educado). A concorrencia (abaixo) so preenche as janelas ociosas de render;
-      # a taxa de requisicoes continua governada por este intervalo.
+      # Espacamento global BASE entre inicios de consulta ao portal da Caixa (freio
+      # educado). O freio (breaker) so DESACELERA a partir daqui. Dev conservador.
+      # NOTA: degrau 5 (720ms/55 abas) SATUROU o Docker Desktop local — 55 contextos
+      # Chromium sao para o Fargate 4vCPU/8GB, nao para dev. Local: use ate ~10-15.
       CONSULTA_MIN_INTERVAL_MS: "5000"
-      # Slots concorrentes. Com L~24s de render e S=5s, ~5 slots saturam o freio
-      # (~720/h). Kill-switch de rollback sem redeploy: baixar para "1".
-      CONSULTA_CONCURRENCY: "5"
+      # Slots concorrentes. Dev baixo; prod (CDK) usa 55 no degrau 5.
+      CONSULTA_CONCURRENCY: "3"
+      # Rampa de partida (0 -> N). Dev curto so p/ exercitar o caminho.
+      SLOW_START_MS: "3000"
+      # Freio de seguranca (so desacelera). Manter "1".
+      BREAKER_ENABLED: "1"
+      # Bloqueio de recursos ligado em dev p/ exercitar o ctx.route e validar que o
+      # fluxo quitado->PDF continua integro com imagens/fontes/analytics abortados.
+      BLOCK_RESOURCES: "1"
     volumes:
       - ./worker:/workspace/worker
       - worker_node_modules:/workspace/worker/node_modules
