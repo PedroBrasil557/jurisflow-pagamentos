@@ -15,11 +15,16 @@ export function ScanProcessAction() {
   const scanMutation = useCreateProcessViaScan()
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
 
-  async function handleScanComplete(file: File, scanSessionId: string | null) {
+  async function handleScanComplete(
+    file: File,
+    scanSessionId: string | null,
+    pageLongEdgesPx?: number[],
+  ) {
     setUploadProgress(0)
     try {
       await scanMutation.mutateAsync({
         pdf: file,
+        pageLongEdgesPx,
         onProgress: (fraction) => setUploadProgress(fraction),
       })
       // Upload confirmado: agora e seguro liberar a sessao duravel do IndexedDB.
