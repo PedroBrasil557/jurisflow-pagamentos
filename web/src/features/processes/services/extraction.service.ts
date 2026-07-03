@@ -64,9 +64,6 @@ function putToS3WithProgress(
 export async function createProcessViaScanRequest(
   pdf: Blob,
   onProgress?: (fraction: number) => void,
-  // Telemetria de nitidez: lado longo (px) de cada pagina capturada. A API so
-  // loga (scan.complete) — permite medir a qualidade da captura em prod.
-  pageLongEdgesPx?: number[],
 ): Promise<CreateProcessViaScanResponse> {
   // 1) presign
   const presignRes = await presignScanRoute.$post({
@@ -100,7 +97,7 @@ export async function createProcessViaScanRequest(
 
   // 3) complete -> cria o rascunho, registra no lote e dispara a ingestao.
   const completeRes = await completeScanRoute.$post({
-    json: { uploadId, objectKey, pageLongEdgesPx },
+    json: { uploadId, objectKey },
   })
   if (!completeRes.ok) {
     throw new Error(

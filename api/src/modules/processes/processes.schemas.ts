@@ -470,10 +470,4 @@ export const completeScanBodySchema = z.object({
   // cliente (reduz superficie de colisao/probe).
   uploadId: z.string().uuid(),
   objectKey: z.string().min(1).max(1024),
-  // Telemetria de nitidez da captura (lado longo em px por pagina). Opcional
-  // (clientes antigos/Scanbot nao enviam); apenas logada — nao afeta o fluxo.
-  pageLongEdgesPx: z
-    .array(z.number().int().positive().max(20_000))
-    .max(50)
-    .optional(),
 })
