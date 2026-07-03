@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import type { LucideIcon } from 'lucide-react'
 import {
   CheckCircle,
   Clock,
@@ -9,12 +10,12 @@ import {
   SearchX,
   Users,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
 import { Card, CardContent } from '#/components/ui/card'
 import { Skeleton } from '#/components/ui/skeleton'
 import { QueryError } from '@/shared/components/query-error'
 import { titularCaixaStatsOptions } from '../../services/dashboard.queries'
 import type { TitularCaixaStats } from '../../services/dashboard.service'
+import { TitularesPorLocalSection } from './titulares-por-local-section'
 
 type KpiCard = {
   title: string
@@ -127,7 +128,7 @@ function buildCards(data: TitularCaixaStats): {
   }
 }
 
-export function TitularCaixaTab() {
+function TitularCaixaKpiSection() {
   const { data, isLoading, isError, refetch } = useQuery(
     titularCaixaStatsOptions(),
   )
@@ -165,6 +166,15 @@ export function TitularCaixaTab() {
         <h2 className="text-sm font-medium text-muted-foreground">Averbacao</h2>
         <KpiGrid cards={cards.averbacao} />
       </div>
+    </div>
+  )
+}
+
+export function TitularCaixaTab() {
+  return (
+    <div className="grid gap-6">
+      <TitularCaixaKpiSection />
+      <TitularesPorLocalSection />
     </div>
   )
 }

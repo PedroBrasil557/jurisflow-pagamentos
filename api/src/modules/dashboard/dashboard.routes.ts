@@ -16,7 +16,10 @@ import {
 import { getProductivityStats } from './dashboard.productivity.service'
 import { getDashboardStats } from './dashboard.service'
 import { getStageTimingStats } from './dashboard.stage-timings.service'
-import { getTitularCaixaStats } from './dashboard.titular-caixa.service'
+import {
+  getTitularCaixaStats,
+  getTitularCaixaStatsPorLocal,
+} from './dashboard.titular-caixa.service'
 
 const periodQuerySchema = z.object({
   period: z.enum(['7d', '30d', '90d']).default('30d'),
@@ -124,6 +127,23 @@ export const dashboardRoutes = new Hono<AppBindings>()
       assertTitularCaixaCan(perms, 'view')
 
       const stats = await getTitularCaixaStats()
+      return c.json(stats, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get('/titular-caixa-stats-por-local', async (c) => {
+    try {
+      const currentUser = getAuthenticatedUser(c)
+      const perms = await resolveUserPermissions(
+        currentUser.id,
+        currentUser.role,
+      )
+
+      // Mesma permissao da tela de titulares (grupo titularCaixa), nao role fixa.
+      assertTitularCaixaCan(perms, 'view')
+
+      const stats = await getTitularCaixaStatsPorLocal()
       return c.json(stats, 200)
     } catch (error) {
       return handleServiceError(c, error)
