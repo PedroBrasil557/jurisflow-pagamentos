@@ -110,10 +110,11 @@ function fullFrameCorners(width: number, height: number): CornerPoints {
 }
 
 // No iOS (todos os browsers usam WebKit, Chrome incluso) nao existe
-// ImageCapture.takePhoto() e o quadro do getUserMedia sai com resolucao/foco de
-// video (~1080p). A camera nativa (input capture) entrega o still real do sensor
-// (12-48 MP) — por isso, no iOS, o PROPRIO shutter abre a camera nativa e a tela
-// de captura vira um hub (contador + miniatura), sem viewfinder ao vivo.
+// ImageCapture.takePhoto(): o shutter captura o quadro do video (a UX de
+// viewfinder com borda ao vivo vence — sair para a camera do sistema a cada
+// pagina foi rejeitado em uso real). A camera nativa (input capture, still de
+// 12-48 MP) fica como botao SECUNDARIO "Alta resolucao" na tela de captura,
+// para documentos que exigirem mais nitidez que o video 4K entrega.
 function isLikelyIOS(): boolean {
   if (typeof navigator === 'undefined') {
     return false
@@ -325,10 +326,8 @@ export function WebScannerDialog({
 
   // Adquire a camera na maior resolucao suportada pelo dispositivo. Para o stream
   // ao sair da tela de captura (revisao/edicao) para nao manter a camera ligada.
-  // No iOS nao ha viewfinder ao vivo (a captura e pela camera nativa) — nem abre
-  // o stream: economiza bateria e evita o prompt de permissao da camera web.
   useEffect(() => {
-    if (!open || screen !== 'camera' || cameraFailed || preferNativeCapture) {
+    if (!open || screen !== 'camera' || cameraFailed) {
       return
     }
 
@@ -383,7 +382,7 @@ export function WebScannerDialog({
       setVideoDim(null)
       setLiveCorners(null)
     }
-  }, [open, screen, cameraFailed, preferNativeCapture, stopStream])
+  }, [open, screen, cameraFailed, stopStream])
 
   // Reanexa o stream ao elemento de video ao voltar para a camera.
   useEffect(() => {
@@ -1208,8 +1207,10 @@ type CameraScreenProps = {
   videoDim: { w: number; h: number } | null
   videoRef: React.RefObject<HTMLVideoElement | null>
   onVideoMeta: (w: number, h: number) => void
-  // iOS: sem viewfinder ao vivo — o shutter abre a camera nativa (still do
-  // sensor) e esta tela vira o hub do loop de captura (contador + miniatura).
+  // iOS (WebKit, sem ImageCapture): mostra o botao secundario "Alta resolucao"
+  // sobre o viewfinder — abre a camera nativa (still do sensor) e volta para
+  // esta tela. O shutter principal continua no quadro do video (UX de borda ao
+  // vivo vence; sair do app a cada pagina foi rejeitado em uso real).
   nativeMode: boolean
 }
 
@@ -1241,19 +1242,7 @@ function CameraScreen({
       </div>
 
       <div className="relative flex-1 overflow-hidden" ref={boxRef}>
-        {nativeMode ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center">
-            <Camera className="size-12 text-white/50" />
-            <p className="text-sm text-white/80">
-              Toque no botao para fotografar com a camera do aparelho em alta
-              resolucao.
-            </p>
-            <p className="text-xs text-white/50">
-              Cada foto volta para esta tela — capture todas as paginas e revise
-              no final.
-            </p>
-          </div>
-        ) : cameraFailed ? (
+        {cameraFailed ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
             <p className="text-sm text-white/80">
               Nao foi possivel acessar a camera. Use a camera do sistema para
@@ -1297,6 +1286,17 @@ function CameraScreen({
                 Iniciando camera...
               </div>
             ) : null}
+            {nativeMode ? (
+              <button
+                className="absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-xs text-white/90 backdrop-blur-sm disabled:opacity-40"
+                disabled={capturing}
+                onClick={onOpenNative}
+                type="button"
+              >
+                <Camera className="size-3.5" />
+                Alta resolucao
+              </button>
+            ) : null}
           </>
         )}
       </div>
@@ -1314,8 +1314,8 @@ function CameraScreen({
         <button
           aria-label="Capturar"
           className="flex size-18 items-center justify-center rounded-full ring-4 ring-white/80 disabled:opacity-40"
-          disabled={nativeMode ? capturing : !cameraReady || capturing}
-          onClick={nativeMode ? onOpenNative : onShutter}
+          disabled={!cameraReady || capturing}
+          onClick={onShutter}
           type="button"
         >
           <span className="size-15 rounded-full bg-white" />
