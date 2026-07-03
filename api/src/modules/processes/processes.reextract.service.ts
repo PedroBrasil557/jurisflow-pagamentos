@@ -11,14 +11,18 @@ import {
   processDocumentType,
 } from './processes.schema'
 
-// Documentos cujo CONTEUDO alimenta a derivacao (ownerType / conjunto / quitacao):
-// termos da Caixa, declaracao de quitacao e procuracao. Anexar/atualizar um desses
-// FORA de um lote (upload manual ou anexo de sistema/RPA) dispara a RE-EXTRACAO por
+// Documentos-FONTE cujo CONTEUDO alimenta a derivacao (ownerType / conjunto):
+// termo da Caixa (termoCompradores) e procuracao (endereco/outorgantes). Anexar/atualizar
+// um desses FORA de um lote (upload manual ou anexo de sistema) dispara a RE-EXTRACAO por
 // papel — UMA chamada de IA que ja extrai todos os papeis — + reconciliacao. Isto
 // substitui as antigas analises detached caixa-owner e procuracao-conjunto.
+//
+// declaracao_quitacao NAO entra: e um OUTPUT do RPA (nao um documento-fonte). Nao tem
+// tarefa de extracao no prompt (re-extrai-la nao produz papel e pode ser misclassificada
+// como termo -> co-comprador fantasma). Seu unico efeito na derivacao e preencher o slot
+// do checklist -> readiness/status, ja reconciliado por attachSystemChecklistFile.
 const REEXTRACT_DOC_KEYS = [
   'termo_entrega_recebimento_imovel',
-  'declaracao_quitacao',
   'procuracao_advogado',
 ] as const
 

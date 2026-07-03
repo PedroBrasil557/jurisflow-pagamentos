@@ -556,9 +556,11 @@ async function applyExtractedFieldsToDraft(
     const isEmpty = currentValue == null || currentValue === ''
     if (!isEmpty) continue
 
-    update[column] = cpfColumns.has(column)
-      ? normalizeCpf(field.value)
-      : field.value
+    // Postgres `text` rejeita o byte NUL — o UNICO vetor de falha deterministica
+    // num UPDATE de texto. Removido para que este passo, agora FATAL, nunca
+    // envenene o job por dado de OCR sujo (NUL e raro, mas possivel).
+    const safe = field.value.replace(/\u0000/g, '')
+    update[column] = cpfColumns.has(column) ? normalizeCpf(safe) : safe
   }
 
   if (Object.keys(update).length > 0) {
@@ -599,17 +601,14 @@ async function runIngestionWork(input: {
   const startedAt = Date.now()
   const { fields, documents, meta } = await extractDocumentsFromFiles([file])
 
-  // Best-effort: aplicar campos extraidos nao pode derrubar o anexo dos docs.
-  let hasIdentity = false
-  try {
-    const applied = await applyExtractedFieldsToDraft(input.processId, fields)
-    hasIdentity = applied.hasIdentity
-  } catch (error) {
-    console.error('digitalizacao: falha ao aplicar campos no rascunho', {
-      processId: input.processId,
-      error: String(error),
-    })
-  }
+  // FATAL (nao best-effort). Roda ANTES do anexo (importDocumentBundle), entao uma
+  // falha aqui re-executa o job INTEIRO do zero pela fila (nada foi anexado ainda —
+  // retry limpo, sem estado parcial) em vez de deixar o processo derivar com
+  // identidade vazia (ownerType undetermined, fila de quitacao vazia). A entrada e
+  // sanitizada (sem NUL) e validada (data/CPF/CEP), e o destino e so coluna `text`
+  // vazia: a falha so pode ser TRANSITORIA (banco) -> o retry da fila resolve, e um
+  // dead-letter raro e VISIVEL/alertavel (melhor que drift silencioso).
+  const { hasIdentity } = await applyExtractedFieldsToDraft(input.processId, fields)
 
   const result = await importDocumentBundle({
     processId: input.processId,
