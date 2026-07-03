@@ -10,6 +10,7 @@ import type { AppBindings } from '../../shared/types/app'
 import { queryValidator } from '../../shared/validation/validators'
 import {
   assertCanAccessDashboard,
+  assertTitularCaixaCan,
   resolveUserPermissions,
 } from '../permissions/permissions.service'
 import { getProductivityStats } from './dashboard.productivity.service'
@@ -119,12 +120,8 @@ export const dashboardRoutes = new Hono<AppBindings>()
         currentUser.role,
       )
 
-      if (!perms.isAdmin) {
-        throw new ServiceError(
-          403,
-          'Voce nao tem permissao para acessar os indicadores de Titular Caixa.',
-        )
-      }
+      // Mesma permissao da tela de titulares (grupo titularCaixa), nao role fixa.
+      assertTitularCaixaCan(perms, 'view')
 
       const stats = await getTitularCaixaStats()
       return c.json(stats, 200)

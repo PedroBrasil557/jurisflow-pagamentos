@@ -46,6 +46,7 @@ export const customProfilesSeed: CustomProfileSeed[] = [
         history: true,
         batch: true,
       },
+      titularCaixa: DEFAULT_USER_PERMISSIONS.titularCaixa,
     },
   },
   {
@@ -80,6 +81,7 @@ export const customProfilesSeed: CustomProfileSeed[] = [
         history: true,
         batch: true,
       },
+      titularCaixa: DEFAULT_USER_PERMISSIONS.titularCaixa,
     },
   },
   {
@@ -114,6 +116,13 @@ export const customProfilesSeed: CustomProfileSeed[] = [
         legalData: true,
         history: true,
         batch: true,
+      },
+      // Somente leitura tambem em titulares Caixa: ve a tela, sem acoes.
+      titularCaixa: {
+        view: true,
+        export: false,
+        import: false,
+        reconsultar: false,
       },
     },
   },

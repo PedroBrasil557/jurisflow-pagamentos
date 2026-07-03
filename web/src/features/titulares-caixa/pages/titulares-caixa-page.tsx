@@ -18,17 +18,23 @@ import { Card, CardContent } from '#/components/ui/card'
 import { Checkbox } from '#/components/ui/checkbox'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
+import { useSession } from '@/features/auth/hooks/use-session'
 import { AppDialog, DialogFooter } from '@/shared/components/app-dialog'
 import { PageHeader } from '@/shared/components/page-header'
 import { PdfViewer } from '@/shared/components/pdf-viewer/pdf-viewer'
-import { SearchableMultiSelect } from '@/shared/components/searchable-multi-select'
 import { SearchInput } from '@/shared/components/search-input'
+import { SearchableMultiSelect } from '@/shared/components/searchable-multi-select'
 import { StatusBadge } from '@/shared/components/status-badge'
 import {
   DataTable,
   type DataTableColumn,
 } from '@/shared/components/ui/data-table'
 import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
+import {
+  canExportTitulares,
+  canImportTitulares,
+  canReconsultarTitulares,
+} from '../lib/titulares-access'
 import type { TitularesSearch } from '../schemas/titulares-caixa-search.schema'
 import {
   useImportTitulares,
@@ -110,6 +116,10 @@ export function TitularesCaixaPage({
   currentAssinaturaTo,
 }: TitularesCaixaPageProps) {
   const navigate = useNavigate()
+  const { permissions } = useSession()
+  const allowExport = canExportTitulares(permissions)
+  const allowImport = canImportTitulares(permissions)
+  const allowReconsultar = canReconsultarTitulares(permissions)
   const [search, setSearch] = useState(currentSearch)
   const debouncedSearch = useDebouncedValue(search)
 
@@ -164,7 +174,9 @@ export function TitularesCaixaPage({
         ? { quitacaoStatuses: currentQuitacaoStatuses }
         : {}),
       ...(currentAverbacoes.length ? { averbacoes: currentAverbacoes } : {}),
-      ...(currentAssinaturaFrom ? { assinaturaFrom: currentAssinaturaFrom } : {}),
+      ...(currentAssinaturaFrom
+        ? { assinaturaFrom: currentAssinaturaFrom }
+        : {}),
       ...(currentAssinaturaTo ? { assinaturaTo: currentAssinaturaTo } : {}),
       ...overrides,
     }
@@ -364,15 +376,17 @@ export function TitularesCaixaPage({
                 </Button>
               </>
             ) : null}
-            <Button
-              disabled={reconsultarMutation.isPending}
-              onClick={() => handleReconsultar(t.id)}
-              size="sm"
-              variant="ghost"
-            >
-              <RefreshCw className="size-4" />
-              Reconsultar
-            </Button>
+            {allowReconsultar ? (
+              <Button
+                disabled={reconsultarMutation.isPending}
+                onClick={() => handleReconsultar(t.id)}
+                size="sm"
+                variant="ghost"
+              >
+                <RefreshCw className="size-4" />
+                Reconsultar
+              </Button>
+            ) : null}
           </div>
         )
       },
@@ -385,14 +399,18 @@ export function TitularesCaixaPage({
         title="Titulares Caixa"
         description="Cadastro de titulares de contrato Caixa e consulta de quitacao"
       >
-        <Button onClick={handleExport} variant="outline">
-          <FileDown className="size-4" />
-          Exportar
-        </Button>
-        <Button onClick={() => setImportOpen(true)}>
-          <Upload className="size-4" />
-          Importar planilha
-        </Button>
+        {allowExport ? (
+          <Button onClick={handleExport} variant="outline">
+            <FileDown className="size-4" />
+            Exportar
+          </Button>
+        ) : null}
+        {allowImport ? (
+          <Button onClick={() => setImportOpen(true)}>
+            <Upload className="size-4" />
+            Importar planilha
+          </Button>
+        ) : null}
       </PageHeader>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -442,7 +460,9 @@ export function TitularesCaixaPage({
               <div className="px-6 py-16 text-center text-sm text-muted-foreground">
                 {query.isLoading
                   ? 'Carregando...'
-                  : 'Nenhum titular encontrado. Importe a planilha para comecar.'}
+                  : allowImport
+                    ? 'Nenhum titular encontrado. Importe a planilha para comecar.'
+                    : 'Nenhum titular encontrado.'}
               </div>
             }
             getItemKey={(t) => t.id}
@@ -488,7 +508,10 @@ export function TitularesCaixaPage({
                         </Button>
                         <Button asChild size="sm" variant="ghost">
                           <a
-                            href={titularDocumentDownloadUrl(t.id, t.termoDocId)}
+                            href={titularDocumentDownloadUrl(
+                              t.id,
+                              t.termoDocId,
+                            )}
                             rel="noreferrer"
                           >
                             <Download className="size-4" />
@@ -497,15 +520,17 @@ export function TitularesCaixaPage({
                         </Button>
                       </>
                     ) : null}
-                    <Button
-                      disabled={reconsultarMutation.isPending}
-                      onClick={() => handleReconsultar(t.id)}
-                      size="sm"
-                      variant="ghost"
-                    >
-                      <RefreshCw className="size-4" />
-                      Reconsultar
-                    </Button>
+                    {allowReconsultar ? (
+                      <Button
+                        disabled={reconsultarMutation.isPending}
+                        onClick={() => handleReconsultar(t.id)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <RefreshCw className="size-4" />
+                        Reconsultar
+                      </Button>
+                    ) : null}
                   </div>
                 </CardContent>
               </Card>
@@ -552,7 +577,10 @@ export function TitularesCaixaPage({
             <DialogFooter>
               <Button asChild variant="outline">
                 <a
-                  href={titularDocumentDownloadUrl(previewDoc.id, previewDoc.docId)}
+                  href={titularDocumentDownloadUrl(
+                    previewDoc.id,
+                    previewDoc.docId,
+                  )}
                   rel="noreferrer"
                 >
                   <Download className="size-4" />
@@ -611,7 +639,11 @@ function ImportDialog({
           <Button onClick={onClose} type="button" variant="outline">
             Cancelar
           </Button>
-          <Button disabled={!file || isPending} onClick={onConfirm} type="button">
+          <Button
+            disabled={!file || isPending}
+            onClick={onConfirm}
+            type="button"
+          >
             {isPending ? 'Importando...' : 'Importar'}
           </Button>
         </DialogFooter>
@@ -624,8 +656,8 @@ function ImportDialog({
           type="file"
         />
         <p className="text-xs text-muted-foreground">
-          Colunas esperadas: UF, Municipio, Modalidade, Empreendimento, Mutuario,
-          CPF, PIS, Data de Assinatura e endereco do imovel.
+          Colunas esperadas: UF, Municipio, Modalidade, Empreendimento,
+          Mutuario, CPF, PIS, Data de Assinatura e endereco do imovel.
         </p>
       </div>
     </AppDialog>
@@ -651,7 +683,12 @@ type FiltersDialogProps = {
   open: boolean
 }
 
-function FiltersDialog({ initial, onApply, onClose, open }: FiltersDialogProps) {
+function FiltersDialog({
+  initial,
+  onApply,
+  onClose,
+  open,
+}: FiltersDialogProps) {
   const [uf, setUf] = useState(initial.uf[0] ?? '')
   const [municipio, setMunicipio] = useState(initial.municipio)
   const [modalidade, setModalidade] = useState(initial.modalidade[0] ?? '')

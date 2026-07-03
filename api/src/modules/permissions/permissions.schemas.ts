@@ -29,6 +29,12 @@ const profilePermissionsSchema = z.object({
     history: z.boolean(),
     batch: z.boolean(),
   }),
+  titularCaixa: z.object({
+    view: z.boolean(),
+    export: z.boolean(),
+    import: z.boolean(),
+    reconsultar: z.boolean(),
+  }),
 })
 
 export const createProfilePayloadSchema = z.object({

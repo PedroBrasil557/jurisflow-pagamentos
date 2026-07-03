@@ -1,6 +1,7 @@
 import {
   Eye,
   FilePlus,
+  FileSpreadsheet,
   Files,
   FileText,
   Gavel,
@@ -15,7 +16,8 @@ type PermissionItem = {
   key:
     | keyof ProfilePermissions['process']
     | keyof ProfilePermissions['sections']
-  section: 'process' | 'sections'
+    | keyof ProfilePermissions['titularCaixa']
+  section: 'process' | 'sections' | 'titularCaixa'
   label: string
   description?: string
 }
@@ -124,6 +126,33 @@ const permissionGroups: PermissionGroup[] = [
     ],
   },
   {
+    label: 'Titulares Caixa',
+    icon: FileSpreadsheet,
+    items: [
+      {
+        key: 'view',
+        section: 'titularCaixa',
+        label: 'Acessar titulares Caixa',
+        description: 'Tela, termos de quitacao e aba do dashboard',
+      },
+      {
+        key: 'export',
+        section: 'titularCaixa',
+        label: 'Exportar planilha',
+      },
+      {
+        key: 'import',
+        section: 'titularCaixa',
+        label: 'Importar planilha',
+      },
+      {
+        key: 'reconsultar',
+        section: 'titularCaixa',
+        label: 'Reconsultar quitacao',
+      },
+    ],
+  },
+  {
     label: 'Secoes visiveis',
     icon: Eye,
     items: [
@@ -167,7 +196,7 @@ export function ProfilePermissionsEditor({
   disabled = false,
 }: ProfilePermissionsEditorProps) {
   function toggle(
-    section: 'process' | 'sections',
+    section: 'process' | 'sections' | 'titularCaixa',
     key: string,
     checked: boolean,
   ) {
@@ -202,9 +231,13 @@ export function ProfilePermissionsEditor({
                     ? value.process[
                         item.key as keyof ProfilePermissions['process']
                       ]
-                    : value.sections[
-                        item.key as keyof ProfilePermissions['sections']
-                      ]
+                    : item.section === 'sections'
+                      ? value.sections[
+                          item.key as keyof ProfilePermissions['sections']
+                        ]
+                      : value.titularCaixa[
+                          item.key as keyof ProfilePermissions['titularCaixa']
+                        ]
 
                 const id = `perm-${item.section}-${item.key}`
 

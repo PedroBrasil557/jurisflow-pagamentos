@@ -49,6 +49,16 @@ export type ProfilePermissions = {
     /** Ver aba de lote (arquivos brutos) */
     batch: boolean
   }
+  titularCaixa: {
+    /** Acessar a tela de titulares Caixa (lista, termos e aba do dashboard) */
+    view: boolean
+    /** Exportar a planilha de titulares */
+    export: boolean
+    /** Importar a planilha de titulares */
+    import: boolean
+    /** Reenfileirar a consulta de quitação */
+    reconsultar: boolean
+  }
 }
 
 export type ResolvedPermissions = {

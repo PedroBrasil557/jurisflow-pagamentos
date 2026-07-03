@@ -1,7 +1,10 @@
 import { eq } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
-import { FALLBACK_PERMISSIONS } from './permissions.defaults'
+import {
+  FALLBACK_PERMISSIONS,
+  normalizeProfilePermissions,
+} from './permissions.defaults'
 import {
   permissionProfile,
   profileHousingComplex,
@@ -78,7 +81,7 @@ export async function resolveUserPermissions(
     isAdmin: false,
     processScope: assignment.processScope,
     allowedHousingComplexIds,
-    permissions: assignment.permissions as ProfilePermissions,
+    permissions: normalizeProfilePermissions(assignment.permissions),
     profileId: assignment.profileId,
     profileName: assignment.profileName,
   }
@@ -112,6 +115,28 @@ function buildAdminPermissions(): ProfilePermissions {
       history: true,
       batch: true,
     },
+    titularCaixa: {
+      view: true,
+      export: true,
+      import: true,
+      reconsultar: true,
+    },
+  }
+}
+
+/**
+ * Verifica uma permissão de titulares Caixa. Admins sempre passam.
+ */
+export function assertTitularCaixaCan(
+  perms: ResolvedPermissions,
+  action: keyof ProfilePermissions['titularCaixa'],
+): void {
+  if (perms.isAdmin) return
+  if (!perms.permissions.titularCaixa[action]) {
+    throw new ServiceError(
+      403,
+      'Voce nao tem permissao para executar esta acao.',
+    )
   }
 }
 
