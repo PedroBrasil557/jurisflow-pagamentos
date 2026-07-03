@@ -34,10 +34,18 @@ export type ProfilePermissions = {
     history: boolean
     batch: boolean
   }
+  titularCaixa: {
+    view: boolean
+    export: boolean
+    import: boolean
+    reconsultar: boolean
+  }
 }
 
 export type ResolvedPermissions = {
   isAdmin: boolean
+  /** Administrador master (bypass total). Admin comum segue o perfil em titularCaixa. */
+  isMaster: boolean
   processScope: ProcessScope
   allowedHousingComplexIds: string[]
   permissions: ProfilePermissions

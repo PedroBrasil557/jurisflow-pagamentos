@@ -79,46 +79,46 @@ sequenceDiagram
     end
 
     rect rgb(227,242,253)
-    Note over WI,DB: ATO 2 — Worker ingestão (🔁 background, poll 3s, concorrência 2)
+    Note over WI,DB: ATO 2 — Worker ingestão. background, poll 3s, concorrencia 2
     loop drainClaims
-        WI->>QI: claim (queued OU processing órfão) → processing + lease + token
+        WI->>QI: claim queued ou processing orfao. vira processing + lease + token
     end
-    Note right of QI: FOR UPDATE SKIP LOCKED · split_attempts+1
-    WI->>S3: lê o PDF
-    WI->>IA: 1 chamada — classifica páginas + extrai por papel
-    IA-->>WI: paginas + titular/endereço + outorgantes + termoCompradores + compraVenda
-    WI->>DB: applyExtractedFieldsToDraft (campos do rascunho)
-    WI->>DB: importDocumentBundle — corta o PDF e anexa nos slots
-    WI->>DB: recordDocumentExtractionAudit (kind document_extraction)
-    WI->>QI: markIngestionDone (processing → done)
-    WI-)RC: void reconcileOwnerType (SÓ se markIngestionDone=true)
+    Note right of QI: FOR UPDATE SKIP LOCKED, split_attempts + 1
+    WI->>S3: le o PDF
+    WI->>IA: 1 chamada. classifica paginas e extrai por papel
+    IA-->>WI: paginas, titular, outorgantes, termoCompradores, compraVenda
+    WI->>DB: applyExtractedFieldsToDraft. campos do rascunho
+    WI->>DB: importDocumentBundle. corta o PDF e anexa nos slots
+    WI->>DB: recordDocumentExtractionAudit. kind document_extraction
+    WI->>QI: markIngestionDone. processing vira done
+    WI-)RC: void reconcileOwnerType. so se markIngestionDone true
     end
 
     rect rgb(243,229,245)
-    Note over RC,QQ: ATO 3 — Reconciliador (deriva tudo dos fatos; void/best-effort)
-    RC->>DB: shadowDerive (gatherFacts + deriveProcessState puro)
-    RC->>DB: grava evidência process_derivation
-    RC->>DB: aplica ownerType (gated: autoApply + sem human-lock)
-    RC->>DB: applyConjuntoMatch (vincula conjunto, gated)
-    RC->>QQ: reconcileQuitacaoConsultas (set-diff dos CPFs do titular Caixa)
-    Note right of QQ: ⬅️ FILA DE QUITAÇÃO NASCE AQUI (por CPF)
-    RC->>DB: reconcileProcessStatus (gates de PRONTA)
+    Note over RC,QQ: ATO 3 — Reconciliador. deriva tudo dos fatos, void best-effort
+    RC->>DB: shadowDerive. gatherFacts e deriveProcessState puro
+    RC->>DB: grava evidencia process_derivation
+    RC->>DB: aplica ownerType. gated por autoApply e sem human-lock
+    RC->>DB: applyConjuntoMatch. vincula conjunto, gated
+    RC->>QQ: reconcileQuitacaoConsultas. set-diff dos CPFs do titular Caixa
+    Note right of QQ: FILA DE QUITACAO NASCE AQUI, por CPF
+    RC->>DB: reconcileProcessStatus. gates de PRONTA
     end
 
     rect rgb(232,245,233)
-    Note over WR,CX: ATO 4 — Quitação (🟢 worker RPA, paralelo)
-    loop poll /claim a cada 5s
-        WR->>API: GET /claim
-        API->>QQ: claimNextQuitacaoJob → CPFs ainda 'pending'
-        API-->>WR: { processId, cpfs: [...] }
+    Note over WR,CX: ATO 4 — Quitacao. worker RPA, paralelo
+    loop poll claim a cada 5s
+        WR->>API: GET claim
+        API->>QQ: claimNextQuitacaoJob. CPFs ainda pending
+        API-->>WR: processId e cpfs pendentes
     end
-    loop para cada CPF (para no 1º 'quitado')
-        WR->>CX: consulta a quitação do CPF
-        CX-->>WR: quitado / não encontrado / erro
+    loop cada CPF ate o primeiro quitado
+        WR->>CX: consulta a quitacao do CPF
+        CX-->>WR: quitado, nao encontrado ou erro
     end
-    WR->>API: POST /result (consultas[] por CPF + pdf do que quitou)
-    API->>DB: atualiza cada entrada; se quitado anexa a declaração
-    API-)RC: anexo da declaração dispara void reconcile (reextract)
+    WR->>API: POST result. consultas por CPF e pdf do que quitou
+    API->>DB: atualiza cada entrada. se quitado anexa a declaracao
+    API-)RC: anexo da declaracao dispara void reconcile, reextract
     end
 ```
 

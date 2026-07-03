@@ -77,6 +77,17 @@ const envSchema = z.object({
   GEOIP_API_URL: z.url().default('http://ip-api.com/json'),
   // Token compartilhado para os endpoints internos consumidos pelo worker RPA.
   INTERNAL_API_TOKEN: z.string().min(1).default('dev-internal-token-change-me'),
+  // CPFs (separados por virgula) dos administradores MASTER: unicos com bypass
+  // total de permissoes. Admins comuns recebem titulares Caixa via perfil.
+  MASTER_ADMIN_CPFS: z
+    .string()
+    .default('')
+    .transform((value) =>
+      value
+        .split(',')
+        .map((cpf) => cpf.replace(/\D/g, ''))
+        .filter(Boolean),
+    ),
 })
 
 const parsedEnv = envSchema.parse({
@@ -99,6 +110,7 @@ const parsedEnv = envSchema.parse({
   GEOIP_ENABLED: process.env.GEOIP_ENABLED,
   GEOIP_API_URL: process.env.GEOIP_API_URL,
   INTERNAL_API_TOKEN: process.env.INTERNAL_API_TOKEN,
+  MASTER_ADMIN_CPFS: process.env.MASTER_ADMIN_CPFS,
 })
 
 export const env = {
@@ -132,4 +144,5 @@ export const env = {
     apiUrl: parsedEnv.GEOIP_API_URL,
   },
   internalApiToken: parsedEnv.INTERNAL_API_TOKEN,
+  masterAdminCpfs: parsedEnv.MASTER_ADMIN_CPFS,
 }

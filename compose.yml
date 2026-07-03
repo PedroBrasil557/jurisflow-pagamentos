@@ -41,6 +41,9 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-opus-4-8}"
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
+      # Admin master de dev = admin do seed. Demais admins recebem titulares
+      # Caixa via perfil de permissoes.
+      MASTER_ADMIN_CPFS: "12345678909"
     volumes:
       - ./:/workspace
       - api_node_modules:/workspace/api/node_modules

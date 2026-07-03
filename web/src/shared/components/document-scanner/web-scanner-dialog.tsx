@@ -1,5 +1,4 @@
 import {
-  Camera,
   Check,
   ChevronLeft,
   Crop,
@@ -13,13 +12,11 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { cn } from '#/lib/utils'
 import { type DocAlignerStatus, useDocAlignerDetector } from './docaligner'
-import { takeSensorPhoto } from './image-capture'
 import {
   canvasToJpegBlob,
   decodeToWorkingCanvas,
   downscaleCanvasToLongEdge,
   releaseCanvas,
-  rotateCanvas90,
 } from './image-normalize'
 import { enhanceWithFilter, type FilterMode } from './scan-enhance'
 import {
@@ -32,20 +29,13 @@ import {
 import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
 import { warpPerspectiveToCanvas } from './scan-warp'
 import type { CornerPoints } from './scanner-engine'
-import { BLUR_WARN_THRESHOLD, estimateSharpness } from './sharpness'
 
 type WebScannerDialogProps = {
   open: boolean
   onClose: () => void
   // scanSessionId: id da sessao de captura (IndexedDB) para o uploader limpar
   // APOS o upload confirmar. null quando nao ha sessao persistida (ex.: Scanbot).
-  // pageLongEdgesPx: lado longo (px) de cada pagina capturada — telemetria de
-  // nitidez (a API loga no scan.complete para medir a captura em prod).
-  onComplete: (
-    file: File,
-    scanSessionId: string | null,
-    pageLongEdgesPx?: number[],
-  ) => void
+  onComplete: (file: File, scanSessionId: string | null) => void
 }
 
 type ScannedPage = {
@@ -109,12 +99,8 @@ function fullFrameCorners(width: number, height: number): CornerPoints {
   }
 }
 
-// No iOS (todos os browsers usam WebKit, Chrome incluso) nao existe
-// ImageCapture.takePhoto(): o shutter captura o quadro do video (a UX de
-// viewfinder com borda ao vivo vence — sair para a camera do sistema a cada
-// pagina foi rejeitado em uso real). A camera nativa (input capture, still de
-// 12-48 MP) fica como botao SECUNDARIO "Alta resolucao" na tela de captura,
-// para documentos que exigirem mais nitidez que o video 4K entrega.
+// No iOS (todos os browsers usam WebKit) a camera nativa (input capture) entrega
+// resolucao/foco superiores ao quadro do video — atalho util na revisao.
 function isLikelyIOS(): boolean {
   if (typeof navigator === 'undefined') {
     return false
@@ -129,18 +115,12 @@ function isLikelyIOS(): boolean {
 
 // Recorta pela perspectiva dos cantos e aplica o filtro. Opera sobre a imagem JA
 // NORMALIZADA (<=300 DPI) — devolve o canvas resultante (o chamador converte em
-// Blob, sem passar por dataUrl base64). `sharpness` e medida no recorte ANTES do
-// filtro (o unsharp do realce inflaria a metrica e mascararia foto tremida).
+// Blob, sem passar por dataUrl base64).
 function renderCroppedPage(
   source: HTMLCanvasElement,
   corners: CornerPoints,
   filter: FilterMode,
-): {
-  canvas: HTMLCanvasElement
-  width: number
-  height: number
-  sharpness: number | null
-} {
+): { canvas: HTMLCanvasElement; width: number; height: number } {
   const outWidth = Math.round(
     Math.max(
       distance(corners.topLeftCorner, corners.topRightCorner),
@@ -163,13 +143,11 @@ function renderCroppedPage(
     outHeight || source.height,
   )
 
-  const sharpness = estimateSharpness(extracted)
   const filtered = enhanceWithFilter(extracted, filter)
   return {
     canvas: filtered,
     width: filtered.width,
     height: filtered.height,
-    sharpness,
   }
 }
 
@@ -241,22 +219,6 @@ export function WebScannerDialog({
   const [filter, setFilter] = useState<FilterMode>('color')
   const [error, setError] = useState('')
   const [flash, setFlash] = useState(false)
-  // Aviso nao bloqueante de pagina possivelmente tremida (metrica de nitidez
-  // abaixo do limiar). Some sozinho; a pagina JA FOI adicionada — o usuario
-  // decide se refaz olhando a miniatura.
-  const [blurWarning, setBlurWarning] = useState(false)
-  const blurWarningTimerRef = useRef<number | null>(null)
-
-  function showBlurWarning() {
-    if (blurWarningTimerRef.current !== null) {
-      window.clearTimeout(blurWarningTimerRef.current)
-    }
-    setBlurWarning(true)
-    blurWarningTimerRef.current = window.setTimeout(() => {
-      setBlurWarning(false)
-      blurWarningTimerRef.current = null
-    }, 5000)
-  }
   // Captura em voo: addPageFromCanvas faz um await (deteccao ~200-400ms) ANTES de
   // inserir a pagina em `pages`. O guard impede (a) duplo-toque no shutter e (b)
   // finalizar o PDF antes da pagina entrar — que dropava a ultima pagina
@@ -286,15 +248,6 @@ export function WebScannerDialog({
 
   const fileInputId = useId()
   const preferNativeCapture = isLikelyIOS()
-  // Tela para onde voltar apos a foto da camera nativa (iOS): quem clicou no
-  // shutter volta para a tela de captura (loop de multiplas paginas); quem clicou
-  // na revisao volta para a revisao. Ref (nao state): so e lido no onChange.
-  const nativeReturnScreenRef = useRef<Screen>('camera')
-
-  function openNativeCapture(returnTo: Screen) {
-    nativeReturnScreenRef.current = returnTo
-    fileInputRef.current?.click()
-  }
 
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => {
@@ -571,11 +524,6 @@ export function WebScannerDialog({
     // IndexedDB — um fechamento acidental na revisao nao deve destruir as
     // paginas. A limpeza ocorre em: sucesso do upload (na action), descarte
     // EXPLICITO (handleDiscardAll) e TTL. Reabrir oferece recuperar.
-    if (blurWarningTimerRef.current !== null) {
-      window.clearTimeout(blurWarningTimerRef.current)
-      blurWarningTimerRef.current = null
-    }
-    setBlurWarning(false)
     stopStream()
     onClose()
   }
@@ -645,15 +593,6 @@ export function WebScannerDialog({
       const corners = detected ?? defaultCorners(work.width, work.height)
       const rendered = renderCroppedPage(work, corners, filter)
 
-      // Nitidez abaixo do limiar: avisa (sem bloquear — a pagina entra normal e
-      // o usuario decide refazer olhando a miniatura).
-      if (
-        rendered.sharpness !== null &&
-        rendered.sharpness < BLUR_WARN_THRESHOLD
-      ) {
-        showBlurWarning()
-      }
-
       // Blobs (fora do heap de strings), nao dataUrl base64.
       const originalBlob = await canvasToJpegBlob(work)
       const blob = await canvasToJpegBlob(rendered.canvas)
@@ -702,7 +641,7 @@ export function WebScannerDialog({
     }
   }
 
-  async function handleShutter() {
+  function handleShutter() {
     const video = videoRef.current
     if (!video?.videoWidth) {
       return
@@ -711,51 +650,20 @@ export function WebScannerDialog({
     if (capturingRef.current) {
       return
     }
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      return
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
     hapticTap()
-    // Flash visual de confirmacao imediato — o takePhoto pode levar ate ~1s.
+    // Flash visual de confirmacao (funciona em qualquer aparelho, iPhone
+    // incluso, onde a vibracao nao existe).
     setFlash(true)
     window.setTimeout(() => setFlash(false), 130)
-
-    // Trava ANTES do await do takePhoto: a trava do addPageFromCanvas so pega
-    // depois; sem isto, um duplo-toque dispararia duas fotos.
-    capturingRef.current = true
-    setCapturing(true)
-    try {
-      // Still real do sensor (Chrome/Android). null quando a API nao existe ou
-      // falha — cai no frame de video, o comportamento anterior.
-      const track = streamRef.current?.getVideoTracks()[0] ?? null
-      const photo = track ? await takeSensorPhoto(track) : null
-
-      let canvas: HTMLCanvasElement
-      if (photo) {
-        canvas = await decodeToWorkingCanvas(photo)
-        // Alguns aparelhos entregam o still na orientacao do sensor (paisagem)
-        // com o viewfinder em retrato — gira para casar com o que o usuario viu
-        // (senao a pagina sai deitada no PDF).
-        const videoPortrait = video.videoHeight > video.videoWidth
-        const photoPortrait = canvas.height > canvas.width
-        if (videoPortrait !== photoPortrait) {
-          const rotated = rotateCanvas90(canvas)
-          if (rotated !== canvas) {
-            releaseCanvas(canvas)
-          }
-          canvas = rotated
-        }
-      } else {
-        canvas = document.createElement('canvas')
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          return
-        }
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-      }
-      await addPageFromCanvas(canvas)
-    } finally {
-      capturingRef.current = false
-      setCapturing(false)
-    }
+    void addPageFromCanvas(canvas)
   }
 
   async function handleFilesSelected(
@@ -773,10 +681,7 @@ export function WebScannerDialog({
       // os 50 MP da camera nativa num canvas de ~200 MB.
       const canvas = await decodeToWorkingCanvas(file)
       await addPageFromCanvas(canvas)
-      // iOS: volta para a tela de origem (shutter -> captura, para emendar a
-      // proxima foto sem passar pela revisao). Demais plataformas (fallback de
-      // camera quebrada): revisao, para o usuario ver o resultado.
-      setScreen(preferNativeCapture ? nativeReturnScreenRef.current : 'review')
+      setScreen('review')
     } catch {
       setError('Nao foi possivel abrir a imagem selecionada.')
     }
@@ -914,11 +819,7 @@ export function WebScannerDialog({
       // falhar em rede movel — a sessao duravel precisa sobreviver a isso. O
       // uploader limpa via `scanSessionId` APOS o upload confirmar. Fechar/cancelar
       // (handleClose) e o TTL cobrem os demais casos.
-      onComplete(
-        file,
-        sessionIdRef.current || null,
-        pages.map((page) => Math.max(page.width, page.height)),
-      )
+      onComplete(file, sessionIdRef.current || null)
     } catch (finishError) {
       setError(
         finishError instanceof Error
@@ -955,13 +856,6 @@ export function WebScannerDialog({
           {error ? (
             <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top)+0.5rem)] z-20 mx-auto w-fit max-w-[90%] rounded-md bg-destructive px-3 py-2 text-center text-xs text-white">
               {error}
-            </div>
-          ) : null}
-
-          {blurWarning && !error ? (
-            <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top)+0.5rem)] z-20 mx-auto w-fit max-w-[90%] rounded-md bg-amber-500 px-3 py-2 text-center text-xs text-black">
-              A ultima pagina pode estar tremida — confira a miniatura e refaca
-              se necessario.
             </div>
           ) : null}
 
@@ -1005,9 +899,8 @@ export function WebScannerDialog({
               filter={filter}
               fit={fit}
               liveCorners={liveCorners}
-              nativeMode={preferNativeCapture}
               onClose={handleClose}
-              onOpenNative={() => openNativeCapture('camera')}
+              onOpenNative={() => fileInputRef.current?.click()}
               onOpenReview={() => setScreen('review')}
               onShutter={handleShutter}
               pagesCount={pages.length}
@@ -1027,7 +920,7 @@ export function WebScannerDialog({
               onEdit={openEdit}
               onDiscardAll={handleDiscardAll}
               onFinish={handleFinish}
-              onNativeCapture={() => openNativeCapture('review')}
+              onNativeCapture={() => fileInputRef.current?.click()}
               onRemove={handleRemovePage}
               pages={pages}
               preferNativeCapture={preferNativeCapture}
@@ -1207,11 +1100,6 @@ type CameraScreenProps = {
   videoDim: { w: number; h: number } | null
   videoRef: React.RefObject<HTMLVideoElement | null>
   onVideoMeta: (w: number, h: number) => void
-  // iOS (WebKit, sem ImageCapture): mostra o botao secundario "Alta resolucao"
-  // sobre o viewfinder — abre a camera nativa (still do sensor) e volta para
-  // esta tela. O shutter principal continua no quadro do video (UX de borda ao
-  // vivo vence; sair do app a cada pagina foi rejeitado em uso real).
-  nativeMode: boolean
 }
 
 function CameraScreen({
@@ -1223,7 +1111,6 @@ function CameraScreen({
   filter,
   fit,
   liveCorners,
-  nativeMode,
   onClose,
   onOpenNative,
   onOpenReview,
@@ -1285,17 +1172,6 @@ function CameraScreen({
               <div className="absolute inset-0 flex items-center justify-center text-sm text-white/70">
                 Iniciando camera...
               </div>
-            ) : null}
-            {nativeMode ? (
-              <button
-                className="absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-xs text-white/90 backdrop-blur-sm disabled:opacity-40"
-                disabled={capturing}
-                onClick={onOpenNative}
-                type="button"
-              >
-                <Camera className="size-3.5" />
-                Alta resolucao
-              </button>
             ) : null}
           </>
         )}

@@ -15,3 +15,8 @@ dist/
 # editor
 *.swp
 *.swo
+
+# A/B de extracao — PDFs reais com PII (CPF/nomes, LGPD): NUNCA versionar.
+# Tambem os resultados, que ecoam dados extraidos.
+scripts/ab-extraction/pdfs/
+scripts/ab-extraction/results/

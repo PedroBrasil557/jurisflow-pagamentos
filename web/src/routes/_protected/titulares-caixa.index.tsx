@@ -1,11 +1,12 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
+import { canViewTitularesCaixa } from '@/features/titulares-caixa/lib/titulares-access'
 import { TitularesCaixaPage } from '@/features/titulares-caixa/pages/titulares-caixa-page'
 import { parseTitularesSearch } from '@/features/titulares-caixa/schemas/titulares-caixa-search.schema'
 
 export const Route = createFileRoute('/_protected/titulares-caixa/')({
-  // Tela admin-only: dados sensiveis (CPF/PIS) e import em massa.
+  // Acesso por permissao de perfil (dados sensiveis CPF/PIS — conceder com criterio).
   beforeLoad: ({ context }) => {
-    if (!context.permissions.isAdmin) {
+    if (!canViewTitularesCaixa(context.permissions)) {
       throw redirect({ to: '/' })
     }
   },

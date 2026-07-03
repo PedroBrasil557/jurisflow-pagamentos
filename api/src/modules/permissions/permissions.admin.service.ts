@@ -3,6 +3,7 @@ import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import { user } from '../auth/auth.schema'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
+import { normalizeProfilePermissions } from './permissions.defaults'
 import {
   permissionProfile,
   profileHousingComplex,
@@ -137,6 +138,9 @@ export async function getProfileOrThrow(profileId: string) {
 
   return {
     ...profile,
+    // Perfis gravados antes de um grupo de permissao existir nao tem a chave no
+    // JSON — normaliza para o editor sempre receber a forma completa.
+    permissions: normalizeProfilePermissions(profile.permissions),
     housingComplexes: hcRows,
     users: userRows,
   }

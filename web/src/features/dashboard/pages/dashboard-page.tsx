@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Skeleton } from '#/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '#/components/ui/tabs'
 import { useSession } from '@/features/auth/hooks/use-session'
+import { canViewTitularesCaixa } from '@/features/titulares-caixa/lib/titulares-access'
 import { PageHeader } from '@/shared/components/page-header'
 import { QueryError } from '@/shared/components/query-error'
 import { CreationTimelineChart } from '../components/creation-timeline-chart'
@@ -18,7 +19,12 @@ import { dashboardStatsOptions } from '../services/dashboard.queries'
 export function DashboardPage() {
   const { permissions } = useSession()
 
-  if (!permissions.isAdmin) {
+  // Titular Caixa segue a permissao do grupo titularCaixa; as demais abas de
+  // indicadores continuam restritas a admin.
+  const showTitularCaixa = canViewTitularesCaixa(permissions)
+  const showAdminTabs = permissions.isAdmin
+
+  if (!showTitularCaixa && !showAdminTabs) {
     return (
       <div className="grid gap-6">
         <PageHeader title="Dashboard" description="Visao geral do sistema" />
@@ -34,33 +40,47 @@ export function DashboardPage() {
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Visao geral</TabsTrigger>
-          <TabsTrigger value="titular-caixa">Titular Caixa</TabsTrigger>
-          <TabsTrigger value="productivity">Produtividade</TabsTrigger>
-          <TabsTrigger value="stage-timings">Tempo entre etapas</TabsTrigger>
+          {showTitularCaixa ? (
+            <TabsTrigger value="titular-caixa">Titular Caixa</TabsTrigger>
+          ) : null}
+          {showAdminTabs ? (
+            <TabsTrigger value="productivity">Produtividade</TabsTrigger>
+          ) : null}
+          {showAdminTabs ? (
+            <TabsTrigger value="stage-timings">Tempo entre etapas</TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="overview">
           <OverviewSection />
         </TabsContent>
 
-        <TabsContent value="titular-caixa">
-          <TitularCaixaTab />
-        </TabsContent>
+        {showTitularCaixa ? (
+          <TabsContent value="titular-caixa">
+            <TitularCaixaTab />
+          </TabsContent>
+        ) : null}
 
-        <TabsContent value="productivity">
-          <ProductivityTab />
-        </TabsContent>
+        {showAdminTabs ? (
+          <TabsContent value="productivity">
+            <ProductivityTab />
+          </TabsContent>
+        ) : null}
 
-        <TabsContent value="stage-timings">
-          <StageTimingsTab />
-        </TabsContent>
+        {showAdminTabs ? (
+          <TabsContent value="stage-timings">
+            <StageTimingsTab />
+          </TabsContent>
+        ) : null}
       </Tabs>
     </div>
   )
 }
 
 function OverviewSection() {
-  const { data, isLoading, isError, refetch } = useQuery(dashboardStatsOptions())
+  const { data, isLoading, isError, refetch } = useQuery(
+    dashboardStatsOptions(),
+  )
 
   if (isError) {
     return <QueryError onRetry={refetch} />

@@ -18,13 +18,7 @@ const WebScannerDialog = lazy(() =>
 type ScanButtonProps = {
   // scanSessionId: id da sessao de captura (IndexedDB) para o consumidor limpar
   // apos o upload confirmar; null quando nao ha sessao persistida (Scanbot).
-  // pageLongEdgesPx: telemetria de nitidez (lado longo em px por pagina);
-  // ausente no caminho Scanbot (o PDF chega pronto, sem as dimensoes).
-  onComplete: (
-    file: File,
-    scanSessionId: string | null,
-    pageLongEdgesPx?: number[],
-  ) => void
+  onComplete: (file: File, scanSessionId: string | null) => void
   disabled?: boolean
   label?: string
   className?: string
@@ -103,9 +97,9 @@ export function ScanButton({
         <Suspense fallback={null}>
           <WebScannerDialog
             onClose={() => setOpen(false)}
-            onComplete={(file, scanSessionId, pageLongEdgesPx) => {
+            onComplete={(file, scanSessionId) => {
               setOpen(false)
-              onComplete(file, scanSessionId, pageLongEdgesPx)
+              onComplete(file, scanSessionId)
             }}
             open={open}
           />

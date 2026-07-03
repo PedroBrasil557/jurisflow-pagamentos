@@ -7,6 +7,7 @@ import {
   UserPlus,
 } from 'lucide-react'
 import { canAccessDashboard } from '@/features/processes/lib/process-access'
+import { canViewTitularesCaixa } from '@/features/titulares-caixa/lib/titulares-access'
 import type { AuthenticatedNavigationItem } from './authenticated-layout.types'
 
 export const authenticatedNavigationItems = [
@@ -28,7 +29,7 @@ export const authenticatedNavigationItems = [
     description: 'Contratos e quitacao',
     to: '/titulares-caixa',
     icon: FileSpreadsheet,
-    isVisible: ({ permissions }) => permissions.isAdmin,
+    isVisible: ({ permissions }) => canViewTitularesCaixa(permissions),
   },
   {
     label: 'Cadastros',

@@ -4,6 +4,7 @@ import {
   fetchProductivityStats,
   fetchStageTimings,
   fetchTitularCaixaStats,
+  fetchTitularCaixaStatsPorLocal,
   type ProductivityQuery,
 } from './dashboard.service'
 
@@ -15,6 +16,8 @@ export const dashboardKeys = {
   stageTimings: (query: ProductivityQuery) =>
     [...dashboardKeys.all, 'stage-timings', query] as const,
   titularCaixa: () => [...dashboardKeys.all, 'titular-caixa'] as const,
+  titularCaixaPorLocal: () =>
+    [...dashboardKeys.all, 'titular-caixa', 'por-local'] as const,
 }
 
 export function dashboardStatsOptions() {
@@ -42,5 +45,12 @@ export function titularCaixaStatsOptions() {
   return queryOptions({
     queryKey: dashboardKeys.titularCaixa(),
     queryFn: fetchTitularCaixaStats,
+  })
+}
+
+export function titularCaixaStatsPorLocalOptions() {
+  return queryOptions({
+    queryKey: dashboardKeys.titularCaixaPorLocal(),
+    queryFn: fetchTitularCaixaStatsPorLocal,
   })
 }

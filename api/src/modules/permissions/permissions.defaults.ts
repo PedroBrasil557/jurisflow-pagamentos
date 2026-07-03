@@ -42,6 +42,12 @@ export const DEFAULT_USER_PERMISSIONS: ProfilePermissions = {
     history: true,
     batch: true,
   },
+  titularCaixa: {
+    view: false,
+    export: false,
+    import: false,
+    reconsultar: false,
+  },
 }
 
 export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
@@ -71,6 +77,12 @@ export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
     history: true,
     batch: true,
   },
+  titularCaixa: {
+    view: false,
+    export: false,
+    import: false,
+    reconsultar: false,
+  },
 }
 
 export const SYSTEM_PROFILES: SystemProfileDefinition[] = [
@@ -94,3 +106,68 @@ export const SYSTEM_PROFILES: SystemProfileDefinition[] = [
 
 /** Permissões de fallback quando o usuário não tem perfil atribuído */
 export const FALLBACK_PERMISSIONS: ProfilePermissions = DEFAULT_USER_PERMISSIONS
+
+// Esqueleto tudo-false: fonte da forma canônica de ProfilePermissions para a
+// normalização abaixo (grupos/chaves e o default de negação).
+const DENY_ALL_PERMISSIONS: ProfilePermissions = {
+  process: {
+    create: false,
+    viewOwn: false,
+    editOwn: false,
+    editAny: false,
+    startLegal: false,
+    editLegal: false,
+    finalize: false,
+    cancelOwn: false,
+    cancelAny: false,
+    markDocumentationReady: false,
+    uploadChecklist: false,
+    deleteChecklistFile: false,
+    viewBatch: false,
+    uploadBatch: false,
+    deleteBatch: false,
+    generatePdf: false,
+  },
+  sections: {
+    dashboard: false,
+    checklist: false,
+    documentation: false,
+    legalData: false,
+    history: false,
+    batch: false,
+  },
+  titularCaixa: {
+    view: false,
+    export: false,
+    import: false,
+    reconsultar: false,
+  },
+}
+
+/**
+ * Normaliza o JSON de permissões persistido no banco para a forma atual do
+ * tipo. Perfis gravados antes de um grupo/chave existir (ex.: titularCaixa)
+ * não têm a chave no JSON — ela cai para false (negar por padrão), em vez de
+ * explodir com undefined. Toda leitura de permissions do banco passa por aqui.
+ */
+export function normalizeProfilePermissions(raw: unknown): ProfilePermissions {
+  const source = (raw ?? {}) as Record<
+    string,
+    Record<string, unknown> | undefined
+  >
+  const normalized = structuredClone(DENY_ALL_PERMISSIONS) as unknown as Record<
+    string,
+    Record<string, boolean>
+  >
+
+  for (const [group, keys] of Object.entries(normalized)) {
+    for (const key of Object.keys(keys)) {
+      const value = source[group]?.[key]
+      if (typeof value === 'boolean') {
+        keys[key] = value
+      }
+    }
+  }
+
+  return normalized as unknown as ProfilePermissions
+}

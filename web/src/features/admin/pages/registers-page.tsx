@@ -126,10 +126,8 @@ function UserStatusBadges({ user }: { user: AdminUserListItem }) {
 }
 
 function UserProfileCell({ user }: { user: AdminUserListItem }) {
-  if (user.role === 'admin') {
-    return <UserRoleBadge role={user.role} />
-  }
-
+  // Admin tambem pode ter perfil: e por ele que recebe titulares Caixa (so o
+  // master dispensa). Sem perfil e um estado valido para admin — sem alerta.
   return (
     <div className="grid gap-1">
       <p className="font-medium text-foreground">
@@ -137,7 +135,7 @@ function UserProfileCell({ user }: { user: AdminUserListItem }) {
       </p>
       <div className="flex flex-wrap gap-2">
         <UserRoleBadge role={user.role} />
-        {!user.profileName ? (
+        {!user.profileName && user.role !== 'admin' ? (
           <Badge variant="outline">Revisar vinculo</Badge>
         ) : null}
       </div>
@@ -336,12 +334,10 @@ export function RegistersPage({
                 <Pencil className="size-4" />
                 Editar
               </DropdownMenuItem>
-              {item.role !== 'admin' ? (
-                <DropdownMenuItem onClick={() => setPermissionsTarget(item)}>
-                  <ShieldCheck className="size-4" />
-                  Permissoes
-                </DropdownMenuItem>
-              ) : null}
+              <DropdownMenuItem onClick={() => setPermissionsTarget(item)}>
+                <ShieldCheck className="size-4" />
+                Permissoes
+              </DropdownMenuItem>
               {item.id !== user.id ? (
                 <DropdownMenuItem onClick={() => setResetTarget(item)}>
                   <KeyRound className="size-4" />
@@ -610,14 +606,12 @@ export function RegistersPage({
                                 <Pencil className="size-4" />
                                 Editar
                               </DropdownMenuItem>
-                              {item.role !== 'admin' ? (
-                                <DropdownMenuItem
-                                  onClick={() => setPermissionsTarget(item)}
-                                >
-                                  <ShieldCheck className="size-4" />
-                                  Permissoes
-                                </DropdownMenuItem>
-                              ) : null}
+                              <DropdownMenuItem
+                                onClick={() => setPermissionsTarget(item)}
+                              >
+                                <ShieldCheck className="size-4" />
+                                Permissoes
+                              </DropdownMenuItem>
                               {item.id !== user.id ? (
                                 <DropdownMenuItem
                                   onClick={() => setResetTarget(item)}

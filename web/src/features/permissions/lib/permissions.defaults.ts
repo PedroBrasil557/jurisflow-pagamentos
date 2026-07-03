@@ -27,6 +27,12 @@ export const DEFAULT_USER_PERMISSIONS: ProfilePermissions = {
     history: true,
     batch: true,
   },
+  titularCaixa: {
+    view: false,
+    export: false,
+    import: false,
+    reconsultar: false,
+  },
 }
 
 export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
@@ -55,5 +61,11 @@ export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
     legalData: true,
     history: true,
     batch: true,
+  },
+  titularCaixa: {
+    view: false,
+    export: false,
+    import: false,
+    reconsultar: false,
   },
 }

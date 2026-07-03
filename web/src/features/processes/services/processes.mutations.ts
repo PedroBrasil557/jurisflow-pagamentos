@@ -43,14 +43,8 @@ export function useCreateProcessViaScan() {
   return useMutation({
     mutationFn: (input: {
       pdf: Blob
-      pageLongEdgesPx?: number[]
       onProgress?: (fraction: number) => void
-    }) =>
-      createProcessViaScanRequest(
-        input.pdf,
-        input.onProgress,
-        input.pageLongEdgesPx,
-      ),
+    }) => createProcessViaScanRequest(input.pdf, input.onProgress),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     },

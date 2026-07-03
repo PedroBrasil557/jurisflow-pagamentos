@@ -6,6 +6,8 @@ const dashboardProductivityRoute = apiClient.api.dashboard.productivity
 const dashboardStageTimingsRoute = apiClient.api.dashboard['stage-timings']
 const dashboardTitularCaixaRoute =
   apiClient.api.dashboard['titular-caixa-stats']
+const dashboardTitularCaixaPorLocalRoute =
+  apiClient.api.dashboard['titular-caixa-stats-por-local']
 
 export type DashboardStats = InferResponseType<
   typeof dashboardStatsRoute.$get,
@@ -60,6 +62,21 @@ export async function fetchTitularCaixaStats(): Promise<TitularCaixaStats> {
 
   if (!response.ok) {
     throw new Error('Erro ao carregar indicadores de Titular Caixa.')
+  }
+
+  return response.json()
+}
+
+export type TitularCaixaStatsPorLocal = InferResponseType<
+  typeof dashboardTitularCaixaPorLocalRoute.$get,
+  200
+>
+
+export async function fetchTitularCaixaStatsPorLocal(): Promise<TitularCaixaStatsPorLocal> {
+  const response = await dashboardTitularCaixaPorLocalRoute.$get()
+
+  if (!response.ok) {
+    throw new Error('Erro ao carregar indicadores por municipio.')
   }
 
   return response.json()

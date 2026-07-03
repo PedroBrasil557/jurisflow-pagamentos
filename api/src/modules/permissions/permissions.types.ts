@@ -49,10 +49,25 @@ export type ProfilePermissions = {
     /** Ver aba de lote (arquivos brutos) */
     batch: boolean
   }
+  titularCaixa: {
+    /** Acessar a tela de titulares Caixa (lista, termos e aba do dashboard) */
+    view: boolean
+    /** Exportar a planilha de titulares */
+    export: boolean
+    /** Importar a planilha de titulares */
+    import: boolean
+    /** Reenfileirar a consulta de quitação */
+    reconsultar: boolean
+  }
 }
 
 export type ResolvedPermissions = {
   isAdmin: boolean
+  /**
+   * Administrador MASTER (role admin + CPF em MASTER_ADMIN_CPFS): único com
+   * bypass total. Admins comuns recebem titulares Caixa via perfil.
+   */
+  isMaster: boolean
   processScope: ProcessScope
   /** IDs dos conjuntos habitacionais acessíveis (union: perfil + usuário individual) */
   allowedHousingComplexIds: string[]

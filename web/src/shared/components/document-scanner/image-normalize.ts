@@ -197,24 +197,6 @@ export function downscaleCanvasToLongEdge(
   return canvas
 }
 
-// Gira um canvas 90 graus (sentido horario, o da montagem tipica do sensor
-// traseiro Android). Usado quando o still do ImageCapture vem na orientacao do
-// sensor (paisagem) com o viewfinder em retrato. Retorna a propria fonte se o
-// contexto 2d nao estiver disponivel.
-export function rotateCanvas90(source: HTMLCanvasElement): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  canvas.width = source.height
-  canvas.height = source.width
-  const ctx = canvas.getContext('2d')
-  if (!ctx) {
-    return source
-  }
-  ctx.translate(canvas.width, 0)
-  ctx.rotate(Math.PI / 2)
-  ctx.drawImage(source, 0, 0)
-  return canvas
-}
-
 // Converte um canvas em Blob JPEG (fora do heap de strings, ao contrario de
 // toDataURL). Libera o canvas (width/height = 0) apos extrair.
 export function canvasToJpegBlob(
