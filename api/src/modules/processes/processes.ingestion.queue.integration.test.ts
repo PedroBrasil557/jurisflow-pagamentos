@@ -242,7 +242,7 @@ suite('fila de ingestao (integracao Postgres)', () => {
   test('orfao re-reivindicado NAO consome o orcamento de falhas (so entregas)', async () => {
     // Job entregue varias vezes por churn de infra (orfao), sem nunca falhar:
     // failureCount fica 0, entao o orcamento de retry real permanece intacto.
-    const id = await insertJob({
+    await insertJob({
       splitStatus: 'processing',
       splitLeaseExpiresAt: new Date(Date.now() - 1000),
       splitLeaseToken: 'orfao',

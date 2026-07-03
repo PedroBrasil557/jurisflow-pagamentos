@@ -559,7 +559,7 @@ async function applyExtractedFieldsToDraft(
     // Postgres `text` rejeita o byte NUL — o UNICO vetor de falha deterministica
     // num UPDATE de texto. Removido para que este passo, agora FATAL, nunca
     // envenene o job por dado de OCR sujo (NUL e raro, mas possivel).
-    const safe = field.value.replace(/\u0000/g, '')
+    const safe = field.value.replaceAll('\u0000', '')
     update[column] = cpfColumns.has(column) ? normalizeCpf(safe) : safe
   }
 
