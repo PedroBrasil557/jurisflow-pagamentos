@@ -18,6 +18,14 @@ function resolveInternalApiToken(): string {
 export const env = {
   envName: process.env.ENVIRONMENT ?? "",
   isProd,
+  // No. de IPs de egress dedicados (replicas 2..N do worker de quitacao). Default
+  // 3 (4 IPs no total, prod atual). Subir para 9 ativa os 10 IPs. Vazio/NaN -> 3.
+  // Cortado em [0, 9]: sao 9 subnets de egress possiveis + a replica 1 = teto 10.
+  workerEgressCount: (() => {
+    const n = Number.parseInt(process.env.WORKER_EGRESS_COUNT ?? "", 10);
+    if (Number.isNaN(n)) return 3;
+    return Math.min(Math.max(n, 0), 9);
+  })(),
   internalApiToken: resolveInternalApiToken(),
   slackBotToken: process.env.SLACK_BOT_TOKEN ?? "",
   domainCertificateArn: process.env.DOMAIN_CERTIFICATE_ARN ?? "",

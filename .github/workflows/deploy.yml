@@ -112,3 +112,6 @@ jobs:
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET_PROD }}
           DOMAIN_CERTIFICATE_ARN: ${{ secrets.DOMAIN_CERTIFICATE_ARN }}
           INTERNAL_API_TOKEN: ${{ secrets.INTERNAL_API_TOKEN_PROD }}
+          # No. de IPs de egress do worker de quitacao. Variavel de repo (Settings ->
+          # Variables): vazia/ausente -> default 3 (4 IPs). Setar 9 ativa os 10 IPs.
+          WORKER_EGRESS_COUNT: ${{ vars.WORKER_EGRESS_COUNT }}

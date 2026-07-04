@@ -46,14 +46,25 @@ export class Vpc extends Construct {
       this.vpc.publicSubnets.map((subnet) => [subnet.availabilityZone, subnet]),
     );
 
-    // 1 subnet = 1 NAT = 1 EIP = 1 IP de saida (replicas 2-4 do worker; a replica 1
-    // sai pelo NAT pre-existente da VPC). O par NAT/subnet fica sempre na MESMA AZ
-    // (sem custo nem acoplamento cross-AZ); alternar AZs so espalha o risco.
+    // 1 subnet = 1 NAT = 1 EIP = 1 IP de saida (replicas 2..N do worker; a replica 1
+    // sai pelo NAT pre-existente da VPC). A lista tem os 9 IPs de egress possiveis
+    // (teto de 10 no total); env.workerEgressCount (default 3) corta quantos
+    // materializam, entao subir a var WORKER_EGRESS_COUNT ativa mais IPs sem editar
+    // codigo (e baixa-la faz scale-back, destruindo os NATs ociosos). NUNCA
+    // reordenar/inserir: os logical IDs e os EIPs de Egress2-4 vem da posicao/nome.
+    // AZ balanceada p/ <=5 NAT por AZ (default+2,4,9,10 em us-east-1a; 3,5,6,7,8 em
+    // us-east-1b), cabendo na quota default de 5 NAT/AZ.
     const egressDefs = [
       { name: 'WorkerEgress2', cidr: '10.1.0.0/24', az: 'us-east-1a' },
       { name: 'WorkerEgress3', cidr: '10.1.1.0/24', az: 'us-east-1b' },
       { name: 'WorkerEgress4', cidr: '10.1.2.0/24', az: 'us-east-1a' },
-    ];
+      { name: 'WorkerEgress5', cidr: '10.1.3.0/24', az: 'us-east-1b' },
+      { name: 'WorkerEgress6', cidr: '10.1.4.0/24', az: 'us-east-1b' },
+      { name: 'WorkerEgress7', cidr: '10.1.5.0/24', az: 'us-east-1b' },
+      { name: 'WorkerEgress8', cidr: '10.1.6.0/24', az: 'us-east-1b' },
+      { name: 'WorkerEgress9', cidr: '10.1.7.0/24', az: 'us-east-1a' },
+      { name: 'WorkerEgress10', cidr: '10.1.8.0/24', az: 'us-east-1a' },
+    ].slice(0, env.workerEgressCount);
 
     for (const def of egressDefs) {
       const eip = new CfnEIP(this, `${def.name}Eip`, {
