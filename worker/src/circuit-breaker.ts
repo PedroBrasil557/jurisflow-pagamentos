@@ -12,15 +12,18 @@
 //   - 'ok'       -> desfecho valido (quitado / nao_encontrado)
 //   - 'stress'   -> portal reclamando (indisponivel, resultado nao carregou, botao
 //                   nao habilitou = JS lento sob carga, etc.)
-//   - 'sentinel' -> pagina inesperada (captcha/manutencao/estrutura mudou): o pior.
+//   - 'sentinel' -> pagina inesperada (sem campo CPF). E FREQUENTE na base deste
+//     portal (~2% das consultas, medido em prod), entao conta como 'stress' comum e
+//     so escala o piso quando AGRUPA (>=3 seguidas ou >=4 na janela = assinatura de
+//     bloqueio/captcha) — NAO trava na primeira ocorrencia isolada.
 
 export type BreakerSignal = 'ok' | 'stress' | 'sentinel'
 
 export type PortalBreakerOptions = {
   // Injetavel para teste deterministico (default: relogio real).
   now?: () => number
-  // Piso travado (default degrau 2 = 2400ms ~= 1.500/h). Ao disparar paused ou
-  // sentinel, o intervalo efetivo nunca fica abaixo disto ate acao humana.
+  // Piso travado (default degrau 2 = 2400ms ~= 1.500/h). So e travado quando o
+  // breaker PAUSA (sobrecarga/bloqueio reais), nunca por uma sentinela isolada.
   floorIntervalMs?: number
 }
 
@@ -31,7 +34,11 @@ const MIN_SAMPLES = 10
 const SLOW_PCT = 0.3
 const PAUSE_PCT = 0.6
 const STRESS_STREAK = 5 // consecutivos -> pausa (generaliza "5 indisponivel")
-const SENTINEL_STREAK = 2 // consecutivos -> pausa
+// pagina_inesperada e evento de BASE frequente deste portal (~2,3% das consultas,
+// medido em prod), entao NAO trava na primeira: so escala quando AGRUPA (assinatura
+// de captcha/bloqueio, nao ruido). Limiares bem acima do baseline.
+const SENTINEL_STREAK = 3 // sentinelas consecutivas -> pausa (~1 em 80k por acaso)
+const SENTINEL_WINDOW = 4 // sentinelas na janela de 20 (~8x o baseline) -> pausa
 const SLOW_COOLDOWN_MS = 10 * 60_000
 const PAUSE_COOLDOWN_MS = 15 * 60_000
 const COOLDOWN_CAP_MS = 60 * 60_000
@@ -67,8 +74,8 @@ export class PortalBreaker {
     return this.now() < this.pausedUntil ? this.pausedUntil : 0
   }
 
-  // Piso de intervalo travado: 0 normalmente; floorMs (degrau 2) apos paused ou
-  // sentinel. NUNCA destrava sozinho — retomar a taxa alvo exige acao humana.
+  // Piso de intervalo travado: 0 normalmente; floorMs (degrau 2) apos uma PAUSA
+  // (sobrecarga/bloqueio reais). NUNCA destrava sozinho — retomar exige acao humana.
   floorIntervalMs(): number {
     return this.latched ? this.floorMs : 0
   }
@@ -77,6 +84,14 @@ export class PortalBreaker {
     let n = 0
     for (const s of this.ring) {
       if (s !== 'ok') n++
+    }
+    return n
+  }
+
+  private sentinelInWindow(): number {
+    let n = 0
+    for (const s of this.ring) {
+      if (s === 'sentinel') n++
     }
     return n
   }
@@ -104,32 +119,36 @@ export class PortalBreaker {
       this.consecutiveStress++
       this.consecutiveSentinel = 0
     } else {
-      // sentinel: pagina inesperada — o pior sinal. Um unico ja TRAVA o piso seguro.
+      // sentinel: pagina inesperada. Conta como stress (no % e no streak de stress)
+      // e alimenta os contadores especificos de sentinela — mas NAO trava sozinha.
       this.consecutiveStress++
       this.consecutiveSentinel++
-      if (!this.latched) {
-        this.latched = true
-        this.log('LATCHED', 'motivo=sentinel')
-      }
     }
 
     const samples = this.ring.length
     const ratio = samples > 0 ? this.stressInWindow() / samples : 0
 
-    const shouldPause =
-      (samples >= MIN_SAMPLES && ratio >= PAUSE_PCT) ||
-      this.consecutiveStress >= STRESS_STREAK ||
-      this.consecutiveSentinel >= SENTINEL_STREAK
+    // Motivo do pause (o 1o que casar) — o piso so trava por um destes sinais REAIS.
+    let pauseReason: string | null = null
+    if (samples >= MIN_SAMPLES && ratio >= PAUSE_PCT) {
+      pauseReason = 'stress_pct'
+    } else if (this.consecutiveStress >= STRESS_STREAK) {
+      pauseReason = 'stress_streak'
+    } else if (this.consecutiveSentinel >= SENTINEL_STREAK) {
+      pauseReason = 'sentinel_streak'
+    } else if (this.sentinelInWindow() >= SENTINEL_WINDOW) {
+      pauseReason = 'sentinel_burst'
+    }
     const shouldSlow = samples >= MIN_SAMPLES && ratio >= SLOW_PCT
 
-    if (shouldPause) {
-      this.enterPaused(now)
+    if (pauseReason) {
+      this.enterPaused(now, pauseReason)
     } else if (shouldSlow && now >= this.slowUntil) {
       this.enterSlow(now)
     }
   }
 
-  private enterPaused(now: number): void {
+  private enterPaused(now: number, reason: string): void {
     // Histerese: re-trip dentro de HEALTHY_RESET dobra o cooldown (teto = CAP);
     // 30min saudavel zera o multiplicador.
     this.pauseMultiplier =
@@ -151,7 +170,10 @@ export class PortalBreaker {
     }
     this.lastTripAt = now
     this.resetWindow()
-    this.log('paused', `cooldown=${Math.round(cooldown / 1000)}s`)
+    this.log(
+      'paused',
+      `motivo=${reason} cooldown=${Math.round(cooldown / 1000)}s`,
+    )
   }
 
   private enterSlow(now: number): void {

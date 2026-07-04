@@ -59,21 +59,36 @@ test('5 estresses consecutivos pausam mesmo com < 10 amostras', () => {
   assert.equal(b.floorIntervalMs(), FLOOR)
 })
 
-test('um unico sentinel TRAVA o piso imediatamente sem pausar', () => {
+test('1 sentinela isolada NAO trava o piso (e evento de base do portal)', () => {
   const { now } = clock()
   const b = new PortalBreaker({ now })
   b.record('sentinel')
-  assert.equal(b.floorIntervalMs(), FLOOR, 'sentinel trava o piso na hora')
-  assert.equal(b.pausedUntilMs(), 0, '1 sentinel nao pausa (precisa de 2)')
-  assert.equal(b.intervalFactor(), 1, 'sem slow ainda; so o piso segura a taxa')
+  assert.equal(b.floorIntervalMs(), 0, '1 sentinela nao trava o piso')
+  assert.equal(b.pausedUntilMs(), 0, 'e nao pausa')
+  assert.equal(b.intervalFactor(), 1, 'segue no degrau alvo (closed)')
 })
 
-test('2 sentinels consecutivos pausam', () => {
+test('3 sentinelas consecutivas pausam e travam (assinatura de bloqueio)', () => {
   const { now } = clock()
   const b = new PortalBreaker({ now })
   b.record('sentinel')
   b.record('sentinel')
-  assert.ok(b.pausedUntilMs() > now())
+  assert.equal(b.pausedUntilMs(), 0, '2 sentinelas seguidas ainda nao pausam')
+  b.record('sentinel')
+  assert.ok(b.pausedUntilMs() > now(), 'a 3a sentinela seguida pausa')
+  assert.equal(b.floorIntervalMs(), FLOOR)
+})
+
+test('4 sentinelas na janela (rajada, nao consecutivas) pausam e travam', () => {
+  const { now } = clock()
+  const b = new PortalBreaker({ now })
+  // Intercaladas com ok para isolar do streak de stress e de sentinela: so o
+  // gatilho de RAJADA (>=4 na janela) pode disparar.
+  const first = ['sentinel', 'ok', 'sentinel', 'ok', 'sentinel', 'ok'] as const
+  for (const s of first) b.record(s) // 3 sentinelas na janela
+  assert.equal(b.pausedUntilMs(), 0, '3 sentinelas na janela ainda nao pausam')
+  b.record('sentinel') // 4a sentinela na janela
+  assert.ok(b.pausedUntilMs() > now(), '4 sentinelas na janela pausam')
   assert.equal(b.floorIntervalMs(), FLOOR)
 })
 
