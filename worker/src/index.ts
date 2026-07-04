@@ -38,6 +38,9 @@ const API_URL = (process.env.API_URL ?? 'http://localhost:3556').replace(
   '',
 )
 const TOKEN = process.env.INTERNAL_API_TOKEN ?? 'dev-internal-token-change-me'
+// Identidade da replica na topologia multi-IP (1 task = 1 IP de saida). Vai na
+// telemetria e nos logs de boot p/ analise per-IP no Logs Insights.
+const WORKER_ID = process.env.WORKER_ID ?? 'default'
 
 // Fallbacks robustos: um valor invalido (ex.: "5s") nao pode virar NaN.
 function envInt(name: string, fallback: number, min: number): number {
@@ -80,6 +83,22 @@ function touchHeartbeat(): void {
 
 // Estado compartilhado pelos slots (single-thread; sem corrida real).
 type SharedState = { running: boolean; connectedLogged: boolean }
+
+// Loga o IP publico de saida no boot (best-effort, nunca derruba o worker): prova
+// no CloudWatch que cada replica multi-IP saiu por um NAT/EIP distinto.
+async function logEgressIp(): Promise<void> {
+  try {
+    const res = await fetch('https://checkip.amazonaws.com', {
+      signal: AbortSignal.timeout(5000),
+    })
+    const ip = (await res.text()).trim()
+    console.log(`[worker] worker=${WORKER_ID} egress_ip=${ip}`)
+  } catch (error) {
+    console.log(
+      `[worker] worker=${WORKER_ID} egress_ip=indisponivel (${(error as Error).message})`,
+    )
+  }
+}
 
 // Mapeia o desfecho de uma consulta ao sinal que o freio consome. 'cpf_invalido'
 // e nossa validacao local (nunca tocou o portal) -> nao conta. 'pagina_inesperada'
@@ -176,6 +195,7 @@ async function processJob(
       console.log(
         `[telemetria] ${JSON.stringify({
           ts: new Date().toISOString(),
+          worker: WORKER_ID,
           source: job.source,
           result: outcome.result,
           reason: outcome.reason ?? null,
@@ -313,8 +333,9 @@ async function main(): Promise<void> {
   heartbeat.unref()
 
   console.log(
-    `[worker] iniciado. API=${API_URL} poll=${POLL_MS}ms base_interval=${MIN_INTERVAL_MS}ms concurrency=${CONCURRENCY} slow_start=${SLOW_START_MS}ms breaker=${BREAKER_ENABLED} block_resources=${BLOCK_RESOURCES}`,
+    `[worker] iniciado. worker=${WORKER_ID} API=${API_URL} poll=${POLL_MS}ms base_interval=${MIN_INTERVAL_MS}ms concurrency=${CONCURRENCY} slow_start=${SLOW_START_MS}ms breaker=${BREAKER_ENABLED} block_resources=${BLOCK_RESOURCES}`,
   )
+  await logEgressIp()
 
   // Pool: N slots concorrentes drenando as duas filas sob um espacador global.
   // SLOW-START: cria os slots escalonados (0 -> N ao longo de SLOW_START_MS) para

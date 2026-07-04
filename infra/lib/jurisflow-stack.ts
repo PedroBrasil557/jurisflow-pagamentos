@@ -13,7 +13,7 @@ export class JurisflowAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const { vpc } = new Vpc(this, 'Vpc');
+    const { vpc, workerEgressSubnets } = new Vpc(this, 'Vpc');
 
     const { databaseUrl } = new Database(this, 'Database', {
       vpc,
@@ -31,6 +31,8 @@ export class JurisflowAppStack extends cdk.Stack {
     const worker = new Worker(this, 'Worker', {
       vpc,
       apiUrl,
+      // Multi-IP: subnets de egress dedicadas (1 NAT/IP cada) p/ as replicas 2-4.
+      egressSubnets: workerEgressSubnets,
     });
     // Ordena o deploy: o serviço ECS do worker só é atualizado DEPOIS de o serviço
     // da API estabilizar (novas tasks saudáveis). Como a migração (0031) roda no
