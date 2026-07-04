@@ -22,7 +22,7 @@ import {
   useSaveScannerProvider,
 } from '../services/settings.mutations'
 import { settingsStatusOptions } from '../services/settings.queries'
-import type { KeyStatus } from '../services/settings.service'
+import type { KeyStatus, ScannerProvider } from '../services/settings.service'
 
 const sourceLabels = {
   database: 'painel',
@@ -144,8 +144,6 @@ function KeyCard({
   )
 }
 
-type ScannerProvider = 'scanbot' | 'docaligner'
-
 function ScannerProviderSelect({
   provider,
   scanbotConfigured,
@@ -163,6 +161,12 @@ function ScannerProviderSelect({
       label: 'Navegador (IA)',
       description:
         'Deteccao de bordas por IA, sem license. Roda no navegador. Padrao.',
+    },
+    {
+      value: 'scan-hd' as const,
+      label: 'Navegador (IA HD)',
+      description:
+        'Mesmo scanner com foto do sensor no Android (12-50 MP) e aviso de foto tremida/reflexo/sombra.',
     },
     {
       value: 'scanbot' as const,

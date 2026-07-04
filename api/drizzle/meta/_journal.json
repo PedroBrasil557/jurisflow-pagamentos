@@ -225,6 +225,13 @@
       "when": 1781500300000,
       "tag": "0031_quitacao_claim_token",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1781500400000,
+      "tag": "0032_batch_file_source",
+      "breakpoints": true
     }
   ]
 }

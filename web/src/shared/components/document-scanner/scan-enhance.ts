@@ -8,6 +8,8 @@
 //   4. Nitidez (unsharp mask) sobre a luminancia.
 // Preto e branco usa limiar adaptativo (Bradley/Wellner).
 
+import { rec601Luma } from './luminance'
+
 export type FilterMode = 'color' | 'gray' | 'bw'
 
 // Grade do fundo: ~96 celulas no lado maior. Celula pega o valor mais CLARO
@@ -257,7 +259,7 @@ function sharpen(data: Uint8ClampedArray, width: number, height: number) {
   const n = width * height
   const luma = new Uint8ClampedArray(n)
   for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    luma[j] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+    luma[j] = rec601Luma(data[i], data[i + 1], data[i + 2])
   }
 
   const blurred = boxBlur(luma, width, height, SHARPEN_RADIUS)
@@ -289,7 +291,7 @@ export function enhanceWithFilter(
   if (mode === 'bw') {
     const gray = new Uint8ClampedArray(width * height)
     for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-      gray[j] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+      gray[j] = rec601Luma(data[i], data[i + 1], data[i + 2])
     }
     const bw = sauvolaThreshold(gray, width, height)
     for (let i = 0, j = 0; i < data.length; i += 4, j++) {
@@ -333,12 +335,12 @@ export function enhanceWithFilter(
       let b = (data[idx + 2] * fB - 128) * contrast + 128
 
       if (isGray) {
-        const lum = r * 0.299 + g * 0.587 + b * 0.114
+        const lum = rec601Luma(r, g, b)
         r = lum
         g = lum
         b = lum
       } else {
-        const lum = r * 0.299 + g * 0.587 + b * 0.114
+        const lum = rec601Luma(r, g, b)
         r = lum + (r - lum) * SATURATION
         g = lum + (g - lum) * SATURATION
         b = lum + (b - lum) * SATURATION

@@ -1,4 +1,5 @@
 import type { InferResponseType } from 'hono/client'
+import type { ScannerProvider } from '@/shared/components/document-scanner/scanbot-license'
 import { apiClient } from '@/shared/services/api-client'
 import { getErrorMessage } from '@/shared/services/api-error'
 
@@ -16,7 +17,8 @@ export type SettingsStatus = InferResponseType<
   200
 >
 export type KeyStatus = SettingsStatus['anthropic']
-export type ScannerProvider = 'scanbot' | 'docaligner'
+// Fonte unica do union no web: o modulo do scanner (scanbot-license.ts).
+export type { ScannerProvider }
 
 export async function fetchSettingsStatus(): Promise<SettingsStatus> {
   const response = await settingsClientRoute.$get()

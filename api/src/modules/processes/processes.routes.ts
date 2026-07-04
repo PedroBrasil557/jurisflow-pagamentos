@@ -179,7 +179,7 @@ export const processRoutes = new Hono<AppBindings>()
       const { currentUser, perms } = await getCurrentUserWithPermissions(c)
       assertCan(perms, 'create')
       assertCan(perms, 'uploadChecklist')
-      const { uploadId, objectKey } = c.req.valid('json')
+      const { uploadId, objectKey, pageTelemetry } = c.req.valid('json')
 
       // Idempotencia (escopada ao dono): retry de um complete ja concluido
       // devolve o mesmo processo — e nunca o de outro usuario.
@@ -212,6 +212,10 @@ export const processRoutes = new Hono<AppBindings>()
           userId: currentUser.id,
           uploadId,
           processId: draft.id,
+          // Telemetria de captura por pagina (resolucao final + bruta, fonte,
+          // metricas de qualidade). Permite medir em prod o caminho de captura,
+          // a resolucao real dos aparelhos e calibrar os limiares do gate.
+          pageTelemetry,
         })
 
         return c.json({ processId: draft.id, batchFileId }, 202)

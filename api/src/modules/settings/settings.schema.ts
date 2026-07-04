@@ -5,7 +5,8 @@ export const appSettings = pgTable('app_settings', {
   id: text('id').primaryKey(),
   anthropicApiKey: text('anthropic_api_key'),
   scanbotLicenseKey: text('scanbot_license_key'),
-  // Servico de digitalizacao escolhido no painel: 'scanbot' | 'web'.
+  // Servico de digitalizacao escolhido no painel:
+  // 'scanbot' | 'docaligner' | 'scan-hd' ('web' e legado -> docaligner).
   scannerProvider: text('scanner_provider'),
   // Liga a auto-aplicacao do ownerType pela analise do contrato Caixa. Default
   // false (modo shadow): a analise registra evidencia mas NAO altera o processo.

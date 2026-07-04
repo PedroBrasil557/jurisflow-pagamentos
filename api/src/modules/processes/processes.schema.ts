@@ -459,6 +459,11 @@ export const processBatchFile = pgTable(
     originalFileName: text('original_file_name').notNull(),
     mimeType: text('mime_type').notNull(),
     sizeInBytes: integer('size_in_bytes').notNull(),
+    // Origem ESTRUTURAL do arquivo: 'scan' (foto da camera, elegivel ao realce
+    // server-side) | 'import' (PDF enviado — rasterizar degradaria). Nunca
+    // discriminar pelo originalFileName: no import ele vem livre do usuario.
+    // Default 'import' cobre linhas legadas (scan antigo fica sem realce, ok).
+    source: text('source').notNull().default('import'),
     uploadedByUserId: text('uploaded_by_user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),

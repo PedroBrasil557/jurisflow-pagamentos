@@ -70,6 +70,19 @@ const envSchema = z.object({
     .default('process-documents'),
   ANTHROPIC_API_KEY: z.string().trim().optional(),
   ANTHROPIC_MODEL: z.string().trim().min(1).default('claude-opus-4-8'),
+  // URL do microservico de realce do scan (scan-enhance). Vazio/ausente =
+  // desligado (a ingestao segue com o PDF original, comportamento atual).
+  // Exige esquema http(s): sem ele, 'scan-enhance:8000' passaria no parse de
+  // URL (protocol 'scan-enhance:'), o boot aceitaria e todo fetch falharia
+  // em silencio (best-effort engole) — misconfiguracao invisivel.
+  SCAN_ENHANCE_URL: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => value || undefined)
+    .refine((value) => value === undefined || /^https?:\/\/\S+$/.test(value), {
+      message: 'SCAN_ENHANCE_URL deve ser uma URL http(s) completa.',
+    }),
   GEOIP_ENABLED: z
     .enum(['true', 'false'])
     .default('true')
@@ -107,6 +120,7 @@ const parsedEnv = envSchema.parse({
   S3_PROCESS_DOCUMENTS_BUCKET: process.env.S3_PROCESS_DOCUMENTS_BUCKET,
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
+  SCAN_ENHANCE_URL: process.env.SCAN_ENHANCE_URL,
   GEOIP_ENABLED: process.env.GEOIP_ENABLED,
   GEOIP_API_URL: process.env.GEOIP_API_URL,
   INTERNAL_API_TOKEN: process.env.INTERNAL_API_TOKEN,
@@ -139,6 +153,7 @@ export const env = {
     apiKey: parsedEnv.ANTHROPIC_API_KEY,
     model: parsedEnv.ANTHROPIC_MODEL,
   },
+  scanEnhanceUrl: parsedEnv.SCAN_ENHANCE_URL,
   geoip: {
     enabled: parsedEnv.GEOIP_ENABLED,
     apiUrl: parsedEnv.GEOIP_API_URL,

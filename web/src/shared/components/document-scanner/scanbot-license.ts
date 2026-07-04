@@ -34,14 +34,18 @@ export function resolveScanbotKey(apiKey: string | null | undefined): string {
 }
 
 // --- Servico de digitalizacao escolhido no painel ---
-// 'docaligner' = scanner do navegador com deteccao por IA (padrao). 'scanbot' =
-// SDK licenciado. O antigo 'web' (OpenCV/jscanify) foi removido.
-export type ScannerProvider = 'scanbot' | 'docaligner'
+// 'docaligner' = scanner do navegador com deteccao por IA (padrao). 'scan-hd' =
+// mesmo scanner em modo HD (still do sensor no Android + gate de qualidade).
+// 'scanbot' = SDK licenciado. O antigo 'web' (OpenCV/jscanify) foi removido.
+export type ScannerProvider = 'scanbot' | 'docaligner' | 'scan-hd'
 
 // Normaliza o valor salvo: migra o legado 'web' (e qualquer valor desconhecido)
-// para 'docaligner'. So 'scanbot' permanece scanbot.
+// para 'docaligner'. So 'scanbot' e 'scan-hd' permanecem como estao.
 function normalizeProvider(value: string | null | undefined): ScannerProvider {
-  return value === 'scanbot' ? 'scanbot' : 'docaligner'
+  if (value === 'scanbot' || value === 'scan-hd') {
+    return value
+  }
+  return 'docaligner'
 }
 
 async function fetchScannerProvider(): Promise<ScannerProvider> {

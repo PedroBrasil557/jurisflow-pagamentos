@@ -70,7 +70,9 @@ function drawBitmapToCanvas(
 // decodificar os pixels — le so os primeiros KBs via blob.slice. Retorna null se
 // nao for JPEG ou o header nao trouxer o SOF nesse trecho. E o que permite pedir
 // o resize direto ao decoder sem antes materializar os 50 MP so para medir.
-async function readJpegDimensions(
+// Exportado: a estrategia de captura HD usa as dimensoes do header para detectar
+// still "falso" (aparelho que devolve o frame de video no takePhoto).
+export async function readJpegDimensions(
   source: Blob,
 ): Promise<{ width: number; height: number } | null> {
   try {
@@ -122,7 +124,7 @@ export async function decodeToWorkingCanvas(
     // Mede pelo header (sem decode). Com as dimensoes, pede o resize direto ao
     // decoder — nunca materializa a imagem cheia (o pico de ~200 MB de 50 MP).
     const dims = await readJpegDimensions(source)
-    let bitmap: ImageBitmap
+    let bitmap: ImageBitmap | null = null
     if (dims) {
       const target = fitLongEdge(dims.width, dims.height, maxLongEdge)
       try {
@@ -133,26 +135,30 @@ export async function decodeToWorkingCanvas(
         })
       } catch {
         // Navegador sem suporte a resize: decodifica cheio e reduz no draw.
-        bitmap = await createImageBitmap(source)
+        bitmap = await createImageBitmap(source).catch(() => null)
       }
     } else {
       // Nao-JPEG (PNG/HEIC): sem header barato, decodifica e reduz ao desenhar.
-      bitmap = await createImageBitmap(source)
+      // HEIC pode falhar no createImageBitmap mesmo em WebKit — cai no <img>
+      // abaixo, que usa o decoder nativo do sistema (Safari decodifica HEIC la).
+      bitmap = await createImageBitmap(source).catch(() => null)
     }
-    try {
-      // Alvo recalculado a partir do bitmap: se o resize foi honrado, ja veio no
-      // tamanho (draw identidade); se nao, reduz aqui.
-      return drawBitmapToCanvas(
-        bitmap,
-        fitLongEdge(bitmap.width, bitmap.height, maxLongEdge),
-      )
-    } finally {
-      bitmap.close()
+    if (bitmap) {
+      try {
+        // Alvo recalculado a partir do bitmap: se o resize foi honrado, ja veio
+        // no tamanho (draw identidade); se nao, reduz aqui.
+        return drawBitmapToCanvas(
+          bitmap,
+          fitLongEdge(bitmap.width, bitmap.height, maxLongEdge),
+        )
+      } finally {
+        bitmap.close()
+      }
     }
   }
 
-  // Fallback sem createImageBitmap: <img> + draw reduzido (decodifica cheio uma
-  // vez — aceitavel so neste caminho legado).
+  // Fallback sem createImageBitmap (ou com decode recusado, ex.: HEIC): <img> +
+  // draw reduzido (decodifica cheio uma vez — aceitavel so neste caminho).
   const url = URL.createObjectURL(source)
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -194,6 +200,24 @@ export function downscaleCanvasToLongEdge(
   canvas.width = target.width
   canvas.height = target.height
   canvas.getContext('2d')?.drawImage(source, 0, 0, target.width, target.height)
+  return canvas
+}
+
+// Gira um canvas 90 graus (sentido horario, o da montagem tipica do sensor
+// traseiro Android). Usado quando o still do ImageCapture vem na orientacao do
+// sensor (paisagem) com o viewfinder em retrato. Retorna a propria fonte se o
+// contexto 2d nao estiver disponivel.
+export function rotateCanvas90(source: HTMLCanvasElement): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = source.height
+  canvas.height = source.width
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return source
+  }
+  ctx.translate(canvas.width, 0)
+  ctx.rotate(Math.PI / 2)
+  ctx.drawImage(source, 0, 0)
   return canvas
 }
 
