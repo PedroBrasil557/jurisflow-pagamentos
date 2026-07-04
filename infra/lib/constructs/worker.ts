@@ -8,6 +8,7 @@ import {
   Vpc,
 } from 'aws-cdk-lib/aws-ec2';
 import {
+  AvailabilityZoneRebalancing,
   Cluster,
   ContainerImage,
   FargateService,
@@ -169,6 +170,11 @@ export class Worker extends Construct {
         desiredCount: 1,
         minHealthyPercent: 0,
         maxHealthyPercent: 100,
+        // O ECS rejeita maxHealthyPercent <= 100 com AZ rebalancing ligado (o
+        // default do CDK e ENABLED) — foi o que derrubou o 1o deploy. Rebalancear
+        // AZ nao faz sentido aqui: cada service tem 1 task (e as replicas 2-4 sao
+        // single-subnet por design, p/ manter o NAT/IP deterministico).
+        availabilityZoneRebalancing: AvailabilityZoneRebalancing.DISABLED,
         assignPublicIp: false,
         securityGroups: [securityGroup],
         vpcSubnets: replica.vpcSubnets,
