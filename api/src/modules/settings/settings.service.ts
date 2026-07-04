@@ -1,7 +1,9 @@
 import { eq } from 'drizzle-orm'
+import type { z } from 'zod'
 import { env } from '../../shared/config/env'
 import { db } from '../../shared/db'
 import { appSettings } from './settings.schema'
+import type { saveScannerProviderPayloadSchema } from './settings.schemas'
 
 const SETTINGS_ID = 'default'
 
@@ -205,9 +207,13 @@ export async function saveScanbotLicenseKey(key: string): Promise<KeyStatus> {
 
 // --- Servico de digitalizacao (escolha explicita no painel) ---
 
-// 'docaligner' = scanner do navegador com deteccao por IA (padrao). 'scanbot' =
-// SDK licenciado. O antigo 'web' (OpenCV/jscanify) foi removido e migra p/ docaligner.
-export type ScannerProvider = 'scanbot' | 'docaligner'
+// 'docaligner' = scanner do navegador com deteccao por IA (padrao). 'scan-hd' =
+// mesmo scanner em modo HD (still do sensor no Android + gate de qualidade).
+// 'scanbot' = SDK licenciado. O antigo 'web' (OpenCV/jscanify) foi removido e
+// migra p/ docaligner. Fonte unica: o enum do payload de save (settings.schemas).
+export type ScannerProvider = z.infer<
+  typeof saveScannerProviderPayloadSchema
+>['provider']
 
 // Provedor efetivo: o salvo no painel; se nao houver escolha, usa 'scanbot'
 // quando ha license configurada, senao 'docaligner'. Valores legados ('web') ou
@@ -225,6 +231,9 @@ export async function getScannerProvider(): Promise<ScannerProvider> {
   }
   if (stored === 'docaligner') {
     return 'docaligner'
+  }
+  if (stored === 'scan-hd') {
+    return 'scan-hd'
   }
   if (stored === 'web') {
     return 'docaligner'

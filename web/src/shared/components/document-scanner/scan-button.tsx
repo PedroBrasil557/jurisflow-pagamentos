@@ -3,6 +3,7 @@ import { ScanLine } from 'lucide-react'
 import { lazy, Suspense, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
+import type { ScanPageTelemetry } from './scan-telemetry'
 import {
   resolveScanbotKey,
   scanbotLicenseQuery,
@@ -18,7 +19,13 @@ const WebScannerDialog = lazy(() =>
 type ScanButtonProps = {
   // scanSessionId: id da sessao de captura (IndexedDB) para o consumidor limpar
   // apos o upload confirmar; null quando nao ha sessao persistida (Scanbot).
-  onComplete: (file: File, scanSessionId: string | null) => void
+  // pageTelemetry: resolucao/fonte/qualidade por pagina; so o scanner do
+  // navegador informa (ver scan-telemetry.ts).
+  onComplete: (
+    file: File,
+    scanSessionId: string | null,
+    pageTelemetry?: ScanPageTelemetry[],
+  ) => void
   disabled?: boolean
   label?: string
   className?: string
@@ -35,11 +42,14 @@ export function ScanButton({
   const providerQuery = useQuery(scannerProviderQuery)
   const licenseQuery = useQuery(scanbotLicenseQuery)
 
-  // Servico escolhido no painel de Configuracoes ('scanbot' | 'docaligner').
+  // Servico escolhido no painel ('scanbot' | 'docaligner' | 'scan-hd').
   const provider = providerQuery.data ?? 'docaligner'
+  // Modo HD do scanner do navegador: still do sensor (Android) + gate de
+  // qualidade. O fallback do Scanbot abre no modo padrao (comportamento estavel).
+  const hdMode = provider === 'scan-hd'
 
   async function handleClick() {
-    // DocAligner (IA): scanner do navegador, sem licenca. Detector unico.
+    // Scanner do navegador (IA), padrao ou HD — sem licenca. Detector unico.
     if (provider !== 'scanbot') {
       setOpen(true)
       return
@@ -96,10 +106,11 @@ export function ScanButton({
       {open ? (
         <Suspense fallback={null}>
           <WebScannerDialog
+            hdMode={hdMode}
             onClose={() => setOpen(false)}
-            onComplete={(file, scanSessionId) => {
+            onComplete={(file, scanSessionId, pageTelemetry) => {
               setOpen(false)
-              onComplete(file, scanSessionId)
+              onComplete(file, scanSessionId, pageTelemetry)
             }}
             open={open}
           />

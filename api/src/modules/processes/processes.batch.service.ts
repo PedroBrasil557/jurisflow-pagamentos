@@ -2,6 +2,10 @@ import { and, asc, eq, lt, ne, or } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import {
+  enhanceScanPdf,
+  isScanEnhanceEnabled,
+} from '../../shared/scan-enhance/client'
+import {
   buildImportStagingObjectKey,
   buildProcessBatchObjectKey,
   buildScanStagingObjectKey,
@@ -36,7 +40,10 @@ import {
 import { assertChecklistUploadAllowed } from './processes.checklist.service'
 import { ProcessServiceError } from './processes.errors'
 import { recordDocumentExtractionAudit } from './processes.extraction.audit'
-import { extractDocumentsFromFiles } from './processes.extraction.service'
+import {
+  extractDocumentsFromFiles,
+  MAX_FILE_SIZE_IN_BYTES,
+} from './processes.extraction.service'
 import { createProcessHistoryEntry } from './processes.history.service'
 import { importDocumentBundle } from './processes.import.service'
 import {
@@ -594,7 +601,43 @@ async function runIngestionWork(input: {
     )
   })
 
-  const file = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
+  // Realce server-side (scan-enhance): SO para arquivos com source='scan'
+  // (fotos de celular). Imports sao PDFs nato-digitais e seriam DEGRADADOS
+  // pela rasterizacao — por isso o discriminador e a coluna estrutural, nunca
+  // o originalFileName (que no import vem livre do usuario). BEST-EFFORT:
+  // falha => segue com o original, que permanece intacto no S3.
+  let workingBytes = new Uint8Array(bytes)
+  if (fileRecord.source === 'scan' && isScanEnhanceEnabled()) {
+    const enhanced = await enhanceScanPdf(workingBytes)
+    if (enhanced) {
+      // Guarda de tamanho: a rasterizacao INFLA o PDF (~6x medido). Acima do
+      // teto da extracao, usar o realcado viraria falha FATAL deterministica
+      // (413 -> retries re-rodando o realce -> dead-letter) num scan que
+      // extrairia bem com o original.
+      if (enhanced.bytes.length <= MAX_FILE_SIZE_IN_BYTES) {
+        workingBytes = enhanced.bytes
+        console.info('scan-enhance aplicado', {
+          processId: input.processId,
+          fileId: fileRecord.id,
+          bytesBefore: bytes.length,
+          bytesAfter: enhanced.bytes.length,
+          metrics: enhanced.metrics,
+        })
+      } else {
+        console.error(
+          'scan-enhance descartado: PDF realcado excede o teto da extracao (seguindo com o original)',
+          {
+            processId: input.processId,
+            fileId: fileRecord.id,
+            bytesBefore: bytes.length,
+            bytesAfter: enhanced.bytes.length,
+          },
+        )
+      }
+    }
+  }
+
+  const file = new File([workingBytes], fileRecord.originalFileName, {
     type: 'application/pdf',
   })
 
@@ -608,7 +651,10 @@ async function runIngestionWork(input: {
   // sanitizada (sem NUL) e validada (data/CPF/CEP), e o destino e so coluna `text`
   // vazia: a falha so pode ser TRANSITORIA (banco) -> o retry da fila resolve, e um
   // dead-letter raro e VISIVEL/alertavel (melhor que drift silencioso).
-  const { hasIdentity } = await applyExtractedFieldsToDraft(input.processId, fields)
+  const { hasIdentity } = await applyExtractedFieldsToDraft(
+    input.processId,
+    fields,
+  )
 
   const result = await importDocumentBundle({
     processId: input.processId,
@@ -629,7 +675,9 @@ async function runIngestionWork(input: {
     await recordDocumentExtractionAudit({
       processId: input.processId,
       fileId: fileRecord.id,
-      totalPages: await countPdfPages(bytes),
+      // Conta paginas do MESMO PDF que foi extraido/anexado (pos-realce, se
+      // aplicado) — a auditoria descreve o documento processado, nao o bruto.
+      totalPages: await countPdfPages(workingBytes),
       meta,
       outcome: result,
       durationMs: Date.now() - startedAt,
@@ -865,7 +913,9 @@ export async function assertScanUploadOwner(
   const [owned] = await db
     .select({ uploadId: scanUpload.uploadId })
     .from(scanUpload)
-    .where(and(eq(scanUpload.uploadId, uploadId), eq(scanUpload.userId, userId)))
+    .where(
+      and(eq(scanUpload.uploadId, uploadId), eq(scanUpload.userId, userId)),
+    )
     .limit(1)
 
   if (!owned) {
@@ -982,6 +1032,8 @@ export async function finalizeScanUpload(input: {
       originalFileName: SCAN_PDF_FILE_NAME,
       mimeType: 'application/pdf',
       sizeInBytes: input.sizeInBytes,
+      // Discriminador estrutural: habilita o realce server-side na ingestao.
+      source: 'scan',
       uploadedByUserId: input.actor.id,
       // Entra na fila duravel: o worker reivindica (claim+lease) e processa.
       splitStatus: 'queued',
@@ -1224,6 +1276,8 @@ export async function completeDocumentImport(input: {
           originalFileName: file.fileName,
           mimeType: 'application/pdf',
           sizeInBytes: head.sizeInBytes,
+          // PDF enviado (nato-digital possivel): NUNCA elegivel ao realce.
+          source: 'import',
           uploadedByUserId: input.actor.id,
           // Entra na fila duravel: o worker reivindica e processa.
           splitStatus: 'queued',

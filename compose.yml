@@ -41,6 +41,9 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-opus-4-8}"
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
+      # Realce server-side do scan (vazio = desligado; a ingestao segue com o
+      # PDF original).
+      SCAN_ENHANCE_URL: "http://scan-enhance:8000"
       # Admin master de dev = admin do seed. Demais admins recebem titulares
       # Caixa via perfil de permissoes.
       MASTER_ADMIN_CPFS: "12345678909"
@@ -83,6 +86,8 @@ services:
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-opus-4-8}"
       INTERNAL_API_TOKEN: "dev-internal-token-change-me"
+      # Realce server-side do scan (roda AQUI, no worker de ingestao).
+      SCAN_ENHANCE_URL: "http://scan-enhance:8000"
       INGESTION_POLL_MS: "3000"
       INGESTION_CONCURRENCY: "2"
       # Pool de conexoes baixo por replica (nao exaurir o Postgres ao escalar).
@@ -95,6 +100,28 @@ services:
         condition: service_healthy
       minio-create-buckets:
         condition: service_completed_successfully
+
+  # Realce server-side do scan (parte da alternativa "Scan HD"): recebe o PDF
+  # bruto da digitalizacao e devolve as paginas com iluminacao/sombra corrigidas
+  # e nitidez realcada, ANTES da classificacao por IA. Best-effort: se cair, a
+  # ingestao segue com o original.
+  scan-enhance:
+    build:
+      context: ./scan-enhance
+      dockerfile: Dockerfile
+    ports:
+      - "3560:8000"
+    restart: unless-stopped
+    # Teto de memoria: o realce rasteriza a 300 DPI; um PDF anomalo (MediaBox
+    # gigante) poderia alocar varios GB. Com o cap, o container e morto e
+    # reiniciado em vez de derrubar o host. O servico e best-effort — uma
+    # rejeicao aqui so faz a ingestao seguir com o PDF original.
+    mem_limit: 2g
+    healthcheck:
+      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\" || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   db:
     image: postgres:18-alpine

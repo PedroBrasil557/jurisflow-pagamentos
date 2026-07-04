@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import type { ScanPageTelemetry } from '@/shared/components/document-scanner/scan-telemetry'
 import type { ProcessFormValues } from '../process-form.types'
 import {
   createProcessViaScanRequest,
@@ -43,8 +44,14 @@ export function useCreateProcessViaScan() {
   return useMutation({
     mutationFn: (input: {
       pdf: Blob
+      pageTelemetry?: ScanPageTelemetry[]
       onProgress?: (fraction: number) => void
-    }) => createProcessViaScanRequest(input.pdf, input.onProgress),
+    }) =>
+      createProcessViaScanRequest(
+        input.pdf,
+        input.onProgress,
+        input.pageTelemetry,
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: processKeys.lists() })
     },

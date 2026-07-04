@@ -1,4 +1,6 @@
 import {
+  AlertTriangle,
+  Camera,
   Check,
   ChevronLeft,
   Crop,
@@ -11,11 +13,18 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { cn } from '#/lib/utils'
+import {
+  applyDocumentFocus,
+  captureHdShutter,
+  frameToCanvas,
+  isLikelyIOS,
+} from './capture-strategy'
 import { type DocAlignerStatus, useDocAlignerDetector } from './docaligner'
 import {
   canvasToJpegBlob,
   decodeToWorkingCanvas,
   downscaleCanvasToLongEdge,
+  readJpegDimensions,
   releaseCanvas,
 } from './image-normalize'
 import { enhanceWithFilter, type FilterMode } from './scan-enhance'
@@ -26,16 +35,34 @@ import {
   type StoredScanPage,
   saveScanPage,
 } from './scan-session-store'
+import type { ScanCaptureSource, ScanPageTelemetry } from './scan-telemetry'
 import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
 import { warpPerspectiveToCanvas } from './scan-warp'
 import type { CornerPoints } from './scanner-engine'
+import { assessPageQuality, type PageQuality } from './sharpness'
 
 type WebScannerDialogProps = {
   open: boolean
   onClose: () => void
+  // Modo HD (provider 'scan-hd'): still do sensor no shutter (Android/Blink),
+  // gate de qualidade (nitidez/glare/sombra) e botao "Alta resolucao" no iOS.
+  // Desligado = comportamento padrao do provider 'docaligner', intocado.
+  hdMode?: boolean
   // scanSessionId: id da sessao de captura (IndexedDB) para o uploader limpar
   // APOS o upload confirmar. null quando nao ha sessao persistida (ex.: Scanbot).
-  onComplete: (file: File, scanSessionId: string | null) => void
+  // pageTelemetry: resolucao/fonte/qualidade por pagina (a API loga no
+  // scan.complete para medir a captura em prod — ver scan-telemetry.ts).
+  onComplete: (
+    file: File,
+    scanSessionId: string | null,
+    pageTelemetry?: ScanPageTelemetry[],
+  ) => void
+}
+
+// De onde veio a imagem da pagina (telemetria por pagina).
+type PageCaptureMeta = {
+  source: ScanCaptureSource
+  rawLongEdgePx: number | null
 }
 
 type ScannedPage = {
@@ -50,6 +77,11 @@ type ScannedPage = {
   thumbUrl: string // object URL de `blob`, para a tira de revisao
   width: number
   height: number
+  // Gate de qualidade (modo HD): metricas medidas no recorte pre-filtro.
+  // null quando nao medido (modo padrao / contexto 2d indisponivel).
+  quality: PageQuality | null
+  // Fonte e resolucao bruta da captura (telemetria); null em pagina recuperada.
+  capture: PageCaptureMeta | null
 }
 
 // Teto de paginas por digitalizacao. Acima disso o PDF de imagens tende a
@@ -70,6 +102,22 @@ const FILTER_OPTIONS = [
   { label: 'Cinza', value: 'gray' },
   { label: 'P&B', value: 'bw' },
 ] as const
+
+// Mensagens do gate de qualidade (modo HD), por tipo de aviso.
+const QUALITY_WARNING_MESSAGES = {
+  blur: 'A ultima pagina pode estar tremida — confira a miniatura e refaca se necessario.',
+  glare:
+    'Ha reflexo de luz na ultima pagina — afaste do brilho e refaca se necessario.',
+  shadow:
+    'Ha sombra forte na ultima pagina — melhore a iluminacao e refaca se necessario.',
+} as const
+
+// Rotulo curto do badge de qualidade na revisao, por tipo de aviso.
+const QUALITY_WARNING_LABELS = {
+  blur: 'Tremida?',
+  glare: 'Reflexo?',
+  shadow: 'Sombra?',
+} as const
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y)
@@ -99,28 +147,22 @@ function fullFrameCorners(width: number, height: number): CornerPoints {
   }
 }
 
-// No iOS (todos os browsers usam WebKit) a camera nativa (input capture) entrega
-// resolucao/foco superiores ao quadro do video — atalho util na revisao.
-function isLikelyIOS(): boolean {
-  if (typeof navigator === 'undefined') {
-    return false
-  }
-  const ua = navigator.userAgent || ''
-  const iPadOS =
-    ua.includes('Macintosh') &&
-    typeof document !== 'undefined' &&
-    'ontouchend' in document
-  return /iPad|iPhone|iPod/.test(ua) || iPadOS
-}
-
 // Recorta pela perspectiva dos cantos e aplica o filtro. Opera sobre a imagem JA
 // NORMALIZADA (<=300 DPI) — devolve o canvas resultante (o chamador converte em
-// Blob, sem passar por dataUrl base64).
+// Blob, sem passar por dataUrl base64). `quality` (modo HD) e medida no recorte
+// ANTES do filtro (o unsharp do realce inflaria a metrica e mascararia foto
+// tremida).
 function renderCroppedPage(
   source: HTMLCanvasElement,
   corners: CornerPoints,
   filter: FilterMode,
-): { canvas: HTMLCanvasElement; width: number; height: number } {
+  measureQuality = false,
+): {
+  canvas: HTMLCanvasElement
+  width: number
+  height: number
+  quality: PageQuality | null
+} {
   const outWidth = Math.round(
     Math.max(
       distance(corners.topLeftCorner, corners.topRightCorner),
@@ -143,11 +185,13 @@ function renderCroppedPage(
     outHeight || source.height,
   )
 
+  const quality = measureQuality ? assessPageQuality(extracted) : null
   const filtered = enhanceWithFilter(extracted, filter)
   return {
     canvas: filtered,
     width: filtered.width,
     height: filtered.height,
+    quality,
   }
 }
 
@@ -177,6 +221,7 @@ function hapticTap() {
 export function WebScannerDialog({
   open,
   onClose,
+  hdMode = false,
   onComplete,
 }: WebScannerDialogProps) {
   // Detector DocAligner (IA): unico motor de deteccao no navegador. Se a IA nao
@@ -219,6 +264,22 @@ export function WebScannerDialog({
   const [filter, setFilter] = useState<FilterMode>('color')
   const [error, setError] = useState('')
   const [flash, setFlash] = useState(false)
+  // Aviso nao bloqueante do gate de qualidade (modo HD): pagina possivelmente
+  // tremida / com reflexo / com sombra. Some sozinho; a pagina JA FOI adicionada
+  // — o usuario decide se refaz olhando a miniatura.
+  const [qualityWarning, setQualityWarning] = useState('')
+  const qualityWarningTimerRef = useRef<number | null>(null)
+
+  function showQualityWarning(message: string) {
+    if (qualityWarningTimerRef.current !== null) {
+      window.clearTimeout(qualityWarningTimerRef.current)
+    }
+    setQualityWarning(message)
+    qualityWarningTimerRef.current = window.setTimeout(() => {
+      setQualityWarning('')
+      qualityWarningTimerRef.current = null
+    }, 5000)
+  }
   // Captura em voo: addPageFromCanvas faz um await (deteccao ~200-400ms) ANTES de
   // inserir a pagina em `pages`. O guard impede (a) duplo-toque no shutter e (b)
   // finalizar o PDF antes da pagina entrar — que dropava a ultima pagina
@@ -248,6 +309,16 @@ export function WebScannerDialog({
 
   const fileInputId = useId()
   const preferNativeCapture = isLikelyIOS()
+  // Tela para onde voltar apos a foto da camera nativa (iOS, modo HD): quem
+  // clicou na captura volta para a captura (loop de multiplas paginas); quem
+  // clicou na revisao volta para a revisao. Ref (nao state): so e lido no
+  // onChange do input.
+  const nativeReturnScreenRef = useRef<Screen>('review')
+
+  function openNativeCapture(returnTo: Screen) {
+    nativeReturnScreenRef.current = returnTo
+    fileInputRef.current?.click()
+  }
 
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => {
@@ -310,6 +381,11 @@ export function WebScannerDialog({
           // mantem a resolucao negociada inicialmente
         }
 
+        // Modo HD: foco continuo no documento (best-effort, so Android expoe).
+        if (hdMode) {
+          await applyDocumentFocus(track)
+        }
+
         if (!active) {
           stream.getTracks().forEach((t) => {
             t.stop()
@@ -335,7 +411,7 @@ export function WebScannerDialog({
       setVideoDim(null)
       setLiveCorners(null)
     }
-  }, [open, screen, cameraFailed, stopStream])
+  }, [open, screen, cameraFailed, stopStream, hdMode])
 
   // Reanexa o stream ao elemento de video ao voltar para a camera.
   useEffect(() => {
@@ -467,6 +543,17 @@ export function WebScannerDialog({
     pagesRef.current = pages
   }, [pages])
 
+  // Cancela o timer do aviso de qualidade ao desmontar: finalizar/descartar
+  // fecha o dialogo (o pai desmonta o componente) sem passar por handleClose,
+  // deixando um setTimeout pendente que dispararia setState em componente morto.
+  useEffect(() => {
+    return () => {
+      if (qualityWarningTimerRef.current !== null) {
+        window.clearTimeout(qualityWarningTimerRef.current)
+      }
+    }
+  }, [])
+
   const resetAll = useCallback(() => {
     stopStream()
     // Revoga os object URLs das miniaturas (evita vazamento).
@@ -524,6 +611,11 @@ export function WebScannerDialog({
     // IndexedDB — um fechamento acidental na revisao nao deve destruir as
     // paginas. A limpeza ocorre em: sucesso do upload (na action), descarte
     // EXPLICITO (handleDiscardAll) e TTL. Reabrir oferece recuperar.
+    if (qualityWarningTimerRef.current !== null) {
+      window.clearTimeout(qualityWarningTimerRef.current)
+      qualityWarningTimerRef.current = null
+    }
+    setQualityWarning('')
     stopStream()
     onClose()
   }
@@ -559,6 +651,10 @@ export function WebScannerDialog({
         thumbUrl: URL.createObjectURL(stored.blob),
         width: stored.width,
         height: stored.height,
+        // Metricas/fonte nao persistem no IndexedDB — pagina recuperada fica
+        // sem gate e sem telemetria de captura.
+        quality: null,
+        capture: null,
       }
     })
     pageIdRef.current = maxOrder
@@ -574,13 +670,19 @@ export function WebScannerDialog({
     setRecoverable(null)
   }
 
-  async function addPageFromCanvas(sourceCanvas: HTMLCanvasElement) {
+  // Retorna true quando a pagina ENTROU (false = rejeitada no teto) — os
+  // chamadores decidem navegacao/descarte com base nisso.
+  async function addPageFromCanvas(
+    sourceCanvas: HTMLCanvasElement,
+    capture: PageCaptureMeta | null = null,
+  ): Promise<boolean> {
     // Teto de paginas (previne dead-letter por documento grande demais na IA).
     if (pagesRef.current.length >= MAX_SCAN_PAGES) {
       setError(
         `Limite de ${MAX_SCAN_PAGES} paginas por digitalizacao. Finalize e escaneie o restante em outro documento.`,
       )
-      return
+      releaseCanvas(sourceCanvas)
+      return false
     }
     capturingRef.current = true
     setCapturing(true)
@@ -591,7 +693,14 @@ export function WebScannerDialog({
       const work = downscaleCanvasToLongEdge(sourceCanvas)
       const detected = await detectBest(work)
       const corners = detected ?? defaultCorners(work.width, work.height)
-      const rendered = renderCroppedPage(work, corners, filter)
+      const rendered = renderCroppedPage(work, corners, filter, hdMode)
+
+      // Gate de qualidade (modo HD): avisa sem bloquear — a pagina entra normal
+      // e o usuario decide refazer olhando a miniatura.
+      const firstWarning = rendered.quality?.warnings[0]
+      if (firstWarning) {
+        showQualityWarning(QUALITY_WARNING_MESSAGES[firstWarning])
+      }
 
       // Blobs (fora do heap de strings), nao dataUrl base64.
       const originalBlob = await canvasToJpegBlob(work)
@@ -621,6 +730,8 @@ export function WebScannerDialog({
           thumbUrl,
           width: rendered.width,
           height: rendered.height,
+          quality: rendered.quality,
+          capture,
         },
       ])
 
@@ -635,13 +746,14 @@ export function WebScannerDialog({
         height: rendered.height,
         createdAt: Date.now(),
       })
+      return true
     } finally {
       capturingRef.current = false
       setCapturing(false)
     }
   }
 
-  function handleShutter() {
+  async function handleShutter() {
     const video = videoRef.current
     if (!video?.videoWidth) {
       return
@@ -650,20 +762,57 @@ export function WebScannerDialog({
     if (capturingRef.current) {
       return
     }
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
+    // Teto de paginas checado ANTES de capturar: no modo HD o takePhoto custa
+    // ~1s + decode de um still inteiro — nao pagar isso para descartar depois.
+    if (pagesRef.current.length >= MAX_SCAN_PAGES) {
+      setError(
+        `Limite de ${MAX_SCAN_PAGES} paginas por digitalizacao. Finalize e escaneie o restante em outro documento.`,
+      )
       return
     }
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
     hapticTap()
-    // Flash visual de confirmacao (funciona em qualquer aparelho, iPhone
-    // incluso, onde a vibracao nao existe).
+    // Flash visual de confirmacao imediato (funciona em qualquer aparelho,
+    // iPhone incluso, onde a vibracao nao existe) — o takePhoto do modo HD pode
+    // levar ate ~1s.
     setFlash(true)
     window.setTimeout(() => setFlash(false), 130)
-    void addPageFromCanvas(canvas)
+
+    if (!hdMode) {
+      // Modo padrao: frame do video, comportamento intocado.
+      const canvas = frameToCanvas(video)
+      if (canvas) {
+        void addPageFromCanvas(canvas, {
+          source: 'frame',
+          rawLongEdgePx: Math.max(video.videoWidth, video.videoHeight),
+        })
+      }
+      return
+    }
+
+    // Modo HD: still do sensor (Android/Blink; feature-detect cobre o iOS
+    // futuro), com fallback pro frame. Trava ANTES do await do takePhoto: a
+    // trava do addPageFromCanvas so pega depois; sem isto, um duplo-toque
+    // dispararia duas fotos.
+    capturingRef.current = true
+    setCapturing(true)
+    try {
+      const track = streamRef.current?.getVideoTracks()[0] ?? null
+      const captured = await captureHdShutter({
+        video,
+        track,
+        // Decodifica o still JA REDUZIDO (nunca materializa os 50 MP).
+        decodeStill: (photo) => decodeToWorkingCanvas(photo),
+      })
+      if (captured) {
+        await addPageFromCanvas(captured.canvas, {
+          source: captured.source,
+          rawLongEdgePx: captured.rawLongEdgePx,
+        })
+      }
+    } finally {
+      capturingRef.current = false
+      setCapturing(false)
+    }
   }
 
   async function handleFilesSelected(
@@ -677,11 +826,25 @@ export function WebScannerDialog({
       return
     }
     try {
+      // Lado longo bruto da foto nativa (telemetria) — header JPEG, sem decode.
+      const dims = await readJpegDimensions(file)
       // Decodifica JA REDUZIDO (createImageBitmap com resize) — nao materializa
       // os 50 MP da camera nativa num canvas de ~200 MB.
       const canvas = await decodeToWorkingCanvas(file)
-      await addPageFromCanvas(canvas)
-      setScreen('review')
+      const added = await addPageFromCanvas(canvas, {
+        source: 'native',
+        rawLongEdgePx: dims ? Math.max(dims.width, dims.height) : null,
+      })
+      // Modo HD no iOS: volta para a tela de origem (botao da captura -> volta
+      // pra captura, emendando a proxima foto sem passar pela revisao). Demais
+      // casos vao para a revisao: pagina rejeitada no teto (o usuario precisa
+      // ver as 15 paginas + o erro), camera QUEBRADA (voltar para a tela de
+      // camera falha seria um loop de erro) e o fallback nao-iOS.
+      setScreen(
+        added && hdMode && preferNativeCapture && !cameraFailed
+          ? nativeReturnScreenRef.current
+          : 'review',
+      )
     } catch {
       setError('Nao foi possivel abrir a imagem selecionada.')
     }
@@ -738,7 +901,7 @@ export function WebScannerDialog({
     if (!(editingId && editCanvas && editCorners)) {
       return
     }
-    const rendered = renderCroppedPage(editCanvas, editCorners, filter)
+    const rendered = renderCroppedPage(editCanvas, editCorners, filter, hdMode)
     const blob = await canvasToJpegBlob(rendered.canvas)
     releaseCanvas(rendered.canvas)
     const thumbUrl = URL.createObjectURL(blob)
@@ -758,10 +921,12 @@ export function WebScannerDialog({
           thumbUrl,
           width: rendered.width,
           height: rendered.height,
+          quality: rendered.quality,
         }
       }),
     )
     // Atualiza a copia duravel (mesmo id/sortOrder — carregado da propria pagina).
+    // A telemetria de captura (page.capture) e preservada pelo spread acima.
     if (sessionIdRef.current && editedPage) {
       void saveScanPage({
         id: editedId,
@@ -819,7 +984,31 @@ export function WebScannerDialog({
       // falhar em rede movel — a sessao duravel precisa sobreviver a isso. O
       // uploader limpa via `scanSessionId` APOS o upload confirmar. Fechar/cancelar
       // (handleClose) e o TTL cobrem os demais casos.
-      onComplete(file, sessionIdRef.current || null)
+      onComplete(
+        file,
+        sessionIdRef.current || null,
+        pages.map((page): ScanPageTelemetry => {
+          const rounded = (value: number, places: number) => {
+            const factor = 10 ** places
+            return Math.round(value * factor) / factor
+          }
+          return {
+            longEdgePx: Math.max(page.width, page.height),
+            ...(page.capture?.rawLongEdgePx
+              ? { rawLongEdgePx: page.capture.rawLongEdgePx }
+              : {}),
+            ...(page.capture ? { source: page.capture.source } : {}),
+            ...(page.quality
+              ? {
+                  sharpness: rounded(page.quality.sharpness, 1),
+                  tenengrad: rounded(page.quality.tenengrad, 1),
+                  glareRatio: rounded(page.quality.glareRatio, 3),
+                  shadowRatio: rounded(page.quality.shadowRatio, 3),
+                }
+              : {}),
+          }
+        }),
+      )
     } catch (finishError) {
       setError(
         finishError instanceof Error
@@ -859,6 +1048,12 @@ export function WebScannerDialog({
             </div>
           ) : null}
 
+          {qualityWarning && !error ? (
+            <div className="absolute inset-x-0 top-[calc(env(safe-area-inset-top)+0.5rem)] z-20 mx-auto w-fit max-w-[90%] rounded-md bg-amber-500 px-3 py-2 text-center text-xs text-black">
+              {qualityWarning}
+            </div>
+          ) : null}
+
           {recoverable ? (
             <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 px-6">
               <div className="w-full max-w-sm rounded-xl bg-background p-5 text-foreground shadow-xl">
@@ -891,6 +1086,7 @@ export function WebScannerDialog({
 
           {screen === 'camera' ? (
             <CameraScreen
+              atPageLimit={pages.length >= MAX_SCAN_PAGES}
               boxRef={measureCameraBox}
               cameraFailed={cameraFailed}
               cameraReady={cameraReady}
@@ -899,10 +1095,11 @@ export function WebScannerDialog({
               filter={filter}
               fit={fit}
               liveCorners={liveCorners}
+              nativeMode={hdMode && preferNativeCapture}
               onClose={handleClose}
-              onOpenNative={() => fileInputRef.current?.click()}
+              onOpenNative={() => openNativeCapture('camera')}
               onOpenReview={() => setScreen('review')}
-              onShutter={handleShutter}
+              onShutter={() => void handleShutter()}
               pagesCount={pages.length}
               lastThumb={lastPage?.thumbUrl}
               setFilter={setFilter}
@@ -914,13 +1111,14 @@ export function WebScannerDialog({
 
           {screen === 'review' ? (
             <ReviewScreen
+              atPageLimit={pages.length >= MAX_SCAN_PAGES}
               capturing={capturing}
               onAddMore={() => setScreen('camera')}
               onClose={handleClose}
               onEdit={openEdit}
               onDiscardAll={handleDiscardAll}
               onFinish={handleFinish}
-              onNativeCapture={() => fileInputRef.current?.click()}
+              onNativeCapture={() => openNativeCapture('review')}
               onRemove={handleRemovePage}
               pages={pages}
               preferNativeCapture={preferNativeCapture}
@@ -1082,6 +1280,9 @@ function CornerOverlay({
 }
 
 type CameraScreenProps = {
+  // No teto de paginas: desabilita shutter/captura nativa (a captura seria
+  // descartada pela guarda — no HD custaria um takePhoto de ~1s a toa).
+  atPageLimit: boolean
   boxRef: React.Ref<HTMLDivElement>
   cameraFailed: boolean
   cameraReady: boolean
@@ -1100,9 +1301,15 @@ type CameraScreenProps = {
   videoDim: { w: number; h: number } | null
   videoRef: React.RefObject<HTMLVideoElement | null>
   onVideoMeta: (w: number, h: number) => void
+  // iOS + modo HD (WebKit sem ImageCapture): mostra o botao secundario "Alta
+  // resolucao" sobre o viewfinder — abre a camera nativa (still do sensor) e
+  // volta para esta tela. O shutter principal continua no quadro do video (UX
+  // de borda ao vivo vence; sair do app a cada pagina foi rejeitado em uso real).
+  nativeMode: boolean
 }
 
 function CameraScreen({
+  atPageLimit,
   boxRef,
   cameraFailed,
   cameraReady,
@@ -1111,6 +1318,7 @@ function CameraScreen({
   filter,
   fit,
   liveCorners,
+  nativeMode,
   onClose,
   onOpenNative,
   onOpenReview,
@@ -1173,6 +1381,17 @@ function CameraScreen({
                 Iniciando camera...
               </div>
             ) : null}
+            {nativeMode ? (
+              <button
+                className="absolute bottom-2 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/50 px-3 py-1.5 text-xs text-white/90 backdrop-blur-sm disabled:opacity-40"
+                disabled={capturing || atPageLimit}
+                onClick={onOpenNative}
+                type="button"
+              >
+                <Camera className="size-3.5" />
+                Alta resolucao
+              </button>
+            ) : null}
           </>
         )}
       </div>
@@ -1190,7 +1409,7 @@ function CameraScreen({
         <button
           aria-label="Capturar"
           className="flex size-18 items-center justify-center rounded-full ring-4 ring-white/80 disabled:opacity-40"
-          disabled={!cameraReady || capturing}
+          disabled={!cameraReady || capturing || atPageLimit}
           onClick={onShutter}
           type="button"
         >
@@ -1236,6 +1455,8 @@ function CameraScreen({
 }
 
 type ReviewScreenProps = {
+  // No teto de paginas: desabilita a captura nativa (seria descartada).
+  atPageLimit: boolean
   capturing: boolean
   onAddMore: () => void
   onClose: () => void
@@ -1249,6 +1470,7 @@ type ReviewScreenProps = {
 }
 
 function ReviewScreen({
+  atPageLimit,
   capturing,
   onAddMore,
   onClose,
@@ -1308,6 +1530,17 @@ function ReviewScreen({
                 <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 text-[10px] font-medium text-white">
                   {index + 1}
                 </span>
+                {page.quality && page.quality.warnings.length > 0 ? (
+                  <span
+                    className="absolute bottom-1 right-1 flex items-center gap-1 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-medium text-black"
+                    title={page.quality.warnings
+                      .map((w) => QUALITY_WARNING_MESSAGES[w])
+                      .join(' ')}
+                  >
+                    <AlertTriangle className="size-3" />
+                    {QUALITY_WARNING_LABELS[page.quality.warnings[0]]}
+                  </span>
+                ) : null}
                 <button
                   aria-label={`Remover pagina ${index + 1}`}
                   className="absolute top-1 right-1 flex size-6 items-center justify-center rounded-full bg-destructive text-white"
@@ -1324,7 +1557,12 @@ function ReviewScreen({
 
       <div className="flex shrink-0 flex-col gap-2 border-t bg-muted/40 px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
         {preferNativeCapture ? (
-          <Button onClick={onNativeCapture} type="button" variant="outline">
+          <Button
+            disabled={atPageLimit}
+            onClick={onNativeCapture}
+            type="button"
+            variant="outline"
+          >
             Adicionar foto em alta resolucao
           </Button>
         ) : null}

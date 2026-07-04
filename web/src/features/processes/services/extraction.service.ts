@@ -1,4 +1,5 @@
 import type { InferResponseType } from 'hono/client'
+import type { ScanPageTelemetry } from '@/shared/components/document-scanner/scan-telemetry'
 import { apiClient } from '@/shared/services/api-client'
 import { getErrorMessage } from '@/shared/services/api-error'
 import { reportClientError } from '@/shared/services/telemetry'
@@ -64,6 +65,9 @@ function putToS3WithProgress(
 export async function createProcessViaScanRequest(
   pdf: Blob,
   onProgress?: (fraction: number) => void,
+  // Telemetria por pagina (resolucao/fonte/qualidade). A API so loga
+  // (scan.complete) — permite medir a captura em prod.
+  pageTelemetry?: ScanPageTelemetry[],
 ): Promise<CreateProcessViaScanResponse> {
   // 1) presign
   const presignRes = await presignScanRoute.$post({
@@ -97,7 +101,7 @@ export async function createProcessViaScanRequest(
 
   // 3) complete -> cria o rascunho, registra no lote e dispara a ingestao.
   const completeRes = await completeScanRoute.$post({
-    json: { uploadId, objectKey },
+    json: { uploadId, objectKey, pageTelemetry },
   })
   if (!completeRes.ok) {
     throw new Error(

@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import { ScanButton } from '@/shared/components/document-scanner/scan-button'
 import { clearScanSession } from '@/shared/components/document-scanner/scan-session-store'
+import type { ScanPageTelemetry } from '@/shared/components/document-scanner/scan-telemetry'
 import { useCreateProcessViaScan } from '../../services/processes.mutations'
 
 // Acao de "Escanear documentos": o botao abre a camera direto (sem dialogo
@@ -15,11 +16,16 @@ export function ScanProcessAction() {
   const scanMutation = useCreateProcessViaScan()
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
 
-  async function handleScanComplete(file: File, scanSessionId: string | null) {
+  async function handleScanComplete(
+    file: File,
+    scanSessionId: string | null,
+    pageTelemetry?: ScanPageTelemetry[],
+  ) {
     setUploadProgress(0)
     try {
       await scanMutation.mutateAsync({
         pdf: file,
+        pageTelemetry,
         onProgress: (fraction) => setUploadProgress(fraction),
       })
       // Upload confirmado: agora e seguro liberar a sessao duravel do IndexedDB.
