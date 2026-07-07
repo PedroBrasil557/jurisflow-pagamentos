@@ -1,38 +1,61 @@
-import { useQuery } from '@tanstack/react-query'
-import { Skeleton } from '#/components/ui/skeleton'
-import { QueryError } from '@/shared/components/query-error'
-import { titularCaixaStatsPorLocalOptions } from '../../services/dashboard.queries'
+import type { TitularCaixaStatsPorLocal } from '../../services/dashboard.service'
+import type { TitularCaixaScope } from './titular-caixa-scope-filter'
 import { TitularesPorLocalTable } from './titulares-por-local-table'
 import { TitularesPorMunicipioChart } from './titulares-por-municipio-chart'
 
-// Secao com query propria: carrega em paralelo com os KPIs e falha isolada.
-export function TitularesPorLocalSection() {
-  const { data, isLoading, isError, refetch } = useQuery(
-    titularCaixaStatsPorLocalOptions(),
-  )
+type Municipios = TitularCaixaStatsPorLocal['municipios']
 
-  if (isError) {
-    return <QueryError onRetry={refetch} />
-  }
+type TitularesPorLocalSectionProps = {
+  // Ja filtrados pelo escopo escolhido na aba.
+  municipios: Municipios
+  scope: TitularCaixaScope
+}
 
-  if (isLoading || !data) {
-    return (
-      <div className="grid gap-3">
-        <Skeleton className="h-[300px] rounded-lg" />
-        <Skeleton className="h-[240px] rounded-lg" />
-      </div>
-    )
-  }
+function rotuloEmpreendimento(item: {
+  empreendimento: string
+  logradouro: string | null
+}) {
+  return item.logradouro
+    ? `${item.empreendimento} — ${item.logradouro}`
+    : item.empreendimento
+}
+
+// Secao "por local". Recebe os municipios ja filtrados pelo escopo e adapta o
+// recorte: com um municipio selecionado, o grafico passa a mostrar os
+// empreendimentos daquele municipio (uma unica barra de municipio nao ajuda).
+export function TitularesPorLocalSection({
+  municipios,
+  scope,
+}: TitularesPorLocalSectionProps) {
+  const municipioMode = scope.municipio !== null
+
+  const heading = municipioMode
+    ? `Detalhe · ${scope.municipio}/${scope.uf}`
+    : scope.uf
+      ? `Por municipio · ${scope.uf}`
+      : 'Por municipio'
+
+  const chartTitle = municipioMode
+    ? 'Titulares por empreendimento'
+    : 'Titulares por municipio'
+
+  const chartItems = municipioMode
+    ? (municipios[0]?.empreendimentos ?? []).map((empreendimento) => ({
+        label: rotuloEmpreendimento(empreendimento),
+        total: empreendimento.indicadores.total,
+      }))
+    : municipios.map((municipio) => ({
+        label: `${municipio.municipio} – ${municipio.uf}`,
+        total: municipio.indicadores.total,
+      }))
 
   return (
     <div className="grid gap-3">
-      <h2 className="text-sm font-medium text-muted-foreground">
-        Por municipio
-      </h2>
-      {data.municipios.length > 0 ? (
-        <TitularesPorMunicipioChart municipios={data.municipios} />
+      <h2 className="text-sm font-medium text-muted-foreground">{heading}</h2>
+      {chartItems.length > 0 ? (
+        <TitularesPorMunicipioChart baseTitle={chartTitle} items={chartItems} />
       ) : null}
-      <TitularesPorLocalTable municipios={data.municipios} />
+      <TitularesPorLocalTable municipios={municipios} />
     </div>
   )
 }
