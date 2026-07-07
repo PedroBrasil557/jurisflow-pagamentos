@@ -6,13 +6,15 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from '#/components/ui/chart'
-import type { TitularCaixaStatsPorLocal } from '../../services/dashboard.service'
+
+type ChartItem = { label: string; total: number }
 
 type TitularesPorMunicipioChartProps = {
-  municipios: TitularCaixaStatsPorLocal['municipios']
+  items: ChartItem[]
+  baseTitle: string
 }
 
-const TOP_MUNICIPIOS = 10
+const TOP_ITEMS = 10
 
 const chartConfig = {
   total: {
@@ -22,27 +24,26 @@ const chartConfig = {
 } satisfies ChartConfig
 
 export function TitularesPorMunicipioChart({
-  municipios,
+  items,
+  baseTitle,
 }: TitularesPorMunicipioChartProps) {
-  const data = municipios.slice(0, TOP_MUNICIPIOS).map((item) => ({
-    label: `${item.municipio} – ${item.uf}`,
-    total: item.indicadores.total,
+  const data = items.slice(0, TOP_ITEMS).map((item) => ({
+    label: item.label,
+    total: item.total,
     agregado: false,
   }))
 
-  const restantes = municipios.slice(TOP_MUNICIPIOS)
+  const restantes = items.slice(TOP_ITEMS)
   if (restantes.length > 0) {
     data.push({
-      label: `Outros (${restantes.length} municipios)`,
-      total: restantes.reduce((soma, item) => soma + item.indicadores.total, 0),
+      label: `Outros (${restantes.length})`,
+      total: restantes.reduce((soma, item) => soma + item.total, 0),
       agregado: true,
     })
   }
 
   const titulo =
-    restantes.length > 0
-      ? `Titulares por municipio (top ${TOP_MUNICIPIOS})`
-      : 'Titulares por municipio'
+    restantes.length > 0 ? `${baseTitle} (top ${TOP_ITEMS})` : baseTitle
 
   return (
     <Card>

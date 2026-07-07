@@ -10,12 +10,20 @@ import {
   SearchX,
   Users,
 } from 'lucide-react'
+import { useState } from 'react'
 import { Card, CardContent } from '#/components/ui/card'
 import { Skeleton } from '#/components/ui/skeleton'
 import { QueryError } from '@/shared/components/query-error'
-import { titularCaixaStatsOptions } from '../../services/dashboard.queries'
-import type { TitularCaixaStats } from '../../services/dashboard.service'
+import { titularCaixaStatsPorLocalOptions } from '../../services/dashboard.queries'
+import type { TitularCaixaStatsPorLocal } from '../../services/dashboard.service'
+import {
+  type TitularCaixaScope,
+  TitularCaixaScopeFilter,
+} from './titular-caixa-scope-filter'
 import { TitularesPorLocalSection } from './titulares-por-local-section'
+
+type Municipios = TitularCaixaStatsPorLocal['municipios']
+type Indicadores = Municipios[number]['indicadores']
 
 type KpiCard = {
   title: string
@@ -51,16 +59,65 @@ function KpiGrid({ cards }: { cards: KpiCard[] }) {
   )
 }
 
-function buildCards(data: TitularCaixaStats): {
+function emptyIndicadores(): Indicadores {
+  return {
+    total: 0,
+    quitado: 0,
+    pendente: 0,
+    idle: 0,
+    semExito: 0,
+    naoEncontrado: 0,
+    erro: 0,
+    termos: 0,
+    averbacao: { sim: 0, nao: 0, indeterminado: 0 },
+  }
+}
+
+// Soma os indicadores dos municipios do escopo — a fonte unica dos KPIs. Como a
+// query "por local" ja quebra tudo por municipio, os cards batem exatamente com a
+// soma exibida na secao de baixo em qualquer recorte.
+function sumIndicadores(municipios: Municipios): Indicadores {
+  return municipios.reduce((acc, municipio) => {
+    const i = municipio.indicadores
+    acc.total += i.total
+    acc.quitado += i.quitado
+    acc.pendente += i.pendente
+    acc.idle += i.idle
+    acc.semExito += i.semExito
+    acc.naoEncontrado += i.naoEncontrado
+    acc.erro += i.erro
+    acc.termos += i.termos
+    acc.averbacao.sim += i.averbacao.sim
+    acc.averbacao.nao += i.averbacao.nao
+    acc.averbacao.indeterminado += i.averbacao.indeterminado
+    return acc
+  }, emptyIndicadores())
+}
+
+function filterByScope(
+  municipios: Municipios,
+  scope: TitularCaixaScope,
+): Municipios {
+  if (scope.municipio) {
+    return municipios.filter(
+      (m) => m.uf === scope.uf && m.municipio === scope.municipio,
+    )
+  }
+  if (scope.uf) {
+    return municipios.filter((m) => m.uf === scope.uf)
+  }
+  return municipios
+}
+
+function buildCards(totals: Indicadores): {
   quitacao: KpiCard[]
   averbacao: KpiCard[]
 } {
-  const { quitacao, averbacao } = data
   return {
     quitacao: [
       {
         title: 'Total de titulares',
-        value: data.total,
+        value: totals.total,
         subtitle: 'no cadastro',
         icon: Users,
         color: 'text-primary',
@@ -68,24 +125,24 @@ function buildCards(data: TitularCaixaStats): {
       },
       {
         title: 'Quitados',
-        value: quitacao.quitado,
-        subtitle: `${data.termos} termos emitidos`,
+        value: totals.quitado,
+        subtitle: `${totals.termos} termos emitidos`,
         icon: CheckCircle,
         color: 'text-green-600 dark:text-green-500',
         bg: 'bg-green-500/10',
       },
       {
         title: 'Pendentes',
-        value: quitacao.idle + quitacao.pending,
-        subtitle: `${quitacao.idle} sem consulta`,
+        value: totals.pendente,
+        subtitle: `${totals.idle} sem consulta`,
         icon: Clock,
         color: 'text-blue-600 dark:text-blue-500',
         bg: 'bg-blue-500/10',
       },
       {
         title: 'Sem exito',
-        value: quitacao.naoEncontrado + quitacao.erro,
-        subtitle: `${quitacao.naoEncontrado} nao encontrados · ${quitacao.erro} erro`,
+        value: totals.semExito,
+        subtitle: `${totals.naoEncontrado} nao encontrados · ${totals.erro} erro`,
         icon: SearchX,
         color: 'text-amber-600 dark:text-amber-500',
         bg: 'bg-amber-500/10',
@@ -94,7 +151,7 @@ function buildCards(data: TitularCaixaStats): {
     averbacao: [
       {
         title: 'Averbacao: sim',
-        value: averbacao.sim,
+        value: totals.averbacao.sim,
         subtitle: 'termo apto a averbacao',
         icon: FileCheck,
         color: 'text-green-600 dark:text-green-500',
@@ -102,7 +159,7 @@ function buildCards(data: TitularCaixaStats): {
       },
       {
         title: 'Averbacao: nao',
-        value: averbacao.nao,
+        value: totals.averbacao.nao,
         subtitle: 'termo nao apto a averbacao',
         icon: FileX,
         color: 'text-red-600 dark:text-red-500',
@@ -110,7 +167,7 @@ function buildCards(data: TitularCaixaStats): {
       },
       {
         title: 'Averbacao: indeterminado',
-        value: averbacao.indeterminado,
+        value: totals.averbacao.indeterminado,
         subtitle: 'requer revisao manual',
         icon: HelpCircle,
         color: 'text-amber-600 dark:text-amber-500',
@@ -118,7 +175,7 @@ function buildCards(data: TitularCaixaStats): {
       },
       {
         title: 'Termos emitidos',
-        value: data.termos,
+        value: totals.termos,
         subtitle: 'declaracoes de quitacao',
         icon: FileText,
         color: 'text-primary',
@@ -128,53 +185,77 @@ function buildCards(data: TitularCaixaStats): {
   }
 }
 
-function TitularCaixaKpiSection() {
+export function TitularCaixaTab() {
   const { data, isLoading, isError, refetch } = useQuery(
-    titularCaixaStatsOptions(),
+    titularCaixaStatsPorLocalOptions(),
   )
+  const [scope, setScope] = useState<TitularCaixaScope>({
+    uf: null,
+    municipio: null,
+  })
 
   if (isError) {
     return <QueryError onRetry={refetch} />
   }
 
   if (isLoading || !data) {
-    return (
-      <div className="grid gap-6">
-        {['row-1', 'row-2'].map((row) => (
-          <section
-            className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-            key={row}
-          >
-            {['a', 'b', 'c', 'd'].map((k) => (
-              <Skeleton className="h-[120px] rounded-lg" key={`${row}-${k}`} />
-            ))}
-          </section>
-        ))}
-      </div>
-    )
+    return <TitularCaixaTabSkeleton />
   }
 
-  const cards = buildCards(data)
+  const { municipios } = data
+  const ufs = [...new Set(municipios.map((m) => m.uf))].sort((a, b) =>
+    a.localeCompare(b, 'pt-BR'),
+  )
+  const municipioOptions = municipios
+    .filter((m) => (scope.uf ? m.uf === scope.uf : true))
+    .map((m) => ({ uf: m.uf, municipio: m.municipio }))
+    .sort((a, b) => a.municipio.localeCompare(b.municipio, 'pt-BR'))
+
+  const filtered = filterByScope(municipios, scope)
+  const cards = buildCards(sumIndicadores(filtered))
 
   return (
     <div className="grid gap-6">
-      <div className="grid gap-3">
-        <h2 className="text-sm font-medium text-muted-foreground">Quitacao</h2>
-        <KpiGrid cards={cards.quitacao} />
+      <TitularCaixaScopeFilter
+        municipios={municipioOptions}
+        onChange={setScope}
+        scope={scope}
+        ufs={ufs}
+      />
+
+      <div className="grid gap-6">
+        <div className="grid gap-3">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Quitacao
+          </h2>
+          <KpiGrid cards={cards.quitacao} />
+        </div>
+        <div className="grid gap-3">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Averbacao
+          </h2>
+          <KpiGrid cards={cards.averbacao} />
+        </div>
       </div>
-      <div className="grid gap-3">
-        <h2 className="text-sm font-medium text-muted-foreground">Averbacao</h2>
-        <KpiGrid cards={cards.averbacao} />
-      </div>
+
+      <TitularesPorLocalSection municipios={filtered} scope={scope} />
     </div>
   )
 }
 
-export function TitularCaixaTab() {
+function TitularCaixaTabSkeleton() {
   return (
     <div className="grid gap-6">
-      <TitularCaixaKpiSection />
-      <TitularesPorLocalSection />
+      <Skeleton className="h-9 w-full max-w-md rounded-lg" />
+      {['row-1', 'row-2'].map((row) => (
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" key={row}>
+          {['a', 'b', 'c', 'd'].map((k) => (
+            <Skeleton className="h-[120px] rounded-lg" key={`${row}-${k}`} />
+          ))}
+        </section>
+      ))}
+      <Skeleton className="h-[300px] rounded-lg" />
+      <Skeleton className="h-[240px] rounded-lg" />
     </div>
   )
 }
