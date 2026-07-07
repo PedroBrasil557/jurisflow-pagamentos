@@ -1,32 +1,51 @@
-import { and, asc, desc, eq, gte, ilike, inArray, lte, or, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  lte,
+  or,
+  sql,
+} from 'drizzle-orm'
 import * as XLSX from 'xlsx'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
-import { formatCpf, normalizeCpf } from '../../shared/utils/cpf'
 import {
   createStorageObjectDownloadUrl,
   createStorageObjectInlineUrl,
   getStorageObjectBytes,
   storageBuckets,
 } from '../../shared/storage/s3'
+import { formatCpf, normalizeCpf } from '../../shared/utils/cpf'
 import { enqueueQuitacao } from '../quitacao-queue/quitacao-queue.service'
-import type {
-  ExportTitularesQuery,
-  ListTitularesQuery,
-} from './titulares-caixa.schemas'
 import {
   titularContratoCaixa,
   titularDocumento,
 } from './titulares-caixa.schema'
+import type {
+  ExportTitularesQuery,
+  ListTitularesQuery,
+} from './titulares-caixa.schemas'
 
 // Prioridade da reconsulta manual: acima do lote de import (0) para o usuario ver
 // o resultado antes da fila drenar.
 const RECONSULT_PRIORITY = 100
 
+// TEMPORARIO: a tela de Titulares Caixa (lista, export e opcoes de filtro) mostra
+// apenas a Bahia por enquanto. Remover quando a permissao por estado for
+// implementada (o recorte de UF passa a vir dos estados permitidos do usuario).
+const TITULARES_UF_TEMPORARIA = 'BA'
+
 // Constroi o WHERE dos filtros (compartilhado por listagem e export — garante que
 // o Excel exportado bate exatamente com o que a tela mostra).
 function buildTitularesWhere(query: ExportTitularesQuery) {
   const filters = []
+
+  // TEMPORARIO: trava o recorte na Bahia (ver TITULARES_UF_TEMPORARIA).
+  filters.push(eq(titularContratoCaixa.uf, TITULARES_UF_TEMPORARIA))
 
   if (query.search) {
     const term = `%${query.search}%`
@@ -232,6 +251,8 @@ export async function listEmpreendimentoOptions(): Promise<{
   const rows = await db
     .select({ value: titularContratoCaixa.empreendimento })
     .from(titularContratoCaixa)
+    // TEMPORARIO: so a Bahia (ver TITULARES_UF_TEMPORARIA).
+    .where(eq(titularContratoCaixa.uf, TITULARES_UF_TEMPORARIA))
     .groupBy(titularContratoCaixa.empreendimento)
     .orderBy(asc(titularContratoCaixa.empreendimento))
     .limit(EMPREENDIMENTO_OPTIONS_CAP)
@@ -245,7 +266,13 @@ export async function listLogradouroOptions(): Promise<{ options: string[] }> {
   const rows = await db
     .select({ value: titularContratoCaixa.logradouro })
     .from(titularContratoCaixa)
-    .where(sql`nullif(trim(${titularContratoCaixa.logradouro}), '') is not null`)
+    // TEMPORARIO: so a Bahia (ver TITULARES_UF_TEMPORARIA).
+    .where(
+      and(
+        eq(titularContratoCaixa.uf, TITULARES_UF_TEMPORARIA),
+        sql`nullif(trim(${titularContratoCaixa.logradouro}), '') is not null`,
+      ),
+    )
     .groupBy(titularContratoCaixa.logradouro)
     .orderBy(asc(titularContratoCaixa.logradouro))
     .limit(EMPREENDIMENTO_OPTIONS_CAP)
@@ -287,7 +314,10 @@ export async function reconsultarTitulares(
 }
 
 // URL pre-assinada de download do documento (verifica que pertence ao titular).
-async function loadTitularDocument(input: { titularId: string; docId: string }) {
+async function loadTitularDocument(input: {
+  titularId: string
+  docId: string
+}) {
   const [doc] = await db
     .select({
       storageKey: titularDocumento.storageKey,
