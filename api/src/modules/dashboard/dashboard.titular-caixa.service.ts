@@ -1,14 +1,14 @@
-import { count, eq, sql } from 'drizzle-orm'
+import { count, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import {
   titularContratoCaixa,
   titularDocumento,
 } from '../titulares-caixa/titulares-caixa.schema'
 
-// TEMPORARIO: o dashboard de Titular Caixa mostra apenas a Bahia por enquanto.
-// Remover quando a permissao por estado for implementada (ai o recorte de UF passa
-// a vir dos estados permitidos do usuario, nao de uma constante).
-const DASHBOARD_UF_TEMPORARIA = 'BA'
+// TEMPORARIO: o dashboard de Titular Caixa mostra apenas Bahia e Sao Paulo por
+// enquanto. Remover quando a permissao por estado for implementada (ai o recorte de
+// UF passa a vir dos estados permitidos do usuario, nao de uma constante).
+const DASHBOARD_UFS_TEMPORARIAS = ['BA', 'SP']
 
 type LocalIndicadores = {
   total: number
@@ -168,8 +168,8 @@ export async function getTitularCaixaStatsPorLocal(): Promise<{
       titularDocumento,
       eq(titularDocumento.titularId, titularContratoCaixa.id),
     )
-    // TEMPORARIO: restringe o dashboard a uma unica UF ate a permissao por estado.
-    .where(eq(titularContratoCaixa.uf, DASHBOARD_UF_TEMPORARIA))
+    // TEMPORARIO: restringe o dashboard as UFs liberadas ate a permissao por estado.
+    .where(inArray(titularContratoCaixa.uf, DASHBOARD_UFS_TEMPORARIAS))
     .groupBy(
       titularContratoCaixa.uf,
       titularContratoCaixa.municipio,
