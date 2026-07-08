@@ -35,17 +35,17 @@ import type {
 const RECONSULT_PRIORITY = 100
 
 // TEMPORARIO: a tela de Titulares Caixa (lista, export e opcoes de filtro) mostra
-// apenas a Bahia por enquanto. Remover quando a permissao por estado for
+// apenas Bahia e Sao Paulo por enquanto. Remover quando a permissao por estado for
 // implementada (o recorte de UF passa a vir dos estados permitidos do usuario).
-const TITULARES_UF_TEMPORARIA = 'BA'
+const TITULARES_UFS_TEMPORARIAS = ['BA', 'SP']
 
 // Constroi o WHERE dos filtros (compartilhado por listagem e export — garante que
 // o Excel exportado bate exatamente com o que a tela mostra).
 function buildTitularesWhere(query: ExportTitularesQuery) {
   const filters = []
 
-  // TEMPORARIO: trava o recorte na Bahia (ver TITULARES_UF_TEMPORARIA).
-  filters.push(eq(titularContratoCaixa.uf, TITULARES_UF_TEMPORARIA))
+  // TEMPORARIO: trava o recorte nas UFs liberadas (ver TITULARES_UFS_TEMPORARIAS).
+  filters.push(inArray(titularContratoCaixa.uf, TITULARES_UFS_TEMPORARIAS))
 
   if (query.search) {
     const term = `%${query.search}%`
@@ -251,8 +251,8 @@ export async function listEmpreendimentoOptions(): Promise<{
   const rows = await db
     .select({ value: titularContratoCaixa.empreendimento })
     .from(titularContratoCaixa)
-    // TEMPORARIO: so a Bahia (ver TITULARES_UF_TEMPORARIA).
-    .where(eq(titularContratoCaixa.uf, TITULARES_UF_TEMPORARIA))
+    // TEMPORARIO: so as UFs liberadas (ver TITULARES_UFS_TEMPORARIAS).
+    .where(inArray(titularContratoCaixa.uf, TITULARES_UFS_TEMPORARIAS))
     .groupBy(titularContratoCaixa.empreendimento)
     .orderBy(asc(titularContratoCaixa.empreendimento))
     .limit(EMPREENDIMENTO_OPTIONS_CAP)
@@ -266,10 +266,10 @@ export async function listLogradouroOptions(): Promise<{ options: string[] }> {
   const rows = await db
     .select({ value: titularContratoCaixa.logradouro })
     .from(titularContratoCaixa)
-    // TEMPORARIO: so a Bahia (ver TITULARES_UF_TEMPORARIA).
+    // TEMPORARIO: so as UFs liberadas (ver TITULARES_UFS_TEMPORARIAS).
     .where(
       and(
-        eq(titularContratoCaixa.uf, TITULARES_UF_TEMPORARIA),
+        inArray(titularContratoCaixa.uf, TITULARES_UFS_TEMPORARIAS),
         sql`nullif(trim(${titularContratoCaixa.logradouro}), '') is not null`,
       ),
     )
