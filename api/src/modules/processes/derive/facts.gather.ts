@@ -204,10 +204,17 @@ export async function gatherFacts(
     for (const x of dec.skipped ?? []) classifiedSet.add(x.documentTypeKey)
   }
   // Classificacao sempre SABE o conjunto atual de tipos presentes (= anexados +
-  // o que a IA reconheceu). So fica 'pending' quando um scan esta em voo (vamos
-  // saber mais ja-ja). Nunca 'absent' — no minimo um conjunto vazio.
+  // o que a IA reconheceu). So fica 'pending' quando uma ingestao esta REALMENTE
+  // em voo. Nunca 'absent' — no minimo um conjunto vazio.
+  //
+  // 'idle' NAO e job em voo: e o estado de repouso do arquivo bruto da aba "Em
+  // lote" (uploadBatchFiles insere com o default 'idle' e NUNCA enfileira — a fila
+  // duravel so reivindica 'queued'). Trata-lo como em voo travava a derivacao num
+  // pending eterno: readiness nunca liberava e um processo com documentacao
+  // completa nunca virava DOCUMENTACAO_PRONTA. So 'queued'/'processing' representam
+  // um produtor ativo (a re-reivindicacao de orfao volta para 'processing').
   const inFlightSplit = batchFiles.some((b) =>
-    ['idle', 'queued', 'processing'].includes(b.splitStatus),
+    ['queued', 'processing'].includes(b.splitStatus),
   )
   const classifiedTypes: Fact<Set<string>> = inFlightSplit
     ? pending()
@@ -252,7 +259,6 @@ export async function gatherFacts(
   // papel). Fallback: audit caixa_owner legado (dupla fonte na transicao). Ciclo de
   // vida chaveado por inFlightSplit (NAO mais por caixaAnalysisStatus, que virou
   // estado de exibicao derivado). [0]=titular do termo, [1]=co-comprador.
-  const termoClassified = classifiedSet.has(DOC.termoEntrega)
   const caixaOut = (caixaAudits[0]?.output ?? null) as CaixaByDoc | null
   let termoCompradores: Fact<Person[]>
   if (rawTermoCompradores?.length) {
@@ -273,9 +279,15 @@ export async function gatherFacts(
     }
     termoCompradores = compradores.length ? ready(compradores) : absent()
   } else if (inFlightSplit) {
+    // Ingestao em voo: a extracao ainda vai popular os compradores -> espera.
     termoCompradores = pending()
   } else {
-    termoCompradores = termoClassified ? pending() : absent()
+    // Sem dado extraido e sem ingestao em voo: NAO ha produtor. Mesmo com o termo
+    // classificado/anexado (ex.: anexo manual, fora da esteira de IA) marcar
+    // 'pending' aqui era um pending ETERNO — a extracao nunca vai rodar. 'absent'
+    // deixa a derivacao concluir: o ownerType cai no human-lock quando confirmado
+    // manualmente, e o vinculo do imovel segue exigido pela presenca do termo.
+    termoCompradores = absent()
   }
 
   const compraVenda: Fact<CompraVenda> = rawCompraVenda
