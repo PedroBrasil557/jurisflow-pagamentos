@@ -1,14 +1,17 @@
-import { and, count, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, count, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import { user } from '../auth/auth.schema'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
+import { titularContratoCaixa } from '../titulares-caixa/titulares-caixa.schema'
 import { normalizeProfilePermissions } from './permissions.defaults'
 import {
   permissionProfile,
   profileHousingComplex,
   userHousingComplex,
   userProfile,
+  userTitularMunicipio,
+  userTitularUf,
 } from './permissions.schema'
 import type {
   AssignProfilePayload,
@@ -16,6 +19,8 @@ import type {
   ListProfilesQuery,
   UpdateProfilePayload,
   UpdateUserHousingComplexesPayload,
+  UpdateUserTitularMunicipiosPayload,
+  UpdateUserTitularUfsPayload,
 } from './permissions.schemas'
 
 // ---------------------------------------------------------------------------
@@ -340,6 +345,114 @@ export async function updateUserHousingComplexes(
         grantedByUserId,
       })),
     )
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Grants geográficos do usuário (Titular Caixa): UF e município
+// ---------------------------------------------------------------------------
+
+export async function getUserTitularUfs(userId: string) {
+  return db
+    .select({ uf: userTitularUf.uf })
+    .from(userTitularUf)
+    .where(eq(userTitularUf.userId, userId))
+    .orderBy(asc(userTitularUf.uf))
+}
+
+export async function updateUserTitularUfs(
+  userId: string,
+  payload: UpdateUserTitularUfsPayload,
+  grantedByUserId: string,
+) {
+  await db.delete(userTitularUf).where(eq(userTitularUf.userId, userId))
+
+  // Dedup defensivo (a PK já barra duplicatas, mas evita erro no insert em lote).
+  const ufs = [...new Set(payload.ufs)]
+  if (ufs.length > 0) {
+    await db.insert(userTitularUf).values(
+      ufs.map((uf) => ({
+        userId,
+        uf,
+        grantedAt: new Date(),
+        grantedByUserId,
+      })),
+    )
+  }
+}
+
+export async function getUserTitularMunicipios(userId: string) {
+  return db
+    .select({
+      uf: userTitularMunicipio.uf,
+      municipio: userTitularMunicipio.municipio,
+    })
+    .from(userTitularMunicipio)
+    .where(eq(userTitularMunicipio.userId, userId))
+    .orderBy(asc(userTitularMunicipio.uf), asc(userTitularMunicipio.municipio))
+}
+
+export async function updateUserTitularMunicipios(
+  userId: string,
+  payload: UpdateUserTitularMunicipiosPayload,
+  grantedByUserId: string,
+) {
+  await db
+    .delete(userTitularMunicipio)
+    .where(eq(userTitularMunicipio.userId, userId))
+
+  // Dedup por par uf|municipio.
+  const seen = new Set<string>()
+  const rows = payload.municipios.filter((m) => {
+    const key = `${m.uf}|${m.municipio}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  if (rows.length > 0) {
+    await db.insert(userTitularMunicipio).values(
+      rows.map((m) => ({
+        userId,
+        uf: m.uf,
+        municipio: m.municipio,
+        grantedAt: new Date(),
+        grantedByUserId,
+      })),
+    )
+  }
+}
+
+// Localidades distintas dos titulares (fonte dos seletores de UF/município ao
+// conceder acesso). SEM filtro de visibilidade — quem concede (cadastros.permissoes)
+// precisa ver todas as opções. Cap de segurança nas listas.
+const LOCALIDADES_CAP = 5000
+
+export async function getTitularLocalidades(): Promise<{
+  ufs: string[]
+  municipios: Array<{ uf: string; municipio: string }>
+}> {
+  const [ufRows, municipioRows] = await Promise.all([
+    db
+      .selectDistinct({ uf: titularContratoCaixa.uf })
+      .from(titularContratoCaixa)
+      .orderBy(asc(titularContratoCaixa.uf))
+      .limit(LOCALIDADES_CAP),
+    db
+      .selectDistinct({
+        uf: titularContratoCaixa.uf,
+        municipio: titularContratoCaixa.municipio,
+      })
+      .from(titularContratoCaixa)
+      .orderBy(
+        asc(titularContratoCaixa.uf),
+        asc(titularContratoCaixa.municipio),
+      )
+      .limit(LOCALIDADES_CAP),
+  ])
+
+  return {
+    ufs: ufRows.map((r) => r.uf),
+    municipios: municipioRows,
   }
 }
 

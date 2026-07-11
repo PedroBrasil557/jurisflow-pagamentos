@@ -8,6 +8,8 @@ import {
   deleteProfileRequest,
   updateProfileRequest,
   updateUserHousingComplexesRequest,
+  updateUserTitularMunicipiosRequest,
+  updateUserTitularUfsRequest,
 } from './permissions.service'
 
 export function useCreateProfile() {
@@ -68,6 +70,32 @@ export function useUpdateUserHousingComplexes() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: profileKeys.userHousingComplexes(variables.userId),
+      })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.session() })
+    },
+  })
+}
+
+export function useUpdateUserTitularUfs() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateUserTitularUfsRequest,
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: profileKeys.userTitularUfs(variables.userId),
+      })
+      queryClient.invalidateQueries({ queryKey: sessionKeys.session() })
+    },
+  })
+}
+
+export function useUpdateUserTitularMunicipios() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: updateUserTitularMunicipiosRequest,
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: profileKeys.userTitularMunicipios(variables.userId),
       })
       queryClient.invalidateQueries({ queryKey: sessionKeys.session() })
     },

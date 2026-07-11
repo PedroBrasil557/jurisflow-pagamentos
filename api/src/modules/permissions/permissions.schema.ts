@@ -88,6 +88,46 @@ export const userHousingComplex = pgTable(
   ],
 )
 
+// Grants geograficos do usuario para Titular Caixa (aditivos aos conjuntos). UF e
+// municipio sao valores (nao ha tabela-mestre / FK). Municipio carrega a UF para
+// desambiguar (mesma convencao uf|municipio do dashboard). Espelham user_housing_complex.
+export const userTitularUf = pgTable(
+  'user_titular_uf',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    uf: text('uf').notNull(),
+    grantedAt: timestamp('granted_at').defaultNow().notNull(),
+    grantedByUserId: text('granted_by_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.uf] }),
+    index('utuf_user_id_idx').on(table.userId),
+  ],
+)
+
+export const userTitularMunicipio = pgTable(
+  'user_titular_municipio',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    uf: text('uf').notNull(),
+    municipio: text('municipio').notNull(),
+    grantedAt: timestamp('granted_at').defaultNow().notNull(),
+    grantedByUserId: text('granted_by_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.uf, table.municipio] }),
+    index('utmun_user_id_idx').on(table.userId),
+  ],
+)
+
 // Relations
 
 export const permissionProfileRelations = relations(

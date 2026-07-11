@@ -12,6 +12,8 @@ import {
   profileHousingComplex,
   userHousingComplex,
   userProfile,
+  userTitularMunicipio,
+  userTitularUf,
 } from './permissions.schema'
 import type {
   ProcessRelationship,
@@ -68,6 +70,8 @@ export async function resolveUserPermissions(
       isMaster,
       processScope: 'all',
       allowedHousingComplexIds: [],
+      allowedUfs: [],
+      allowedMunicipios: [],
       permissions: adminPermissions,
       profileId,
       profileName,
@@ -108,12 +112,30 @@ export async function resolveUserPermissions(
     ...new Set([...profileComplexIds, ...userComplexIds]),
   ]
 
+  // Grants geograficos do usuario (Titular Caixa) — sempre carregados (ungated,
+  // como os grants diretos de conjunto). Aditivos ao acesso por conjunto.
+  const allowedUfs = await db
+    .select({ uf: userTitularUf.uf })
+    .from(userTitularUf)
+    .where(eq(userTitularUf.userId, userId))
+    .then((rows) => rows.map((r) => r.uf))
+
+  const allowedMunicipios = await db
+    .select({
+      uf: userTitularMunicipio.uf,
+      municipio: userTitularMunicipio.municipio,
+    })
+    .from(userTitularMunicipio)
+    .where(eq(userTitularMunicipio.userId, userId))
+
   if (!assignment) {
     return {
       isAdmin: false,
       isMaster: false,
       processScope: 'own',
       allowedHousingComplexIds,
+      allowedUfs,
+      allowedMunicipios,
       permissions: FALLBACK_PERMISSIONS,
       profileId: null,
       profileName: null,
@@ -125,6 +147,8 @@ export async function resolveUserPermissions(
     isMaster: false,
     processScope: assignment.processScope,
     allowedHousingComplexIds,
+    allowedUfs,
+    allowedMunicipios,
     permissions: normalizeProfilePermissions(assignment.permissions),
     profileId: assignment.profileId,
     profileName: assignment.profileName,

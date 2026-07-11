@@ -9,14 +9,20 @@ import { Separator } from '#/components/ui/separator'
 import { adminHousingComplexListOptions } from '@/features/admin/services/admin-housing-complexes.queries'
 import type { AdminUserListItem } from '@/features/admin/services/admin-users.service'
 import { AppDialog } from '@/shared/components/app-dialog'
+import { SearchableMultiSelect } from '@/shared/components/searchable-multi-select'
 import { SearchableSelect } from '@/shared/components/searchable-select'
 import {
   useAssignProfile,
   useUpdateUserHousingComplexes,
+  useUpdateUserTitularMunicipios,
+  useUpdateUserTitularUfs,
 } from '../services/permissions.mutations'
 import {
   profileListOptions,
+  titularLocalidadesOptions,
   userHousingComplexesOptions,
+  userTitularMunicipiosOptions,
+  userTitularUfsOptions,
 } from '../services/permissions.queries'
 
 const scopeLabels = {
@@ -40,6 +46,9 @@ export function UserPermissionsDialog({
   const [selectedHousingComplexIds, setSelectedHousingComplexIds] = useState<
     string[]
   >([])
+  // UFs por valor (ex.: 'BA'); municípios encodados como `uf|municipio`.
+  const [selectedUfs, setSelectedUfs] = useState<string[]>([])
+  const [selectedMunicipios, setSelectedMunicipios] = useState<string[]>([])
   const [error, setError] = useState('')
 
   const profilesQuery = useQuery(profileListOptions({ limit: 100, page: 1 }))
@@ -49,11 +58,19 @@ export function UserPermissionsDialog({
   const userHousingComplexesQuery = useQuery(
     userHousingComplexesOptions(user.id),
   )
+  const localidadesQuery = useQuery(titularLocalidadesOptions())
+  const userUfsQuery = useQuery(userTitularUfsOptions(user.id))
+  const userMunicipiosQuery = useQuery(userTitularMunicipiosOptions(user.id))
 
   const assignProfileMutation = useAssignProfile()
   const updateHousingComplexesMutation = useUpdateUserHousingComplexes()
+  const updateUfsMutation = useUpdateUserTitularUfs()
+  const updateMunicipiosMutation = useUpdateUserTitularMunicipios()
   const isSubmitting =
-    assignProfileMutation.isPending || updateHousingComplexesMutation.isPending
+    assignProfileMutation.isPending ||
+    updateHousingComplexesMutation.isPending ||
+    updateUfsMutation.isPending ||
+    updateMunicipiosMutation.isPending
 
   useEffect(() => {
     setSelectedProfileId(user.profileId ?? '')
@@ -69,11 +86,40 @@ export function UserPermissionsDialog({
     )
   }, [userHousingComplexesQuery.data])
 
+  useEffect(() => {
+    if (!userUfsQuery.data) return
+    setSelectedUfs(userUfsQuery.data)
+  }, [userUfsQuery.data])
+
+  useEffect(() => {
+    if (!userMunicipiosQuery.data) return
+    setSelectedMunicipios(
+      userMunicipiosQuery.data.map((m) => `${m.uf}|${m.municipio}`),
+    )
+  }, [userMunicipiosQuery.data])
+
   const profiles = profilesQuery.data?.items ?? []
   const housingComplexes = housingComplexesQuery.data?.items ?? []
   const selectedProfile = useMemo(
     () => profiles.find((profile) => profile.id === selectedProfileId) ?? null,
     [profiles, selectedProfileId],
+  )
+
+  const ufOptions = useMemo(
+    () =>
+      (localidadesQuery.data?.ufs ?? []).map((uf) => ({
+        value: uf,
+        label: uf,
+      })),
+    [localidadesQuery.data],
+  )
+  const municipioOptions = useMemo(
+    () =>
+      (localidadesQuery.data?.municipios ?? []).map((m) => ({
+        value: `${m.uf}|${m.municipio}`,
+        label: `${m.municipio}/${m.uf}`,
+      })),
+    [localidadesQuery.data],
   )
 
   function toggleHousingComplex(housingComplexId: string) {
@@ -104,6 +150,19 @@ export function UserPermissionsDialog({
         housingComplexIds: selectedHousingComplexIds,
       })
 
+      await updateUfsMutation.mutateAsync({
+        userId: user.id,
+        ufs: selectedUfs,
+      })
+
+      await updateMunicipiosMutation.mutateAsync({
+        userId: user.id,
+        municipios: selectedMunicipios.map((value) => {
+          const [uf, municipio] = value.split('|')
+          return { uf, municipio }
+        }),
+      })
+
       toast.success('Permissoes do usuario atualizadas com sucesso.')
       onClose()
     } catch (submissionError) {
@@ -118,11 +177,17 @@ export function UserPermissionsDialog({
   const hasLoadingError =
     profilesQuery.isError ||
     housingComplexesQuery.isError ||
-    userHousingComplexesQuery.isError
+    userHousingComplexesQuery.isError ||
+    localidadesQuery.isError ||
+    userUfsQuery.isError ||
+    userMunicipiosQuery.isError
   const isLoadingInitialData =
     profilesQuery.isLoading ||
     housingComplexesQuery.isLoading ||
-    userHousingComplexesQuery.isLoading
+    userHousingComplexesQuery.isLoading ||
+    localidadesQuery.isLoading ||
+    userUfsQuery.isLoading ||
+    userMunicipiosQuery.isLoading
 
   return (
     <AppDialog
@@ -240,6 +305,40 @@ export function UserPermissionsDialog({
                   })}
                 </div>
               )}
+            </div>
+
+            <Separator />
+
+            <div className="grid gap-3">
+              <div className="grid gap-1">
+                <p className="text-sm font-medium text-foreground">
+                  Acesso por localidade (Titular Caixa)
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Libera titulares por estado (UF) e/ou cidade — soma-se aos
+                  conjuntos.
+                </p>
+              </div>
+
+              <SearchableMultiSelect
+                isLoading={localidadesQuery.isLoading}
+                label="Estados (UF)"
+                onChange={setSelectedUfs}
+                options={ufOptions}
+                placeholder="Nenhum estado liberado"
+                searchPlaceholder="Buscar estado..."
+                value={selectedUfs}
+              />
+
+              <SearchableMultiSelect
+                isLoading={localidadesQuery.isLoading}
+                label="Cidades (municipios)"
+                onChange={setSelectedMunicipios}
+                options={municipioOptions}
+                placeholder="Nenhuma cidade liberada"
+                searchPlaceholder="Buscar cidade..."
+                value={selectedMunicipios}
+              />
             </div>
           </>
         )}
