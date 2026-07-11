@@ -3,6 +3,7 @@ import {
   fetchConjuntoOptions,
   fetchEmpreendimentoOptions,
   fetchLogradouroOptions,
+  fetchTitularDocumentPreviewUrl,
   fetchTitulares,
   type TitularesListQuery,
 } from './titulares-caixa.service'
@@ -15,6 +16,8 @@ export const titularKeys = {
     [...titularKeys.all, 'empreendimento-options'] as const,
   conjuntoOptions: () => [...titularKeys.all, 'conjunto-options'] as const,
   logradouroOptions: () => [...titularKeys.all, 'logradouro-options'] as const,
+  documentPreviewUrl: (titularId: string, docId: string) =>
+    [...titularKeys.all, 'document-preview-url', titularId, docId] as const,
 }
 
 export function empreendimentoOptionsQuery() {
@@ -38,6 +41,19 @@ export function logradouroOptionsQuery() {
     queryKey: titularKeys.logradouroOptions(),
     queryFn: fetchLogradouroOptions,
     staleTime: 5 * 60 * 1000,
+  })
+}
+
+export function titularDocumentPreviewUrlQuery(
+  titularId: string,
+  docId: string,
+) {
+  return queryOptions({
+    queryKey: titularKeys.documentPreviewUrl(titularId, docId),
+    queryFn: () => fetchTitularDocumentPreviewUrl(titularId, docId),
+    // URL pre-assinada expira (10 min) — nao reaproveitar entre aberturas.
+    staleTime: 0,
+    gcTime: 0,
   })
 }
 

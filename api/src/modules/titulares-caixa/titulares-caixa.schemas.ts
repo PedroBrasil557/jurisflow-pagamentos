@@ -94,3 +94,15 @@ export const titularDocumentoParamsSchema = z.object({
   id: z.string().min(1),
   docId: z.string().min(1),
 })
+
+// Terceiro vinculado ao titular (exatamente um por titular — upsert). Telefones
+// em formato livre como digitado (mesma convencao do whatsapp do processo).
+export const upsertTerceiroPayloadSchema = z.object({
+  nome: z.string().trim().min(1, 'Informe o nome do terceiro.').max(160),
+  telefones: z
+    .array(z.string().trim().min(1, 'Informe o telefone.').max(20))
+    .min(1, 'Informe ao menos um telefone.')
+    .max(10),
+})
+
+export type UpsertTerceiroPayload = z.infer<typeof upsertTerceiroPayloadSchema>

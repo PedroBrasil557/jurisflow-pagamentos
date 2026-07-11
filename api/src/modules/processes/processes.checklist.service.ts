@@ -4,8 +4,8 @@ import {
   buildProcessDocumentObjectKey,
   buildStorageObjectKey,
   createStorageObjectDownloadUrl,
+  createStorageObjectInlineUrl,
   deleteStorageObject,
-  getStorageObjectBytes,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -15,7 +15,7 @@ import { buildChecklistDownloadFileName } from '../../shared/utils/file-name'
 import { user } from '../auth/auth.schema'
 import {
   getHousingComplexChecklistFiles,
-  getHousingComplexFileContent,
+  getHousingComplexFilePreviewUrl,
   type HousingComplexChecklistFile,
 } from '../housing-complexes/housing-complexes.documents.service'
 import {
@@ -1484,17 +1484,18 @@ export async function getProcessChecklistFileDownload(input: {
   }
 }
 
-// Bytes de um arquivo do checklist para stream INLINE (viewer same-origin, evita
-// CORS/redirect ao S3 e permite range requests do pdfjs). Mesma checagem de acesso
-// do download. `source` distingue arquivo do PROCESSO (processDocumentFile) do
-// arquivo do CONJUNTO (housing_complex) — ambos aparecem no checklist do processo.
-export async function getProcessChecklistFileBytes(input: {
+// URL pre-assinada INLINE de um arquivo do checklist para o viewer (react-pdf /
+// <img>). O browser busca os bytes DIRETO do S3/MinIO — servir bytes pela API
+// estoura o teto de 10MB de resposta do API Gateway em prod (scans passam disso).
+// Mesma checagem de acesso do download. `source` distingue arquivo do PROCESSO
+// (processDocumentFile) do arquivo do CONJUNTO (housing_complex).
+export async function getProcessChecklistFilePreviewUrl(input: {
   processId: string
   fileId: string
   source: 'process' | 'housing_complex'
   userId: string
   perms: ResolvedPermissions
-}): Promise<{ bytes: Uint8Array; contentType: string; filename: string }> {
+}): Promise<{ url: string }> {
   const { relationship } = await getProcessContextOrThrow({
     processId: input.processId,
     userId: input.userId,
@@ -1507,7 +1508,7 @@ export async function getProcessChecklistFileBytes(input: {
     if (!currentProcess.housingComplexId) {
       throw new ProcessServiceError(404, 'Arquivo nao encontrado.')
     }
-    return getHousingComplexFileContent({
+    return getHousingComplexFilePreviewUrl({
       housingComplexId: currentProcess.housingComplexId,
       fileId: input.fileId,
     })
@@ -1519,7 +1520,6 @@ export async function getProcessChecklistFileBytes(input: {
       bucketName: processDocumentFile.bucketName,
       objectKey: processDocumentFile.objectKey,
       mimeType: processDocumentFile.mimeType,
-      originalFileName: processDocumentFile.originalFileName,
     })
     .from(processDocumentFile)
     .innerJoin(
@@ -1539,15 +1539,12 @@ export async function getProcessChecklistFileBytes(input: {
     throw new ProcessServiceError(404, 'Arquivo nao encontrado.')
   }
 
-  const bytes = await getStorageObjectBytes({
+  const url = await createStorageObjectInlineUrl({
     bucketName: fileRecord.bucketName,
     objectKey: fileRecord.objectKey,
-  })
-  return {
-    bytes,
     contentType: fileRecord.mimeType,
-    filename: fileRecord.originalFileName,
-  }
+  })
+  return { url }
 }
 
 export async function deleteChecklistFile(input: {

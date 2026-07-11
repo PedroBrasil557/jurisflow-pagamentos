@@ -2,6 +2,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -152,5 +153,32 @@ export const titularDocumento = pgTable(
   ],
 )
 
+// Terceiro vinculado ao titular (exatamente UM por titular — upsert por
+// titular_id). Contato de pessoa relacionada ao contrato (ex.: quem ocupa o
+// imovel ou intermedia a regularizacao).
+export const titularTerceiro = pgTable(
+  'titular_terceiro',
+  {
+    id: text('id').primaryKey(),
+    titularId: text('titular_id')
+      .notNull()
+      .references(() => titularContratoCaixa.id, { onDelete: 'cascade' }),
+    nome: text('nome').notNull(),
+    // 1..N telefones, formato livre como digitado (mesma convencao do whatsapp
+    // do processo — sem normalizacao de digitos).
+    telefones: jsonb('telefones').notNull().$type<string[]>(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    // Unico por titular (alvo do onConflictDoUpdate) e tambem o indice do FK.
+    uniqueIndex('titular_terceiro_titular_idx').on(table.titularId),
+  ],
+)
+
 export type TitularContratoCaixaRow = typeof titularContratoCaixa.$inferSelect
 export type TitularDocumentoRow = typeof titularDocumento.$inferSelect
+export type TitularTerceiroRow = typeof titularTerceiro.$inferSelect

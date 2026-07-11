@@ -12,16 +12,12 @@ import { SearchableSelect } from '@/shared/components/searchable-select'
 import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
 
 // Dialogo agnostico de alvo: escolhe/cria um conjunto e devolve o housingComplexId
-// (ou null p/ desvincular) via onLink. O PAI decide o que fazer (vincular 1 titular,
-// uma selecao, ou o filtro inteiro) e fecha no sucesso. `isPending` reflete a mutacao
-// do pai; a criacao do conjunto e gerida aqui.
+// (ou null p/ desvincular) via onLink. O PAI decide o que fazer (a selecao atual ou
+// o filtro inteiro) e fecha no sucesso. `isPending` reflete a mutacao do pai; a
+// criacao do conjunto e gerida aqui.
 type LinkConjuntoDialogProps = {
   description: string
   prefillName?: string
-  prefillUf?: string
-  prefillMunicipio?: string
-  currentHousingComplexId?: string | null
-  currentConjuntoNome?: string | null
   allowUnlink?: boolean
   isPending?: boolean
   onLink: (housingComplexId: string | null) => void
@@ -33,10 +29,6 @@ type Mode = 'pick' | 'create'
 export function LinkConjuntoDialog({
   description,
   prefillName = '',
-  prefillUf = '',
-  prefillMunicipio = '',
-  currentHousingComplexId = null,
-  currentConjuntoNome = null,
   allowUnlink = false,
   isPending = false,
   onLink,
@@ -45,39 +37,29 @@ export function LinkConjuntoDialog({
   const [mode, setMode] = useState<Mode>('pick')
 
   // Escolher existente.
-  const [selectedId, setSelectedId] = useState(currentHousingComplexId ?? '')
+  const [selectedId, setSelectedId] = useState('')
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebouncedValue(search)
   const optionsQuery = useInfiniteQuery(
     housingComplexOptionsInfiniteQuery(debouncedSearch),
   )
-  const options = useMemo(() => {
-    const fromServer = (optionsQuery.data?.pages ?? [])
-      .flatMap((page) => page.items)
-      .map((item) => ({
-        value: item.id,
-        label: item.name,
-        description:
-          [item.city, item.state].filter(Boolean).join(' - ') || undefined,
-      }))
-    // Garante que o conjunto ATUAL apareca mesmo se nao estiver na pagina carregada.
-    if (
-      currentHousingComplexId &&
-      currentConjuntoNome &&
-      !fromServer.some((o) => o.value === currentHousingComplexId)
-    ) {
-      return [
-        { value: currentHousingComplexId, label: currentConjuntoNome },
-        ...fromServer,
-      ]
-    }
-    return fromServer
-  }, [optionsQuery.data, currentHousingComplexId, currentConjuntoNome])
+  const options = useMemo(
+    () =>
+      (optionsQuery.data?.pages ?? [])
+        .flatMap((page) => page.items)
+        .map((item) => ({
+          value: item.id,
+          label: item.name,
+          description:
+            [item.city, item.state].filter(Boolean).join(' - ') || undefined,
+        })),
+    [optionsQuery.data],
+  )
 
   // Criar novo (prefill quando aplicavel).
   const [name, setName] = useState(prefillName)
-  const [uf, setUf] = useState(prefillUf)
-  const [municipio, setMunicipio] = useState(prefillMunicipio)
+  const [uf, setUf] = useState('')
+  const [municipio, setMunicipio] = useState('')
 
   const createMutation = useCreateHousingComplex()
   const busy = isPending || createMutation.isPending
@@ -121,7 +103,7 @@ export function LinkConjuntoDialog({
       description={description}
       footer={
         <DialogFooter>
-          {allowUnlink && currentHousingComplexId ? (
+          {allowUnlink ? (
             <Button
               className="mr-auto text-muted-foreground"
               disabled={busy}

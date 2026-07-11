@@ -25,11 +25,12 @@ import {
   listTitularesQuerySchema,
   reconsultarPayloadSchema,
   titularDocumentoParamsSchema,
+  titularIdParamsSchema,
+  upsertTerceiroPayloadSchema,
 } from './titulares-caixa.schemas'
 import {
   bulkLinkTitularConjunto,
   exportTitulares,
-  getTitularDocumentBytes,
   getTitularDocumentDownloadUrl,
   getTitularDocumentInlineUrl,
   listConjuntoOptions,
@@ -37,6 +38,7 @@ import {
   listLogradouroOptions,
   listTitulares,
   reconsultarTitulares,
+  upsertTitularTerceiro,
 } from './titulares-caixa.service'
 // Registra o handler do subject 'titular' na fila de quitacao (efeito colateral).
 import './titulares-caixa.subject'
@@ -198,6 +200,30 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
       }
     },
   )
+  // Upsert do terceiro (exatamente um por titular). Sem delete: telefones min(1)
+  // torna terceiro vazio impossivel; correcao = editar. Gate: titularCaixa.view
+  // (decisao de produto: quem ve o menu pode criar/editar o terceiro).
+  .put(
+    '/:id/terceiro',
+    paramsValidator(titularIdParamsSchema),
+    jsonValidator(upsertTerceiroPayloadSchema),
+    async (c) => {
+      try {
+        const user = getAuthenticatedUser(c)
+        const perms = await resolveUserPermissions(user.id, user.role)
+        assertTitularCaixaCan(perms, 'view')
+        const { id } = c.req.valid('param')
+        const terceiro = await upsertTitularTerceiro({
+          titularId: id,
+          ...c.req.valid('json'),
+          perms,
+        })
+        return c.json({ terceiro }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .get(
     '/:id/documentos/:docId',
     paramsValidator(titularDocumentoParamsSchema),
@@ -218,9 +244,12 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
       }
     },
   )
-  // Preview inline (renderiza no navegador/iframe, sem forcar download).
+  // URL pre-assinada INLINE para o viewer de PDF (react-pdf/pdfjs). O browser
+  // busca os bytes DIRETO do S3/MinIO (CORS do bucket ja permite GET do web) —
+  // servir bytes pela API estoura o teto de 10MB de resposta do API Gateway em
+  // prod (mesmo motivo do upload por presigned PUT).
   .get(
-    '/:id/documentos/:docId/preview',
+    '/:id/documentos/:docId/preview-url',
     paramsValidator(titularDocumentoParamsSchema),
     async (c) => {
       try {
@@ -233,32 +262,7 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
           docId,
           perms,
         })
-        return c.redirect(url)
-      } catch (error) {
-        return handleServiceError(c, error)
-      }
-    },
-  )
-  // Conteudo (bytes) SAME-ORIGIN para o viewer de PDF (react-pdf/pdfjs) — evita
-  // CORS/redirect ao MinIO. Cookie-auth.
-  .get(
-    '/:id/documentos/:docId/conteudo',
-    paramsValidator(titularDocumentoParamsSchema),
-    async (c) => {
-      try {
-        const user = getAuthenticatedUser(c)
-        const perms = await resolveUserPermissions(user.id, user.role)
-        assertTitularCaixaCan(perms, 'view')
-        const { id, docId } = c.req.valid('param')
-        const doc = await getTitularDocumentBytes({
-          titularId: id,
-          docId,
-          perms,
-        })
-        c.header('content-type', doc.contentType || 'application/pdf')
-        c.header('content-disposition', 'inline')
-        c.header('cache-control', 'private, max-age=300')
-        return c.body(doc.bytes.slice().buffer as ArrayBuffer)
+        return c.json({ url }, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }

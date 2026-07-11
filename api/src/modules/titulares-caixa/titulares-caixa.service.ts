@@ -18,7 +18,6 @@ import { ServiceError } from '../../shared/errors/service-error'
 import {
   createStorageObjectDownloadUrl,
   createStorageObjectInlineUrl,
-  getStorageObjectBytes,
   storageBuckets,
 } from '../../shared/storage/s3'
 import { formatCpf, normalizeCpf } from '../../shared/utils/cpf'
@@ -29,6 +28,7 @@ import { buildTitularesVisibilityFilter } from './titulares-caixa.access'
 import {
   titularContratoCaixa,
   titularDocumento,
+  titularTerceiro,
 } from './titulares-caixa.schema'
 import type {
   ExportTitularesQuery,
@@ -141,6 +141,11 @@ export async function listTitulares(
         conjuntoNome: housingComplex.name,
         // Id do termo de quitacao anexado (null = sem documento) para o botao "Baixar".
         termoDocId: titularDocumento.id,
+        // Terceiro vinculado (null = sem terceiro). Payload completo na linha:
+        // o modal pre-preenche sem GET extra e o join herda o recorte do WHERE.
+        terceiroId: titularTerceiro.id,
+        terceiroNome: titularTerceiro.nome,
+        terceiroTelefones: titularTerceiro.telefones,
       })
       .from(titularContratoCaixa)
       .leftJoin(
@@ -153,6 +158,10 @@ export async function listTitulares(
       .leftJoin(
         housingComplex,
         eq(housingComplex.id, titularContratoCaixa.housingComplexId),
+      )
+      .leftJoin(
+        titularTerceiro,
+        eq(titularTerceiro.titularId, titularContratoCaixa.id),
       )
       .where(whereClause)
       .orderBy(desc(titularContratoCaixa.createdAt))
@@ -448,6 +457,59 @@ export async function bulkLinkTitularConjunto(input: {
   return { linked: updated.length, conjuntoNome }
 }
 
+// Upsert do terceiro vinculado ao titular (exatamente um por titular — conflito
+// no indice unico titular_terceiro_titular_idx atualiza em vez de duplicar).
+// Titular fora do recorte de visibilidade => 404 (mesmo padrao da lista; o
+// endpoint nao vira oraculo de existencia).
+export async function upsertTitularTerceiro(input: {
+  titularId: string
+  nome: string
+  telefones: string[]
+  perms: ResolvedPermissions
+}): Promise<{ id: string; nome: string; telefones: string[] }> {
+  const [titular] = await db
+    .select({ id: titularContratoCaixa.id })
+    .from(titularContratoCaixa)
+    .where(
+      and(
+        eq(titularContratoCaixa.id, input.titularId),
+        buildTitularesVisibilityFilter(input.perms),
+      ),
+    )
+    .limit(1)
+
+  if (!titular) {
+    throw new ServiceError(404, 'Titular nao encontrado.')
+  }
+
+  const [row] = await db
+    .insert(titularTerceiro)
+    .values({
+      id: crypto.randomUUID(),
+      titularId: input.titularId,
+      nome: input.nome,
+      telefones: input.telefones,
+    })
+    .onConflictDoUpdate({
+      target: titularTerceiro.titularId,
+      set: {
+        nome: input.nome,
+        telefones: input.telefones,
+        updatedAt: new Date(),
+      },
+    })
+    .returning({
+      id: titularTerceiro.id,
+      nome: titularTerceiro.nome,
+      telefones: titularTerceiro.telefones,
+    })
+
+  if (!row) {
+    throw new ServiceError(500, 'Nao foi possivel salvar o terceiro.')
+  }
+  return row
+}
+
 // Carrega o documento verificando que (a) pertence ao titular informado E (b) o
 // titular esta num conjunto visivel ao usuario (join + buildTitularesVisibilityFilter).
 // Fora do escopo => 404 (mesmo recorte da lista; nao vaza CPF/PIS/endereco do termo
@@ -496,7 +558,8 @@ export async function getTitularDocumentDownloadUrl(input: {
   })
 }
 
-// URL de VISUALIZACAO inline (preview no navegador, sem download).
+// URL de VISUALIZACAO inline (o viewer de PDF busca os bytes direto do storage;
+// servir bytes pela API estoura o teto de 10MB do API Gateway em prod).
 export async function getTitularDocumentInlineUrl(input: {
   titularId: string
   docId: string
@@ -508,20 +571,4 @@ export async function getTitularDocumentInlineUrl(input: {
     objectKey: doc.storageKey,
     contentType: doc.contentType,
   })
-}
-
-// Bytes do documento (streaming SAME-ORIGIN pela API). Usado pelo viewer de PDF
-// (react-pdf/pdfjs faz range requests; servir same-origin evita CORS/redirect ao
-// MinIO que o preview por URL pre-assinada teria).
-export async function getTitularDocumentBytes(input: {
-  titularId: string
-  docId: string
-  perms: ResolvedPermissions
-}): Promise<{ bytes: Uint8Array; contentType: string; filename: string }> {
-  const doc = await loadTitularDocument(input)
-  const bytes = await getStorageObjectBytes({
-    bucketName: storageBuckets.processDocuments,
-    objectKey: doc.storageKey,
-  })
-  return { bytes, contentType: doc.contentType, filename: doc.filename }
 }
