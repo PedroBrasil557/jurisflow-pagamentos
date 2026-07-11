@@ -25,6 +25,8 @@ export const listTitularesQuerySchema = z.object({
   municipio: z.string().trim().optional(),
   modalidade: z.preprocess(toArray, z.array(z.string())).optional(),
   empreendimento: z.preprocess(toArray, z.array(z.string())).optional(),
+  // Filtro por conjunto (housing_complex.id).
+  conjuntoIds: z.preprocess(toArray, z.array(z.string())).optional(),
   logradouros: z.preprocess(toArray, z.array(z.string())).optional(),
   quitacaoStatuses: z
     .preprocess(toArray, z.array(z.enum(titularQuitacaoStatuses)))
@@ -45,6 +47,8 @@ export const exportTitularesQuerySchema = z.object({
   municipio: z.string().trim().optional(),
   modalidade: z.preprocess(toArray, z.array(z.string())).optional(),
   empreendimento: z.preprocess(toArray, z.array(z.string())).optional(),
+  // Filtro por conjunto (housing_complex.id).
+  conjuntoIds: z.preprocess(toArray, z.array(z.string())).optional(),
   logradouros: z.preprocess(toArray, z.array(z.string())).optional(),
   quitacaoStatuses: z
     .preprocess(toArray, z.array(z.enum(titularQuitacaoStatuses)))

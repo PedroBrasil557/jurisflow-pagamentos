@@ -1,0 +1,15 @@
+[
+  {
+    "id": "termo-caixa-p1",
+    "rawQuad": {
+      "topLeftCorner": { "x": 80, "y": 80 },
+      "topRightCorner": { "x": 2400, "y": 80 },
+      "bottomRightCorner": { "x": 2400, "y": 3350 },
+      "bottomLeftCorner": { "x": 80, "y": 3350 }
+    }
+  },
+  {
+    "id": "procuracao-p1",
+    "rawQuad": null
+  }
+]

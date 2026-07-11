@@ -9,6 +9,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import { user } from '../auth/auth.schema'
+import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 
 // Cadastro de titular de contrato Caixa (uma linha por titular/contrato, importado
 // da planilha "lista_titular_contrato_caixa"). Dado de NEGOCIO — a mecanica da
@@ -70,6 +71,14 @@ export const titularContratoCaixa = pgTable(
     // Flag "Averbacao" derivado do termo (null = ainda nao analisado).
     averbacao: titularAverbacaoEnum('averbacao'),
     averbacaoCheckedAt: timestamp('averbacao_checked_at'),
+    // Conjunto habitacional (housing_complex) resolvido pelo `empreendimento` na
+    // importacao. null = empreendimento sem conjunto cadastrado (fica visivel so
+    // para admin/all-scope). E o ancoradouro da permissao por conjunto: o recorte
+    // de visibilidade dos titulares usa este FK (ver titulares-caixa.access.ts).
+    housingComplexId: text('housing_complex_id').references(
+      () => housingComplex.id,
+      { onDelete: 'set null' },
+    ),
     // Auditoria.
     createdByUserId: text('created_by_user_id').references(() => user.id, {
       onDelete: 'set null',
@@ -86,6 +95,7 @@ export const titularContratoCaixa = pgTable(
     index('titular_quitacao_status_idx').on(table.quitacaoStatus),
     index('titular_averbacao_idx').on(table.averbacao),
     index('titular_empreendimento_idx').on(table.empreendimento),
+    index('titular_housing_complex_idx').on(table.housingComplexId),
     index('titular_uf_idx').on(table.uf),
     index('titular_municipio_idx').on(table.municipio),
     // Identidade natural: o upsert do reimport atualiza os descritivos SEM duplicar

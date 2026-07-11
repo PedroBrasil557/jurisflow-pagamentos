@@ -41,6 +41,7 @@ import {
   useReconsultarTitulares,
 } from '../services/titulares-caixa.mutations'
 import {
+  conjuntoOptionsQuery,
   empreendimentoOptionsQuery,
   logradouroOptionsQuery,
   titularListOptions,
@@ -95,6 +96,7 @@ type TitularesCaixaPageProps = {
   currentMunicipio: string
   currentModalidade: string[]
   currentEmpreendimento: string[]
+  currentConjuntoIds: string[]
   currentLogradouros: string[]
   currentQuitacaoStatuses: TitularQuitacaoStatus[]
   currentAverbacoes: TitularAverbacao[]
@@ -109,6 +111,7 @@ export function TitularesCaixaPage({
   currentMunicipio,
   currentModalidade,
   currentEmpreendimento,
+  currentConjuntoIds,
   currentLogradouros,
   currentQuitacaoStatuses,
   currentAverbacoes,
@@ -146,6 +149,7 @@ export function TitularesCaixaPage({
       empreendimento: currentEmpreendimento.length
         ? currentEmpreendimento
         : undefined,
+      conjuntoIds: currentConjuntoIds.length ? currentConjuntoIds : undefined,
       logradouros: currentLogradouros.length ? currentLogradouros : undefined,
       quitacaoStatuses: currentQuitacaoStatuses.length
         ? currentQuitacaoStatuses
@@ -169,6 +173,7 @@ export function TitularesCaixaPage({
       ...(currentEmpreendimento.length
         ? { empreendimento: currentEmpreendimento }
         : {}),
+      ...(currentConjuntoIds.length ? { conjuntoIds: currentConjuntoIds } : {}),
       ...(currentLogradouros.length ? { logradouros: currentLogradouros } : {}),
       ...(currentQuitacaoStatuses.length
         ? { quitacaoStatuses: currentQuitacaoStatuses }
@@ -187,6 +192,7 @@ export function TitularesCaixaPage({
     if (merged.modalidade?.length) next.modalidade = merged.modalidade
     if (merged.empreendimento?.length)
       next.empreendimento = merged.empreendimento
+    if (merged.conjuntoIds?.length) next.conjuntoIds = merged.conjuntoIds
     if (merged.logradouros?.length) next.logradouros = merged.logradouros
     if (merged.quitacaoStatuses?.length)
       next.quitacaoStatuses = merged.quitacaoStatuses
@@ -239,6 +245,7 @@ export function TitularesCaixaPage({
       empreendimento: currentEmpreendimento.length
         ? currentEmpreendimento
         : undefined,
+      conjuntoIds: currentConjuntoIds.length ? currentConjuntoIds : undefined,
       logradouros: currentLogradouros.length ? currentLogradouros : undefined,
       quitacaoStatuses: currentQuitacaoStatuses.length
         ? currentQuitacaoStatuses
@@ -260,6 +267,7 @@ export function TitularesCaixaPage({
     (currentMunicipio ? 1 : 0) +
     currentModalidade.length +
     currentEmpreendimento.length +
+    currentConjuntoIds.length +
     currentLogradouros.length +
     currentQuitacaoStatuses.length +
     currentAverbacoes.length +
@@ -557,6 +565,7 @@ export function TitularesCaixaPage({
           municipio: currentMunicipio,
           modalidade: currentModalidade,
           empreendimento: currentEmpreendimento,
+          conjuntoIds: currentConjuntoIds,
           logradouros: currentLogradouros,
           quitacaoStatuses: currentQuitacaoStatuses,
           averbacoes: currentAverbacoes,
@@ -669,6 +678,7 @@ type FiltersValue = {
   municipio: string
   modalidade: string[]
   empreendimento: string[]
+  conjuntoIds: string[]
   logradouros: string[]
   quitacaoStatuses: TitularQuitacaoStatus[]
   averbacoes: TitularAverbacao[]
@@ -704,6 +714,13 @@ function FiltersDialog({
     () => (optionsQuery.data ?? []).map((e) => ({ value: e, label: e })),
     [optionsQuery.data],
   )
+  const [conjuntoIds, setConjuntoIds] = useState<string[]>(initial.conjuntoIds)
+  const conjuntoQuery = useQuery(conjuntoOptionsQuery())
+  const conjuntoOptions = useMemo(
+    () =>
+      (conjuntoQuery.data ?? []).map((c) => ({ value: c.id, label: c.nome })),
+    [conjuntoQuery.data],
+  )
   const [logradouros, setLogradouros] = useState<string[]>(initial.logradouros)
   const logradouroQuery = useQuery(logradouroOptionsQuery())
   const logradouroOptions = useMemo(
@@ -736,6 +753,7 @@ function FiltersDialog({
       municipio: municipio.trim(),
       modalidade: modalidade.trim() ? [modalidade.trim()] : [],
       empreendimento,
+      conjuntoIds,
       logradouros,
       quitacaoStatuses: statuses,
       averbacoes,
@@ -793,6 +811,16 @@ function FiltersDialog({
             />
           </div>
         </div>
+
+        <SearchableMultiSelect
+          isLoading={conjuntoQuery.isLoading}
+          label="Conjunto"
+          onChange={setConjuntoIds}
+          options={conjuntoOptions}
+          placeholder="Todos os conjuntos"
+          searchPlaceholder="Buscar conjunto..."
+          value={conjuntoIds}
+        />
 
         <SearchableMultiSelect
           isLoading={optionsQuery.isLoading}

@@ -9,8 +9,9 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { Dialog as DialogPrimitive } from 'radix-ui'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { cn } from '#/lib/utils'
 import {
@@ -37,8 +38,15 @@ import {
 } from './scan-session-store'
 import type { ScanCaptureSource, ScanPageTelemetry } from './scan-telemetry'
 import { buildScanFileName, pagesToPdfFile, type ScanPage } from './scan-to-pdf'
+import { scannerTuningQuery } from './scanbot-license'
 import { warpPerspectiveToCanvas } from './scan-warp'
-import type { CornerPoints } from './scanner-engine'
+import {
+  type CornerPoints,
+  fullFrameCorners,
+  isRiskyDetection,
+  resolveFinalCorners,
+} from './scanner-engine'
+import { resolveTuning } from './scanner-tuning'
 import { assessPageQuality, type PageQuality } from './sharpness'
 
 type WebScannerDialogProps = {
@@ -123,30 +131,6 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
 
-// Cantos padrao (recuo de 8%) quando a deteccao automatica falha.
-function defaultCorners(width: number, height: number): CornerPoints {
-  const insetX = width * 0.08
-  const insetY = height * 0.08
-  return {
-    topLeftCorner: { x: insetX, y: insetY },
-    topRightCorner: { x: width - insetX, y: insetY },
-    bottomRightCorner: { x: width - insetX, y: height - insetY },
-    bottomLeftCorner: { x: insetX, y: height - insetY },
-  }
-}
-
-// Cantos do quadro inteiro (recorte identidade). Usado em paginas recuperadas: a
-// imagem persistida JA e o recorte final, entao reeditar com estes cantos nao
-// recorta de novo (sem crop duplo); o usuario ainda pode arrastar para ajustar.
-function fullFrameCorners(width: number, height: number): CornerPoints {
-  return {
-    topLeftCorner: { x: 0, y: 0 },
-    topRightCorner: { x: width, y: 0 },
-    bottomRightCorner: { x: width, y: height },
-    bottomLeftCorner: { x: 0, y: height },
-  }
-}
-
 // Recorta pela perspectiva dos cantos e aplica o filtro. Opera sobre a imagem JA
 // NORMALIZADA (<=300 DPI) — devolve o canvas resultante (o chamador converte em
 // Blob, sem passar por dataUrl base64). `quality` (modo HD) e medida no recorte
@@ -227,6 +211,14 @@ export function WebScannerDialog({
   // Detector DocAligner (IA): unico motor de deteccao no navegador. Se a IA nao
   // achar os cantos (ou o modelo nao carregar), o usuario ajusta manualmente.
   const { detector: mlDetector, status: mlStatus } = useDocAlignerDetector(open)
+
+  // Tuning ativo (versao vinda das Configuracoes). Resolve versao -> valores e
+  // cai no default enquanto carrega ou se a versao for desconhecida.
+  const { data: tuningVersion } = useQuery(scannerTuningQuery)
+  const tuning = useMemo(
+    () => resolveTuning(tuningVersion).tuning,
+    [tuningVersion],
+  )
 
   const detectBest = useCallback(
     async (source: HTMLCanvasElement): Promise<CornerPoints | null> => {
@@ -675,14 +667,18 @@ export function WebScannerDialog({
   async function addPageFromCanvas(
     sourceCanvas: HTMLCanvasElement,
     capture: PageCaptureMeta | null = null,
-  ): Promise<boolean> {
+  ): Promise<{
+    added: boolean
+    needsReview: boolean
+    page: ScannedPage | null
+  }> {
     // Teto de paginas (previne dead-letter por documento grande demais na IA).
     if (pagesRef.current.length >= MAX_SCAN_PAGES) {
       setError(
         `Limite de ${MAX_SCAN_PAGES} paginas por digitalizacao. Finalize e escaneie o restante em outro documento.`,
       )
       releaseCanvas(sourceCanvas)
-      return false
+      return { added: false, needsReview: false, page: null }
     }
     capturingRef.current = true
     setCapturing(true)
@@ -692,7 +688,22 @@ export function WebScannerDialog({
       // imagem de 50 MP.
       const work = downscaleCanvasToLongEdge(sourceCanvas)
       const detected = await detectBest(work)
-      const corners = detected ?? defaultCorners(work.width, work.height)
+      // Sinal de risco avaliado sobre o quad CRU (antes da folga), para decidir
+      // se pedimos revisao manual dos cantos antes de gravar.
+      const needsReview =
+        tuning.riskReview.enabled &&
+        (tuning.riskReview.always ||
+          isRiskyDetection(detected, work.width, work.height, {
+            edgeMarginPct: tuning.riskReview.edgeMarginPct,
+            minAreaRatio: tuning.riskReview.minAreaRatio,
+          }))
+      // Quad final: deteccao + folga (outset) para nao cortar a faixa externa
+      // (assinaturas); na falha, frame inteiro (nao descarta nada) ou o recuo
+      // legado de 8%, conforme o tuning.
+      const corners = resolveFinalCorners(detected, work.width, work.height, {
+        marginRatio: tuning.marginRatio,
+        fallbackMode: tuning.fallbackMode,
+      })
       const rendered = renderCroppedPage(work, corners, filter, hdMode)
 
       // Gate de qualidade (modo HD): avisa sem bloquear — a pagina entra normal
@@ -718,22 +729,20 @@ export function WebScannerDialog({
       const id = `page-${pageIdRef.current}`
       const sortOrder = pageIdRef.current
       const thumbUrl = URL.createObjectURL(blob)
-      setPages((prev) => [
-        ...prev,
-        {
-          id,
-          sortOrder,
-          originalBlob,
-          corners,
-          filter,
-          blob,
-          thumbUrl,
-          width: rendered.width,
-          height: rendered.height,
-          quality: rendered.quality,
-          capture,
-        },
-      ])
+      const newPage: ScannedPage = {
+        id,
+        sortOrder,
+        originalBlob,
+        corners,
+        filter,
+        blob,
+        thumbUrl,
+        width: rendered.width,
+        height: rendered.height,
+        quality: rendered.quality,
+        capture,
+      }
+      setPages((prev) => [...prev, newPage])
 
       // Durabilidade: persiste a pagina em IndexedDB (best-effort). Se a aba
       // morrer, a sessao pode ser recuperada ao reabrir.
@@ -746,7 +755,7 @@ export function WebScannerDialog({
         height: rendered.height,
         createdAt: Date.now(),
       })
-      return true
+      return { added: true, needsReview, page: newPage }
     } finally {
       capturingRef.current = false
       setCapturing(false)
@@ -784,6 +793,10 @@ export function WebScannerDialog({
         void addPageFromCanvas(canvas, {
           source: 'frame',
           rawLongEdgePx: Math.max(video.videoWidth, video.videoHeight),
+        }).then((res) => {
+          if (res.needsReview && res.page) {
+            void openEdit(res.page)
+          }
         })
       }
       return
@@ -804,10 +817,13 @@ export function WebScannerDialog({
         decodeStill: (photo) => decodeToWorkingCanvas(photo),
       })
       if (captured) {
-        await addPageFromCanvas(captured.canvas, {
+        const res = await addPageFromCanvas(captured.canvas, {
           source: captured.source,
           rawLongEdgePx: captured.rawLongEdgePx,
         })
+        if (res.needsReview && res.page) {
+          await openEdit(res.page)
+        }
       }
     } finally {
       capturingRef.current = false
@@ -831,17 +847,22 @@ export function WebScannerDialog({
       // Decodifica JA REDUZIDO (createImageBitmap com resize) — nao materializa
       // os 50 MP da camera nativa num canvas de ~200 MB.
       const canvas = await decodeToWorkingCanvas(file)
-      const added = await addPageFromCanvas(canvas, {
+      const res = await addPageFromCanvas(canvas, {
         source: 'native',
         rawLongEdgePx: dims ? Math.max(dims.width, dims.height) : null,
       })
+      // Deteccao arriscada: abre a revisao de cantos antes de seguir.
+      if (res.needsReview && res.page) {
+        await openEdit(res.page)
+        return
+      }
       // Modo HD no iOS: volta para a tela de origem (botao da captura -> volta
       // pra captura, emendando a proxima foto sem passar pela revisao). Demais
       // casos vao para a revisao: pagina rejeitada no teto (o usuario precisa
       // ver as 15 paginas + o erro), camera QUEBRADA (voltar para a tela de
       // camera falha seria um loop de erro) e o fallback nao-iOS.
       setScreen(
-        added && hdMode && preferNativeCapture && !cameraFailed
+        res.added && hdMode && preferNativeCapture && !cameraFailed
           ? nativeReturnScreenRef.current
           : 'review',
       )
@@ -1147,7 +1168,7 @@ export function WebScannerDialog({
               onReset={() => {
                 if (editCanvas) {
                   setEditCorners(
-                    defaultCorners(editCanvas.width, editCanvas.height),
+                    fullFrameCorners(editCanvas.width, editCanvas.height),
                   )
                 }
               }}

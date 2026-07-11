@@ -73,40 +73,68 @@ function emptyIndicadores(): Indicadores {
   }
 }
 
+// Acumula indicadores (mutando o alvo) — base do re-somatorio quando o escopo
+// filtra empreendimentos (recorte por conjunto).
+function addIndicadores(acc: Indicadores, i: Indicadores) {
+  acc.total += i.total
+  acc.quitado += i.quitado
+  acc.pendente += i.pendente
+  acc.idle += i.idle
+  acc.semExito += i.semExito
+  acc.naoEncontrado += i.naoEncontrado
+  acc.erro += i.erro
+  acc.termos += i.termos
+  acc.averbacao.sim += i.averbacao.sim
+  acc.averbacao.nao += i.averbacao.nao
+  acc.averbacao.indeterminado += i.averbacao.indeterminado
+}
+
 // Soma os indicadores dos municipios do escopo — a fonte unica dos KPIs. Como a
 // query "por local" ja quebra tudo por municipio, os cards batem exatamente com a
 // soma exibida na secao de baixo em qualquer recorte.
 function sumIndicadores(municipios: Municipios): Indicadores {
   return municipios.reduce((acc, municipio) => {
-    const i = municipio.indicadores
-    acc.total += i.total
-    acc.quitado += i.quitado
-    acc.pendente += i.pendente
-    acc.idle += i.idle
-    acc.semExito += i.semExito
-    acc.naoEncontrado += i.naoEncontrado
-    acc.erro += i.erro
-    acc.termos += i.termos
-    acc.averbacao.sim += i.averbacao.sim
-    acc.averbacao.nao += i.averbacao.nao
-    acc.averbacao.indeterminado += i.averbacao.indeterminado
+    addIndicadores(acc, municipio.indicadores)
     return acc
   }, emptyIndicadores())
 }
 
+// Aplica o escopo: UF/municipio no nivel do municipio; conjunto no nivel do
+// empreendimento (filtra os empreendimentos do conjunto e RE-SOMA o indicador do
+// municipio a partir deles, para os KPIs baterem com a tabela). Municipio sem
+// nenhum empreendimento no conjunto e descartado.
 function filterByScope(
   municipios: Municipios,
   scope: TitularCaixaScope,
 ): Municipios {
-  if (scope.municipio) {
-    return municipios.filter(
-      (m) => m.uf === scope.uf && m.municipio === scope.municipio,
+  const result: Municipios = []
+  for (const m of municipios) {
+    if (
+      scope.municipio &&
+      !(m.uf === scope.uf && m.municipio === scope.municipio)
+    ) {
+      continue
+    }
+    if (scope.uf && m.uf !== scope.uf) {
+      continue
+    }
+    if (!scope.conjuntoId) {
+      result.push(m)
+      continue
+    }
+    const empreendimentos = m.empreendimentos.filter(
+      (e) => e.conjuntoId === scope.conjuntoId,
     )
+    if (empreendimentos.length === 0) {
+      continue
+    }
+    const indicadores = emptyIndicadores()
+    for (const e of empreendimentos) {
+      addIndicadores(indicadores, e.indicadores)
+    }
+    result.push({ ...m, empreendimentos, indicadores })
   }
-  if (scope.uf) {
-    return municipios.filter((m) => m.uf === scope.uf)
-  }
-  return municipios
+  return result
 }
 
 function buildCards(totals: Indicadores): {
@@ -192,6 +220,7 @@ export function TitularCaixaTab() {
   const [scope, setScope] = useState<TitularCaixaScope>({
     uf: null,
     municipio: null,
+    conjuntoId: null,
   })
 
   if (isError) {
@@ -211,12 +240,32 @@ export function TitularCaixaTab() {
     .map((m) => ({ uf: m.uf, municipio: m.municipio }))
     .sort((a, b) => a.municipio.localeCompare(b.municipio, 'pt-BR'))
 
+  // Opcoes de conjunto do recorte geografico atual (UF/municipio, sem o filtro de
+  // conjunto) — evita oferecer conjunto que ficaria vazio no recorte escolhido.
+  const geoScoped = filterByScope(municipios, {
+    uf: scope.uf,
+    municipio: scope.municipio,
+    conjuntoId: null,
+  })
+  const conjuntoMap = new Map<string, string>()
+  for (const m of geoScoped) {
+    for (const e of m.empreendimentos) {
+      if (e.conjuntoId && e.conjuntoNome) {
+        conjuntoMap.set(e.conjuntoId, e.conjuntoNome)
+      }
+    }
+  }
+  const conjuntoOptions = [...conjuntoMap.entries()]
+    .map(([id, nome]) => ({ id, nome }))
+    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+
   const filtered = filterByScope(municipios, scope)
   const cards = buildCards(sumIndicadores(filtered))
 
   return (
     <div className="grid gap-6">
       <TitularCaixaScopeFilter
+        conjuntos={conjuntoOptions}
         municipios={municipioOptions}
         onChange={setScope}
         scope={scope}

@@ -4,6 +4,7 @@ import { db } from '../../shared/db'
 import { ServiceError } from '../../shared/errors/service-error'
 import { logEvent } from '../../shared/observability/log'
 import { isValidCpf, normalizeCpf } from '../../shared/utils/cpf'
+import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import { enqueueManyQuitacao } from '../quitacao-queue/quitacao-queue.service'
 import { titularContratoCaixa } from './titulares-caixa.schema'
 
@@ -163,6 +164,19 @@ export async function importTitularesFromXlsx(input: {
     })
   })
 
+  // Resolve o CONJUNTO (housing_complex) pelo `empreendimento`, com o mesmo match
+  // normalizado dos processos (resolveHousingComplexIdOrThrow: upper(trim(...))).
+  // Uma unica query carrega o registro (curado, pequeno) -> mapa em memoria. NAO
+  // auto-cria conjunto: empreendimento sem match fica NULL (visivel so p/ admin).
+  const complexes = await db
+    .select({ id: housingComplex.id, name: housingComplex.name })
+    .from(housingComplex)
+  const complexIdByName = new Map(
+    complexes.map((c) => [c.name.trim().toUpperCase(), c.id]),
+  )
+  const resolveConjunto = (empreendimento: string): string | null =>
+    complexIdByName.get(empreendimento.trim().toUpperCase()) ?? null
+
   const importBatchId = crypto.randomUUID()
   let inserted = 0
   let updated = 0
@@ -193,6 +207,7 @@ export async function importTitularesFromXlsx(input: {
           // Linha nova nasce 'pending' (sera enfileirada). Em conflito, NAO tocamos
           // a quitacao (nao esta no set do update abaixo).
           quitacaoStatus: 'pending' as const,
+          housingComplexId: resolveConjunto(r.empreendimento),
           createdByUserId: input.userId,
           importBatchId,
         })),
@@ -215,6 +230,11 @@ export async function importTitularesFromXlsx(input: {
           logradouro: sql`excluded.logradouro`,
           numeroImovel: sql`excluded.numero_imovel`,
           bairro: sql`excluded.bairro`,
+          // Reimport re-resolve o conjunto: pega conjuntos cadastrados DEPOIS do
+          // primeiro import (empreendimento antes sem match passa a linkar). COALESCE
+          // preserva o vinculo existente quando o re-resolve dá null (ex.: conjunto
+          // renomeado — o FK antigo continua valido); so um null->id propaga.
+          housingComplexId: sql`coalesce(excluded.housing_complex_id, ${titularContratoCaixa.housingComplexId})`,
           importBatchId: sql`excluded.import_batch_id`,
           updatedAt: sql`now()`,
         },

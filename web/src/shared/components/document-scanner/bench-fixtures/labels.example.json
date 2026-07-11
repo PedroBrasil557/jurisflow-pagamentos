@@ -1,0 +1,26 @@
+[
+  {
+    "id": "termo-caixa-p1",
+    "width": 2480,
+    "height": 3508,
+    "trueCorners": {
+      "topLeftCorner": { "x": 40, "y": 40 },
+      "topRightCorner": { "x": 2440, "y": 40 },
+      "bottomRightCorner": { "x": 2440, "y": 3468 },
+      "bottomLeftCorner": { "x": 40, "y": 3468 }
+    },
+    "contentBBox": { "x": 120, "y": 3360, "width": 380, "height": 32 }
+  },
+  {
+    "id": "procuracao-p1",
+    "width": 2480,
+    "height": 3508,
+    "trueCorners": {
+      "topLeftCorner": { "x": 30, "y": 30 },
+      "topRightCorner": { "x": 2450, "y": 30 },
+      "bottomRightCorner": { "x": 2450, "y": 3478 },
+      "bottomLeftCorner": { "x": 30, "y": 3478 }
+    },
+    "contentBBox": { "x": 80, "y": 3300, "width": 400, "height": 150 }
+  }
+]

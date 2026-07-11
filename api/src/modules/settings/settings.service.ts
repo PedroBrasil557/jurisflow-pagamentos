@@ -264,6 +264,43 @@ export async function saveScannerProvider(
   return { provider }
 }
 
+// --- Tuning de deteccao/recorte de borda (versao ativa) ---
+// So a versao e persistida; o web mapeia versao -> valores (scanner-tuning.ts) e
+// cai no default se a versao for desconhecida. Default mantido em sincronia com
+// DEFAULT_TUNING_VERSION do web.
+const DEFAULT_SCANNER_TUNING_VERSION = 'v2-margin3-fullframe'
+
+export async function getScannerTuningVersion(): Promise<string> {
+  const [row] = await db
+    .select({ scannerTuningVersion: appSettings.scannerTuningVersion })
+    .from(appSettings)
+    .where(eq(appSettings.id, SETTINGS_ID))
+    .limit(1)
+
+  return row?.scannerTuningVersion?.trim() || DEFAULT_SCANNER_TUNING_VERSION
+}
+
+export async function saveScannerTuningVersion(
+  version: string,
+): Promise<{ version: string }> {
+  const now = new Date()
+
+  await db
+    .insert(appSettings)
+    .values({
+      id: SETTINGS_ID,
+      scannerTuningVersion: version,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: appSettings.id,
+      set: { scannerTuningVersion: version, updatedAt: now },
+    })
+
+  return { version }
+}
+
 export async function clearScanbotLicenseKey(): Promise<KeyStatus> {
   const now = new Date()
 

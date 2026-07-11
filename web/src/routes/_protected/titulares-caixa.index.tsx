@@ -23,6 +23,7 @@ function TitularesRoute() {
       currentAssinaturaFrom={search.assinaturaFrom}
       currentAssinaturaTo={search.assinaturaTo}
       currentAverbacoes={search.averbacoes ?? []}
+      currentConjuntoIds={search.conjuntoIds ?? []}
       currentEmpreendimento={search.empreendimento ?? []}
       currentLogradouros={search.logradouros ?? []}
       currentModalidade={search.modalidade ?? []}

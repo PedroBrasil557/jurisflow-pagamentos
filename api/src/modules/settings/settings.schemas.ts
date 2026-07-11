@@ -28,6 +28,25 @@ export type SaveScannerProviderPayload = z.infer<
   typeof saveScannerProviderPayloadSchema
 >
 
+// Versoes conhecidas do tuning do scanner. A fonte de verdade dos VALORES e o
+// web (scanner-tuning.ts, SCANNER_TUNING_PRESETS); aqui so validamos a versao
+// salva para rejeitar typos (o rollback e mudar esta versao). Manter em sincronia
+// com as chaves de SCANNER_TUNING_PRESETS.
+export const scannerTuningVersionSchema = z.enum([
+  'v1-baseline',
+  'v2-margin3-fullframe',
+  'v3-fastvit',
+  'v4-letterbox',
+])
+
+export const saveScannerTuningVersionPayloadSchema = z.object({
+  version: scannerTuningVersionSchema,
+})
+
+export type SaveScannerTuningVersionPayload = z.infer<
+  typeof saveScannerTuningVersionPayloadSchema
+>
+
 export const saveCaixaOwnerAutoApplyPayloadSchema = z.object({
   enabled: z.boolean(),
 })

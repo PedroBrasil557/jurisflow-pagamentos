@@ -14,14 +14,16 @@ export const titularQuitacaoStatuses = [
 ] as const
 export type TitularQuitacaoStatus = (typeof titularQuitacaoStatuses)[number]
 
-export const titularQuitacaoStatusLabels: Record<TitularQuitacaoStatus, string> =
-  {
-    idle: 'Sem consulta',
-    pending: 'Pendente',
-    quitado: 'Quitado',
-    nao_encontrado: 'Nao encontrado',
-    erro: 'Erro',
-  }
+export const titularQuitacaoStatusLabels: Record<
+  TitularQuitacaoStatus,
+  string
+> = {
+  idle: 'Sem consulta',
+  pending: 'Pendente',
+  quitado: 'Quitado',
+  nao_encontrado: 'Nao encontrado',
+  erro: 'Erro',
+}
 
 export const titularAverbacaoValues = ['sim', 'nao', 'indeterminado'] as const
 export type TitularAverbacao = (typeof titularAverbacaoValues)[number]
@@ -40,12 +42,15 @@ export type TitularesListQuery = {
   municipio?: string
   modalidade?: string[]
   empreendimento?: string[]
+  conjuntoIds?: string[]
   logradouros?: string[]
   quitacaoStatuses?: TitularQuitacaoStatus[]
   averbacoes?: TitularAverbacao[]
   assinaturaFrom?: string
   assinaturaTo?: string
 }
+
+export type ConjuntoOption = { id: string; nome: string }
 
 type ListTitularesResponse = InferResponseType<typeof titularesRoute.$get, 200>
 export type TitularListItem = ListTitularesResponse['items'][number]
@@ -71,6 +76,7 @@ export async function fetchTitulares(
       ...(query.empreendimento?.length
         ? { empreendimento: query.empreendimento }
         : {}),
+      ...(query.conjuntoIds?.length ? { conjuntoIds: query.conjuntoIds } : {}),
       ...(query.logradouros?.length ? { logradouros: query.logradouros } : {}),
       ...(query.quitacaoStatuses?.length
         ? { quitacaoStatuses: query.quitacaoStatuses }
@@ -83,7 +89,10 @@ export async function fetchTitulares(
 
   if (!response.ok) {
     throw new Error(
-      await getErrorMessage(response, 'Nao foi possivel carregar os titulares.'),
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar os titulares.',
+      ),
     )
   }
 
@@ -116,7 +125,10 @@ export async function fetchEmpreendimentoOptions(): Promise<string[]> {
 
   if (!response.ok) {
     throw new Error(
-      await getErrorMessage(response, 'Nao foi possivel carregar os empreendimentos.'),
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar os empreendimentos.',
+      ),
     )
   }
 
@@ -129,11 +141,30 @@ export async function fetchLogradouroOptions(): Promise<string[]> {
 
   if (!response.ok) {
     throw new Error(
-      await getErrorMessage(response, 'Nao foi possivel carregar os logradouros.'),
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar os logradouros.',
+      ),
     )
   }
 
   const body = (await response.json()) as { options: string[] }
+  return body.options
+}
+
+export async function fetchConjuntoOptions(): Promise<ConjuntoOption[]> {
+  const response = await titularesRoute.opcoes.conjunto.$get()
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar os conjuntos.',
+      ),
+    )
+  }
+
+  const body = (await response.json()) as { options: ConjuntoOption[] }
   return body.options
 }
 
@@ -152,12 +183,19 @@ export function titularesExportUrl(
         ...(query.empreendimento?.length
           ? { empreendimento: query.empreendimento }
           : {}),
-        ...(query.logradouros?.length ? { logradouros: query.logradouros } : {}),
+        ...(query.conjuntoIds?.length
+          ? { conjuntoIds: query.conjuntoIds }
+          : {}),
+        ...(query.logradouros?.length
+          ? { logradouros: query.logradouros }
+          : {}),
         ...(query.quitacaoStatuses?.length
           ? { quitacaoStatuses: query.quitacaoStatuses }
           : {}),
         ...(query.averbacoes?.length ? { averbacoes: query.averbacoes } : {}),
-        ...(query.assinaturaFrom ? { assinaturaFrom: query.assinaturaFrom } : {}),
+        ...(query.assinaturaFrom
+          ? { assinaturaFrom: query.assinaturaFrom }
+          : {}),
         ...(query.assinaturaTo ? { assinaturaTo: query.assinaturaTo } : {}),
       },
     })
@@ -171,7 +209,10 @@ export async function reconsultarTitularesRequest(
 
   if (!response.ok) {
     throw new Error(
-      await getErrorMessage(response, 'Nao foi possivel reconsultar a quitacao.'),
+      await getErrorMessage(
+        response,
+        'Nao foi possivel reconsultar a quitacao.',
+      ),
     )
   }
 
