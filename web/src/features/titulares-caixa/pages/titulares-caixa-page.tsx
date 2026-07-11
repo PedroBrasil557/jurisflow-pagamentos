@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
+  Building2,
   Download,
   Eye,
   FileDown,
@@ -18,6 +19,7 @@ import { Card, CardContent } from '#/components/ui/card'
 import { Checkbox } from '#/components/ui/checkbox'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
+import { canManageConjuntos } from '@/features/admin/lib/cadastros-access'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { AppDialog, DialogFooter } from '@/shared/components/app-dialog'
 import { PageHeader } from '@/shared/components/page-header'
@@ -30,6 +32,7 @@ import {
   type DataTableColumn,
 } from '@/shared/components/ui/data-table'
 import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
+import { LinkConjuntoDialog } from '../components/link-conjunto-dialog'
 import {
   canExportTitulares,
   canImportTitulares,
@@ -37,6 +40,7 @@ import {
 } from '../lib/titulares-access'
 import type { TitularesSearch } from '../schemas/titulares-caixa-search.schema'
 import {
+  useBulkLinkConjunto,
   useImportTitulares,
   useReconsultarTitulares,
 } from '../services/titulares-caixa.mutations'
@@ -49,6 +53,7 @@ import {
 import {
   defaultTitularesPageLimit,
   type TitularAverbacao,
+  type TitularesFilter,
   type TitularListItem,
   type TitularQuitacaoStatus,
   titularAverbacaoLabels,
@@ -104,6 +109,12 @@ type TitularesCaixaPageProps = {
   currentAssinaturaTo?: string
 }
 
+// Alvo do dialogo de vinculo: um titular (por linha) ou a selecao atual (ids ou
+// "todos do filtro"). O alvo de massa resolve ids-vs-filtro na hora do envio.
+type LinkTarget =
+  | { kind: 'single'; titular: TitularListItem }
+  | { kind: 'bulk' }
+
 export function TitularesCaixaPage({
   currentPage,
   currentSearch,
@@ -123,6 +134,7 @@ export function TitularesCaixaPage({
   const allowExport = canExportTitulares(permissions)
   const allowImport = canImportTitulares(permissions)
   const allowReconsultar = canReconsultarTitulares(permissions)
+  const allowLinkConjunto = canManageConjuntos(permissions)
   const [search, setSearch] = useState(currentSearch)
   const debouncedSearch = useDebouncedValue(search)
 
@@ -134,9 +146,13 @@ export function TitularesCaixaPage({
     docId: string
     nome: string
   } | null>(null)
+  const [linkTarget, setLinkTarget] = useState<LinkTarget | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [allFiltered, setAllFiltered] = useState(false)
 
   const importMutation = useImportTitulares()
   const reconsultarMutation = useReconsultarTitulares()
+  const bulkLinkMutation = useBulkLinkConjunto()
 
   const query = useQuery(
     titularListOptions({
@@ -162,6 +178,110 @@ export function TitularesCaixaPage({
 
   const data = query.data
   const total = data?.pagination.total ?? 0
+  const items = data?.items ?? []
+
+  // Filtro atual (sem page/limit) — reusado no export e no vinculo "todos do filtro".
+  const currentFilter: TitularesFilter = {
+    ...(debouncedSearch ? { search: debouncedSearch } : {}),
+    ...(currentUf.length ? { uf: currentUf } : {}),
+    ...(currentMunicipio ? { municipio: currentMunicipio } : {}),
+    ...(currentModalidade.length ? { modalidade: currentModalidade } : {}),
+    ...(currentEmpreendimento.length
+      ? { empreendimento: currentEmpreendimento }
+      : {}),
+    ...(currentConjuntoIds.length ? { conjuntoIds: currentConjuntoIds } : {}),
+    ...(currentLogradouros.length ? { logradouros: currentLogradouros } : {}),
+    ...(currentQuitacaoStatuses.length
+      ? { quitacaoStatuses: currentQuitacaoStatuses }
+      : {}),
+    ...(currentAverbacoes.length ? { averbacoes: currentAverbacoes } : {}),
+    ...(currentAssinaturaFrom ? { assinaturaFrom: currentAssinaturaFrom } : {}),
+    ...(currentAssinaturaTo ? { assinaturaTo: currentAssinaturaTo } : {}),
+  }
+
+  // Selecao (checkbox por linha + "todos do filtro"). Reseta quando o FILTRO muda —
+  // padrao React de ajustar estado durante o render (guardando o valor anterior),
+  // preferivel a um useEffect.
+  const filterKey = JSON.stringify(currentFilter)
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey)
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey)
+    setSelectedIds(new Set())
+    setAllFiltered(false)
+  }
+
+  const pageIds = items.map((t) => t.id)
+  const allPageSelected =
+    pageIds.length > 0 &&
+    pageIds.every((id) => allFiltered || selectedIds.has(id))
+  const selectionCount = allFiltered ? total : selectedIds.size
+  const hasSelection = allFiltered || selectedIds.size > 0
+
+  function clearSelection() {
+    setSelectedIds(new Set())
+    setAllFiltered(false)
+  }
+
+  function isRowSelected(id: string) {
+    return allFiltered || selectedIds.has(id)
+  }
+
+  function toggleRow(id: string) {
+    if (allFiltered) {
+      // Sair do "todos": vira selecao explicita da pagina menos este id.
+      setAllFiltered(false)
+      setSelectedIds(new Set(pageIds.filter((x) => x !== id)))
+      return
+    }
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  function toggleAllPage() {
+    if (allFiltered) {
+      clearSelection()
+      return
+    }
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allPageSelected) {
+        for (const id of pageIds) next.delete(id)
+      } else {
+        for (const id of pageIds) next.add(id)
+      }
+      return next
+    })
+  }
+
+  function handleLink(housingComplexId: string | null) {
+    const isBulk = linkTarget?.kind === 'bulk'
+    const payload =
+      linkTarget?.kind === 'single'
+        ? { housingComplexId, ids: [linkTarget.titular.id] }
+        : allFiltered
+          ? { housingComplexId, filter: currentFilter }
+          : { housingComplexId, ids: [...selectedIds] }
+    bulkLinkMutation.mutate(payload, {
+      onSuccess: (result) => {
+        toast.success(
+          result.conjuntoNome
+            ? `${result.linked} titular(es) vinculado(s) a ${result.conjuntoNome}.`
+            : `${result.linked} titular(es) desvinculado(s).`,
+        )
+        if (isBulk) {
+          clearSelection()
+        }
+        setLinkTarget(null)
+      },
+    })
+  }
 
   function buildSearch(overrides: Partial<TitularesSearch>): TitularesSearch {
     const merged: TitularesSearch = {
@@ -237,23 +357,7 @@ export function TitularesCaixaPage({
   }
 
   function handleExport() {
-    const url = titularesExportUrl({
-      search: debouncedSearch || undefined,
-      uf: currentUf.length ? currentUf : undefined,
-      municipio: currentMunicipio || undefined,
-      modalidade: currentModalidade.length ? currentModalidade : undefined,
-      empreendimento: currentEmpreendimento.length
-        ? currentEmpreendimento
-        : undefined,
-      conjuntoIds: currentConjuntoIds.length ? currentConjuntoIds : undefined,
-      logradouros: currentLogradouros.length ? currentLogradouros : undefined,
-      quitacaoStatuses: currentQuitacaoStatuses.length
-        ? currentQuitacaoStatuses
-        : undefined,
-      averbacoes: currentAverbacoes.length ? currentAverbacoes : undefined,
-      assinaturaFrom: currentAssinaturaFrom,
-      assinaturaTo: currentAssinaturaTo,
-    })
+    const url = titularesExportUrl(currentFilter)
     const anchor = document.createElement('a')
     anchor.href = url
     anchor.rel = 'noreferrer'
@@ -274,7 +378,26 @@ export function TitularesCaixaPage({
     (currentAssinaturaFrom ? 1 : 0) +
     (currentAssinaturaTo ? 1 : 0)
 
-  const columns: readonly DataTableColumn<TitularListItem>[] = [
+  const selectColumn: DataTableColumn<TitularListItem> = {
+    id: 'select',
+    cellClassName: 'w-10',
+    header: (
+      <Checkbox
+        aria-label="Selecionar todos da pagina"
+        checked={allPageSelected}
+        onCheckedChange={toggleAllPage}
+      />
+    ),
+    render: (t) => (
+      <Checkbox
+        aria-label="Selecionar titular"
+        checked={isRowSelected(t.id)}
+        onCheckedChange={() => toggleRow(t.id)}
+      />
+    ),
+  }
+
+  const baseColumns: readonly DataTableColumn<TitularListItem>[] = [
     {
       id: 'identity',
       header: 'Nome / CPF',
@@ -297,11 +420,20 @@ export function TitularesCaixaPage({
           .filter((v) => v?.trim())
           .join(' - ')
         return (
-          <div className="grid gap-0.5">
+          <div className="grid gap-1">
             <p>{t.empreendimento}</p>
             {endereco ? (
               <p className="text-sm text-muted-foreground">{endereco}</p>
             ) : null}
+            {t.conjuntoNome ? (
+              <Badge variant="outline" className="w-fit font-normal">
+                {t.conjuntoNome}
+              </Badge>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Sem conjunto
+              </span>
+            )}
           </div>
         )
       },
@@ -395,11 +527,26 @@ export function TitularesCaixaPage({
                 Reconsultar
               </Button>
             ) : null}
+            {allowLinkConjunto ? (
+              <Button
+                onClick={() => setLinkTarget({ kind: 'single', titular: t })}
+                size="sm"
+                variant="ghost"
+              >
+                <Building2 className="size-4" />
+                Conjunto
+              </Button>
+            ) : null}
           </div>
         )
       },
     },
   ]
+
+  // Coluna de selecao so quando o usuario pode vincular conjuntos.
+  const columns = allowLinkConjunto
+    ? [selectColumn, ...baseColumns]
+    : baseColumns
 
   return (
     <div className="grid gap-6">
@@ -459,6 +606,38 @@ export function TitularesCaixaPage({
         ) : null}
       </div>
 
+      {allowLinkConjunto && hasSelection ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm">
+            {allFiltered
+              ? `Todos os ${total} titulares do filtro selecionados.`
+              : `${selectionCount} titular(es) selecionado(s).`}
+            {!allFiltered && allPageSelected && total > selectedIds.size ? (
+              <Button
+                className="h-auto p-0 pl-1 align-baseline"
+                onClick={() => {
+                  setSelectedIds(new Set())
+                  setAllFiltered(true)
+                }}
+                size="sm"
+                variant="link"
+              >
+                Selecionar todos os {total}
+              </Button>
+            ) : null}
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={() => setLinkTarget({ kind: 'bulk' })} size="sm">
+              <Building2 className="size-4" />
+              Vincular conjunto
+            </Button>
+            <Button onClick={clearSelection} size="sm" variant="ghost">
+              Limpar
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       <Card className="overflow-hidden">
         <CardContent className="overflow-x-auto px-0 sm:px-0">
           <DataTable
@@ -474,7 +653,7 @@ export function TitularesCaixaPage({
               </div>
             }
             getItemKey={(t) => t.id}
-            items={data?.items ?? []}
+            items={items}
             pagination={{
               itemLabel: 'titulares',
               onPageChange: (page) => apply({ page }),
@@ -486,7 +665,17 @@ export function TitularesCaixaPage({
               <Card>
                 <CardContent className="grid gap-2 p-4">
                   <div className="flex items-start justify-between gap-2">
-                    <p className="font-semibold">{t.mutuarioNome}</p>
+                    <div className="flex items-start gap-2">
+                      {allowLinkConjunto ? (
+                        <Checkbox
+                          aria-label="Selecionar titular"
+                          checked={isRowSelected(t.id)}
+                          className="mt-1"
+                          onCheckedChange={() => toggleRow(t.id)}
+                        />
+                      ) : null}
+                      <p className="font-semibold">{t.mutuarioNome}</p>
+                    </div>
                     <StatusBadge tone={quitacaoTone[t.quitacaoStatus]}>
                       {titularQuitacaoStatusLabels[t.quitacaoStatus]}
                     </StatusBadge>
@@ -496,6 +685,11 @@ export function TitularesCaixaPage({
                   </p>
                   <p className="text-sm">
                     {t.empreendimento} · {t.municipio}-{t.uf}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t.conjuntoNome
+                      ? `Conjunto: ${t.conjuntoNome}`
+                      : 'Sem conjunto'}
                   </p>
                   <div className="mt-1 flex flex-wrap gap-2">
                     {t.termoDocId ? (
@@ -539,6 +733,18 @@ export function TitularesCaixaPage({
                         Reconsultar
                       </Button>
                     ) : null}
+                    {allowLinkConjunto ? (
+                      <Button
+                        onClick={() =>
+                          setLinkTarget({ kind: 'single', titular: t })
+                        }
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <Building2 className="size-4" />
+                        Conjunto
+                      </Button>
+                    ) : null}
                   </div>
                 </CardContent>
               </Card>
@@ -579,6 +785,43 @@ export function TitularesCaixaPage({
         onClose={() => setFiltersOpen(false)}
         open={filtersOpen}
       />
+
+      {linkTarget ? (
+        <LinkConjuntoDialog
+          allowUnlink={linkTarget.kind === 'single'}
+          currentConjuntoNome={
+            linkTarget.kind === 'single'
+              ? linkTarget.titular.conjuntoNome
+              : null
+          }
+          currentHousingComplexId={
+            linkTarget.kind === 'single'
+              ? linkTarget.titular.housingComplexId
+              : null
+          }
+          description={
+            linkTarget.kind === 'single'
+              ? `${linkTarget.titular.mutuarioNome} · ${linkTarget.titular.empreendimento}`
+              : allFiltered
+                ? `${total} titulares do filtro atual`
+                : `${selectedIds.size} titular(es) selecionado(s)`
+          }
+          isPending={bulkLinkMutation.isPending}
+          onClose={() => setLinkTarget(null)}
+          onLink={handleLink}
+          prefillMunicipio={
+            linkTarget.kind === 'single' ? linkTarget.titular.municipio : ''
+          }
+          prefillName={
+            linkTarget.kind === 'single'
+              ? linkTarget.titular.empreendimento
+              : allFiltered && currentEmpreendimento.length === 1
+                ? currentEmpreendimento[0]
+                : ''
+          }
+          prefillUf={linkTarget.kind === 'single' ? linkTarget.titular.uf : ''}
+        />
+      ) : null}
 
       {previewDoc ? (
         <AppDialog

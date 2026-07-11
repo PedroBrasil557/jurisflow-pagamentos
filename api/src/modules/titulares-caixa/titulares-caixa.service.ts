@@ -9,6 +9,7 @@ import {
   inArray,
   lte,
   or,
+  type SQL,
   sql,
 } from 'drizzle-orm'
 import * as XLSX from 'xlsx'
@@ -134,6 +135,10 @@ export async function listTitulares(
         quitacaoMessage: titularContratoCaixa.quitacaoMessage,
         quitacaoLastCheckedAt: titularContratoCaixa.quitacaoLastCheckedAt,
         averbacao: titularContratoCaixa.averbacao,
+        // Conjunto vinculado (null = sem conjunto) — mostra o vinculo atual e alimenta
+        // o dialogo de "Vincular conjunto".
+        housingComplexId: titularContratoCaixa.housingComplexId,
+        conjuntoNome: housingComplex.name,
         // Id do termo de quitacao anexado (null = sem documento) para o botao "Baixar".
         termoDocId: titularDocumento.id,
       })
@@ -144,6 +149,10 @@ export async function listTitulares(
           eq(titularDocumento.titularId, titularContratoCaixa.id),
           eq(titularDocumento.tipo, 'termo_quitacao'),
         ),
+      )
+      .leftJoin(
+        housingComplex,
+        eq(housingComplex.id, titularContratoCaixa.housingComplexId),
       )
       .where(whereClause)
       .orderBy(desc(titularContratoCaixa.createdAt))
@@ -370,6 +379,51 @@ export async function reconsultarTitulares(
   }
 
   return { enqueued: rows.length }
+}
+
+// Vincula (ou desvincula, com null) titulares a um conjunto (housing_complex), em
+// massa. Alvo: `ids` explicitos (recortados pela visibilidade) OU o `filter` inteiro
+// (buildTitularesWhere ja embute o recorte de visibilidade). So atua sobre titular
+// VISIVEL ao usuario. O F1 do import (coalesce) preserva este vinculo manual num
+// reimport quando o nome do conjunto nao casa o empreendimento.
+export async function bulkLinkTitularConjunto(input: {
+  housingComplexId: string | null
+  ids?: string[]
+  filter?: ExportTitularesQuery
+  perms: ResolvedPermissions
+}): Promise<{ linked: number; conjuntoNome: string | null }> {
+  let conjuntoNome: string | null = null
+  if (input.housingComplexId) {
+    const [hc] = await db
+      .select({ id: housingComplex.id, name: housingComplex.name })
+      .from(housingComplex)
+      .where(eq(housingComplex.id, input.housingComplexId))
+      .limit(1)
+    if (!hc) {
+      throw new ServiceError(404, 'Conjunto nao encontrado.')
+    }
+    conjuntoNome = hc.name
+  }
+
+  let where: SQL | undefined
+  if (input.ids) {
+    where = and(
+      inArray(titularContratoCaixa.id, input.ids),
+      buildTitularesVisibilityFilter(input.perms),
+    )
+  } else if (input.filter) {
+    where = buildTitularesWhere(input.filter, input.perms)
+  } else {
+    throw new ServiceError(400, 'Informe ids ou filter.')
+  }
+
+  const updated = await db
+    .update(titularContratoCaixa)
+    .set({ housingComplexId: input.housingComplexId })
+    .where(where)
+    .returning({ id: titularContratoCaixa.id })
+
+  return { linked: updated.length, conjuntoNome }
 }
 
 // Carrega o documento verificando que (a) pertence ao titular informado E (b) o
