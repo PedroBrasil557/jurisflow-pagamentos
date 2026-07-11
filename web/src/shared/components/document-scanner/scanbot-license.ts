@@ -66,3 +66,26 @@ export const scannerProviderQuery = queryOptions({
   queryFn: fetchScannerProvider,
   staleTime: 5 * 60 * 1000,
 })
+
+// --- Versao ativa do tuning de deteccao/recorte de borda ---
+// So a string da versao trafega; o dialog resolve versao -> valores via
+// resolveTuning (scanner-tuning.ts) e cai no default se for desconhecida.
+async function fetchScannerTuningVersion(): Promise<string | null> {
+  try {
+    const response =
+      await apiClient.api.settings['scanner-tuning-version'].$get()
+    if (!response.ok) {
+      return null
+    }
+    const data = (await response.json()) as { version: string | null }
+    return data.version
+  } catch {
+    return null
+  }
+}
+
+export const scannerTuningQuery = queryOptions({
+  queryKey: ['scanner-tuning-version'] as const,
+  queryFn: fetchScannerTuningVersion,
+  staleTime: 5 * 60 * 1000,
+})

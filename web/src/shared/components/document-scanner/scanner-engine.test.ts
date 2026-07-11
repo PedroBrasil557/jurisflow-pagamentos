@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   type CornerPoints,
+  expandQuad,
   isPlausibleQuad,
   orderCorners,
 } from './scanner-engine'
@@ -71,6 +72,70 @@ describe('isPlausibleQuad', () => {
       { x: 0, y: 15 },
     )
     expect(isPlausibleQuad(sliver, W, H)).toBe(false)
+  })
+})
+
+describe('expandQuad', () => {
+  // Quad centralizado 20..80 (centroide 50,50), num frame 100x100.
+  const centered = quad(
+    { x: 20, y: 20 },
+    { x: 80, y: 20 },
+    { x: 80, y: 80 },
+    { x: 20, y: 80 },
+  )
+
+  it('devolve os cantos inalterados quando ratio <= 0', () => {
+    expect(expandQuad(centered, W, H, 0)).toEqual(centered)
+    expect(expandQuad(centered, W, H, -0.1)).toEqual(centered)
+  })
+
+  it('escala o quad em torno do centroide por (1 + ratio)', () => {
+    // offset de cada canto ao centroide (50,50) = 30; com ratio 0.1 -> 33.
+    const out = expandQuad(centered, W, H, 0.1)
+    expect(out.topLeftCorner).toEqual({ x: 17, y: 17 })
+    expect(out.topRightCorner).toEqual({ x: 83, y: 17 })
+    expect(out.bottomRightCorner).toEqual({ x: 83, y: 83 })
+    expect(out.bottomLeftCorner).toEqual({ x: 17, y: 83 })
+  })
+
+  it('preserva o centroide (folga simetrica)', () => {
+    const out = expandQuad(centered, W, H, 0.2)
+    const cx =
+      (out.topLeftCorner.x +
+        out.topRightCorner.x +
+        out.bottomRightCorner.x +
+        out.bottomLeftCorner.x) /
+      4
+    const cy =
+      (out.topLeftCorner.y +
+        out.topRightCorner.y +
+        out.bottomRightCorner.y +
+        out.bottomLeftCorner.y) /
+      4
+    expect(cx).toBeCloseTo(50)
+    expect(cy).toBeCloseTo(50)
+  })
+
+  it('faz clamp aos limites da imagem (canto nao passa da borda)', () => {
+    // Quad ja proximo da borda: expandir empurraria para fora; deve travar em 0..100.
+    const nearEdge = quad(
+      { x: 2, y: 2 },
+      { x: 98, y: 2 },
+      { x: 98, y: 98 },
+      { x: 2, y: 98 },
+    )
+    const out = expandQuad(nearEdge, W, H, 0.2)
+    for (const c of [
+      out.topLeftCorner,
+      out.topRightCorner,
+      out.bottomRightCorner,
+      out.bottomLeftCorner,
+    ]) {
+      expect(c.x).toBeGreaterThanOrEqual(0)
+      expect(c.x).toBeLessThanOrEqual(W)
+      expect(c.y).toBeGreaterThanOrEqual(0)
+      expect(c.y).toBeLessThanOrEqual(H)
+    }
   })
 })
 

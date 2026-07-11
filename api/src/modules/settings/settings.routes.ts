@@ -9,6 +9,7 @@ import {
   saveProcuracaoConjuntoAutoApplyPayloadSchema,
   saveScanbotKeyPayloadSchema,
   saveScannerProviderPayloadSchema,
+  saveScannerTuningVersionPayloadSchema,
 } from './settings.schemas'
 import {
   clearAnthropicApiKey,
@@ -19,11 +20,13 @@ import {
   getScanbotKeyStatus,
   getScanbotLicenseKey,
   getScannerProvider,
+  getScannerTuningVersion,
   saveAnthropicApiKey,
   saveCaixaOwnerAutoApply,
   saveProcuracaoConjuntoAutoApply,
   saveScanbotLicenseKey,
   saveScannerProvider,
+  saveScannerTuningVersion,
 } from './settings.service'
 
 export const settingsAdminRoutes = new Hono<AppBindings>()
@@ -34,12 +37,14 @@ export const settingsAdminRoutes = new Hono<AppBindings>()
         anthropic,
         scanbot,
         scannerProvider,
+        scannerTuningVersion,
         caixaOwnerAutoApply,
         procuracaoConjuntoAutoApply,
       ] = await Promise.all([
         getAnthropicKeyStatus(),
         getScanbotKeyStatus(),
         getScannerProvider(),
+        getScannerTuningVersion(),
         getCaixaOwnerAutoApply(),
         getProcuracaoConjuntoAutoApply(),
       ])
@@ -48,7 +53,10 @@ export const settingsAdminRoutes = new Hono<AppBindings>()
         {
           anthropic,
           scanbot,
-          scanner: { provider: scannerProvider },
+          scanner: {
+            provider: scannerProvider,
+            tuningVersion: scannerTuningVersion,
+          },
           caixaOwner: { autoApply: caixaOwnerAutoApply },
           procuracaoConjunto: { autoApply: procuracaoConjuntoAutoApply },
         },
@@ -113,6 +121,27 @@ export const settingsAdminRoutes = new Hono<AppBindings>()
 
         return c.json(
           { message: 'Servico de digitalizacao atualizado.', scanner: result },
+          200,
+        )
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .put(
+    '/scanner-tuning-version',
+    jsonValidator(saveScannerTuningVersionPayloadSchema),
+    async (c) => {
+      try {
+        const result = await saveScannerTuningVersion(
+          c.req.valid('json').version,
+        )
+
+        return c.json(
+          {
+            message: 'Versao do tuning do scanner atualizada.',
+            scanner: result,
+          },
           200,
         )
       } catch (error) {
@@ -197,6 +226,15 @@ export const settingsClientRoutes = new Hono<AppBindings>()
       const provider = await getScannerProvider()
 
       return c.json({ provider }, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get('/scanner-tuning-version', async (c) => {
+    try {
+      const version = await getScannerTuningVersion()
+
+      return c.json({ version }, 200)
     } catch (error) {
       return handleServiceError(c, error)
     }
