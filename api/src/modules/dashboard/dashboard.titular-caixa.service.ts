@@ -1,14 +1,12 @@
-import { count, eq, inArray, sql } from 'drizzle-orm'
+import { count, eq, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
+import { housingComplex } from '../housing-complexes/housing-complexes.schema'
+import type { ResolvedPermissions } from '../permissions/permissions.types'
+import { buildTitularesVisibilityFilter } from '../titulares-caixa/titulares-caixa.access'
 import {
   titularContratoCaixa,
   titularDocumento,
 } from '../titulares-caixa/titulares-caixa.schema'
-
-// TEMPORARIO: o dashboard de Titular Caixa mostra apenas Bahia e Sao Paulo por
-// enquanto. Remover quando a permissao por estado for implementada (ai o recorte de
-// UF passa a vir dos estados permitidos do usuario, nao de uma constante).
-const DASHBOARD_UFS_TEMPORARIAS = ['BA', 'SP']
 
 type LocalIndicadores = {
   total: number
@@ -28,6 +26,10 @@ type LocalIndicadores = {
 type EmpreendimentoStats = {
   empreendimento: string
   logradouro: string | null
+  // Conjunto (housing_complex) resolvido do empreendimento. null = sem conjunto
+  // cadastrado. Permite o dashboard agrupar/filtrar por conjunto.
+  conjuntoId: string | null
+  conjuntoNome: string | null
   indicadores: LocalIndicadores
 }
 
@@ -40,7 +42,8 @@ type MunicipioStats = {
 
 // Indicadores de Titular Caixa para o dashboard (admin-only). Agrega a projecao de
 // quitacao e o flag de averbacao da tabela de negocio + a contagem de termos.
-export async function getTitularCaixaStats() {
+export async function getTitularCaixaStats(perms: ResolvedPermissions) {
+  const visibility = buildTitularesVisibilityFilter(perms)
   const [[summary], [termosRow]] = await Promise.all([
     db
       .select({
@@ -70,8 +73,18 @@ export async function getTitularCaixaStats() {
           sql`CASE WHEN ${titularContratoCaixa.averbacao} = 'indeterminado' THEN 1 END`,
         ),
       })
-      .from(titularContratoCaixa),
-    db.select({ termos: count() }).from(titularDocumento),
+      .from(titularContratoCaixa)
+      .where(visibility),
+    // Termos so dos titulares visiveis (join em titularContratoCaixa; 1:1 pelo
+    // indice unico titular+tipo, entao nao infla a contagem).
+    db
+      .select({ termos: count() })
+      .from(titularDocumento)
+      .innerJoin(
+        titularContratoCaixa,
+        eq(titularContratoCaixa.id, titularDocumento.titularId),
+      )
+      .where(visibility),
   ])
 
   return {
@@ -122,7 +135,9 @@ function porTotalDesc(
 // query com GROUP BY na granularidade mais fina; a linha do municipio e a soma
 // dos empreendimentos dele. Pendente = idle + pending; sem exito =
 // nao_encontrado + erro (mesma semantica dos KPI cards globais).
-export async function getTitularCaixaStatsPorLocal(): Promise<{
+export async function getTitularCaixaStatsPorLocal(
+  perms: ResolvedPermissions,
+): Promise<{
   municipios: MunicipioStats[]
 }> {
   const rows = await db
@@ -131,6 +146,8 @@ export async function getTitularCaixaStatsPorLocal(): Promise<{
       municipio: titularContratoCaixa.municipio,
       empreendimento: titularContratoCaixa.empreendimento,
       logradouro: titularContratoCaixa.logradouro,
+      conjuntoId: housingComplex.id,
+      conjuntoNome: housingComplex.name,
       // O left join em titularDocumento e 1:0/1:1 (indice unico titular+tipo, unico
       // tipo = termo_quitacao), entao nao multiplica a contagem de titulares.
       total: count(titularContratoCaixa.id),
@@ -168,13 +185,19 @@ export async function getTitularCaixaStatsPorLocal(): Promise<{
       titularDocumento,
       eq(titularDocumento.titularId, titularContratoCaixa.id),
     )
-    // TEMPORARIO: restringe o dashboard as UFs liberadas ate a permissao por estado.
-    .where(inArray(titularContratoCaixa.uf, DASHBOARD_UFS_TEMPORARIAS))
+    .leftJoin(
+      housingComplex,
+      eq(housingComplex.id, titularContratoCaixa.housingComplexId),
+    )
+    // Recorte por permissao de conjunto (admin/all-scope = tudo).
+    .where(buildTitularesVisibilityFilter(perms))
     .groupBy(
       titularContratoCaixa.uf,
       titularContratoCaixa.municipio,
       titularContratoCaixa.empreendimento,
       titularContratoCaixa.logradouro,
+      housingComplex.id,
+      housingComplex.name,
     )
 
   const porMunicipio = new Map<string, MunicipioStats>()
@@ -221,6 +244,8 @@ export async function getTitularCaixaStatsPorLocal(): Promise<{
     municipio.empreendimentos.push({
       empreendimento: row.empreendimento,
       logradouro: row.logradouro,
+      conjuntoId: row.conjuntoId,
+      conjuntoNome: row.conjuntoNome,
       indicadores,
     })
     somaIndicadores(municipio.indicadores, indicadores)

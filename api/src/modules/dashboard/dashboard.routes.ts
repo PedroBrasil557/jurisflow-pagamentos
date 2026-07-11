@@ -126,7 +126,7 @@ export const dashboardRoutes = new Hono<AppBindings>()
       // Mesma permissao da tela de titulares (grupo titularCaixa), nao role fixa.
       assertTitularCaixaCan(perms, 'view')
 
-      const stats = await getTitularCaixaStats()
+      const stats = await getTitularCaixaStats(perms)
       return c.json(stats, 200)
     } catch (error) {
       return handleServiceError(c, error)
@@ -143,7 +143,7 @@ export const dashboardRoutes = new Hono<AppBindings>()
       // Mesma permissao da tela de titulares (grupo titularCaixa), nao role fixa.
       assertTitularCaixaCan(perms, 'view')
 
-      const stats = await getTitularCaixaStatsPorLocal()
+      const stats = await getTitularCaixaStatsPorLocal(perms)
       return c.json(stats, 200)
     } catch (error) {
       return handleServiceError(c, error)

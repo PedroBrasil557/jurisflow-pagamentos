@@ -1,5 +1,6 @@
 import { queryOptions } from '@tanstack/react-query'
 import {
+  fetchConjuntoOptions,
   fetchEmpreendimentoOptions,
   fetchLogradouroOptions,
   fetchTitulares,
@@ -9,18 +10,25 @@ import {
 export const titularKeys = {
   all: ['titulares-caixa'] as const,
   lists: () => [...titularKeys.all, 'list'] as const,
-  list: (query: TitularesListQuery) =>
-    [...titularKeys.lists(), query] as const,
+  list: (query: TitularesListQuery) => [...titularKeys.lists(), query] as const,
   empreendimentoOptions: () =>
     [...titularKeys.all, 'empreendimento-options'] as const,
-  logradouroOptions: () =>
-    [...titularKeys.all, 'logradouro-options'] as const,
+  conjuntoOptions: () => [...titularKeys.all, 'conjunto-options'] as const,
+  logradouroOptions: () => [...titularKeys.all, 'logradouro-options'] as const,
 }
 
 export function empreendimentoOptionsQuery() {
   return queryOptions({
     queryKey: titularKeys.empreendimentoOptions(),
     queryFn: fetchEmpreendimentoOptions,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+export function conjuntoOptionsQuery() {
+  return queryOptions({
+    queryKey: titularKeys.conjuntoOptions(),
+    queryFn: fetchConjuntoOptions,
     staleTime: 5 * 60 * 1000,
   })
 }

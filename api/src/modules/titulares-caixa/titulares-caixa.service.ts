@@ -6,6 +6,7 @@ import {
   gte,
   ilike,
   inArray,
+  isNotNull,
   lte,
   or,
   sql,
@@ -20,7 +21,10 @@ import {
   storageBuckets,
 } from '../../shared/storage/s3'
 import { formatCpf, normalizeCpf } from '../../shared/utils/cpf'
+import { housingComplex } from '../housing-complexes/housing-complexes.schema'
+import type { ResolvedPermissions } from '../permissions/permissions.types'
 import { enqueueQuitacao } from '../quitacao-queue/quitacao-queue.service'
+import { buildTitularesVisibilityFilter } from './titulares-caixa.access'
 import {
   titularContratoCaixa,
   titularDocumento,
@@ -34,18 +38,27 @@ import type {
 // o resultado antes da fila drenar.
 const RECONSULT_PRIORITY = 100
 
-// TEMPORARIO: a tela de Titulares Caixa (lista, export e opcoes de filtro) mostra
-// apenas Bahia e Sao Paulo por enquanto. Remover quando a permissao por estado for
-// implementada (o recorte de UF passa a vir dos estados permitidos do usuario).
-const TITULARES_UFS_TEMPORARIAS = ['BA', 'SP']
-
 // Constroi o WHERE dos filtros (compartilhado por listagem e export — garante que
-// o Excel exportado bate exatamente com o que a tela mostra).
-function buildTitularesWhere(query: ExportTitularesQuery) {
+// o Excel exportado bate exatamente com o que a tela mostra). O recorte de
+// visibilidade por CONJUNTO (perms) entra aqui — substituiu o antigo recorte
+// temporario de UF (BA/SP).
+function buildTitularesWhere(
+  query: ExportTitularesQuery,
+  perms: ResolvedPermissions,
+) {
   const filters = []
 
-  // TEMPORARIO: trava o recorte nas UFs liberadas (ver TITULARES_UFS_TEMPORARIAS).
-  filters.push(inArray(titularContratoCaixa.uf, TITULARES_UFS_TEMPORARIAS))
+  // Recorte por permissao de conjunto (admin/all-scope = sem filtro).
+  const visibility = buildTitularesVisibilityFilter(perms)
+  if (visibility) {
+    filters.push(visibility)
+  }
+
+  if (query.conjuntoIds?.length) {
+    filters.push(
+      inArray(titularContratoCaixa.housingComplexId, query.conjuntoIds),
+    )
+  }
 
   if (query.search) {
     const term = `%${query.search}%`
@@ -94,8 +107,11 @@ function buildTitularesWhere(query: ExportTitularesQuery) {
   return filters.length > 0 ? and(...filters) : undefined
 }
 
-export async function listTitulares(query: ListTitularesQuery) {
-  const whereClause = buildTitularesWhere(query)
+export async function listTitulares(
+  query: ListTitularesQuery,
+  perms: ResolvedPermissions,
+) {
+  const whereClause = buildTitularesWhere(query, perms)
   const offset = (query.page - 1) * query.limit
 
   const [items, [summary]] = await Promise.all([
@@ -178,8 +194,9 @@ function fmtDateTime(d: Date | null): string {
 
 export async function exportTitulares(
   query: ExportTitularesQuery,
+  perms: ResolvedPermissions,
 ): Promise<Uint8Array> {
-  const whereClause = buildTitularesWhere(query)
+  const whereClause = buildTitularesWhere(query, perms)
   const rows = await db
     .select({
       uf: titularContratoCaixa.uf,
@@ -245,14 +262,16 @@ export async function exportTitulares(
 // servidor (o multiselect filtra client-side). Teto de seguranca em 1000.
 const EMPREENDIMENTO_OPTIONS_CAP = 1000
 
-export async function listEmpreendimentoOptions(): Promise<{
+export async function listEmpreendimentoOptions(
+  perms: ResolvedPermissions,
+): Promise<{
   options: string[]
 }> {
   const rows = await db
     .select({ value: titularContratoCaixa.empreendimento })
     .from(titularContratoCaixa)
-    // TEMPORARIO: so as UFs liberadas (ver TITULARES_UFS_TEMPORARIAS).
-    .where(inArray(titularContratoCaixa.uf, TITULARES_UFS_TEMPORARIAS))
+    // So os conjuntos que o usuario ve (admin/all-scope = todos).
+    .where(buildTitularesVisibilityFilter(perms))
     .groupBy(titularContratoCaixa.empreendimento)
     .orderBy(asc(titularContratoCaixa.empreendimento))
     .limit(EMPREENDIMENTO_OPTIONS_CAP)
@@ -262,14 +281,15 @@ export async function listEmpreendimentoOptions(): Promise<{
 
 // Opcoes distintas de logradouro (mesmo padrao). logradouro e nullable, entao
 // exclui NULL/vazio.
-export async function listLogradouroOptions(): Promise<{ options: string[] }> {
+export async function listLogradouroOptions(
+  perms: ResolvedPermissions,
+): Promise<{ options: string[] }> {
   const rows = await db
     .select({ value: titularContratoCaixa.logradouro })
     .from(titularContratoCaixa)
-    // TEMPORARIO: so as UFs liberadas (ver TITULARES_UFS_TEMPORARIAS).
     .where(
       and(
-        inArray(titularContratoCaixa.uf, TITULARES_UFS_TEMPORARIAS),
+        buildTitularesVisibilityFilter(perms),
         sql`nullif(trim(${titularContratoCaixa.logradouro}), '') is not null`,
       ),
     )
@@ -278,6 +298,32 @@ export async function listLogradouroOptions(): Promise<{ options: string[] }> {
     .limit(EMPREENDIMENTO_OPTIONS_CAP)
 
   return { options: rows.map((r) => r.value).filter((v): v is string => !!v) }
+}
+
+// Opcoes distintas de CONJUNTO (housing_complex) presentes nos titulares visiveis
+// — alimenta o filtro "Conjunto" do menu. Titulares sem conjunto (housingComplexId
+// NULL) nao entram (join interno). Retorna id + nome ordenado por nome.
+export async function listConjuntoOptions(perms: ResolvedPermissions): Promise<{
+  options: Array<{ id: string; nome: string }>
+}> {
+  const rows = await db
+    .select({ id: housingComplex.id, nome: housingComplex.name })
+    .from(titularContratoCaixa)
+    .innerJoin(
+      housingComplex,
+      eq(housingComplex.id, titularContratoCaixa.housingComplexId),
+    )
+    .where(
+      and(
+        buildTitularesVisibilityFilter(perms),
+        isNotNull(titularContratoCaixa.housingComplexId),
+      ),
+    )
+    .groupBy(housingComplex.id, housingComplex.name)
+    .orderBy(asc(housingComplex.name))
+    .limit(EMPREENDIMENTO_OPTIONS_CAP)
+
+  return { options: rows }
 }
 
 // Reconsulta manual: reenfileira os titulares selecionados com prioridade alta e

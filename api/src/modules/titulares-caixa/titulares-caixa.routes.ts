@@ -10,6 +10,7 @@ import {
   queryValidator,
 } from '../../shared/validation/validators'
 import { requirePermission } from '../permissions/permissions.middleware'
+import { resolveUserPermissions } from '../permissions/permissions.service'
 import { importTitularesFromXlsx } from './titulares-caixa.import.service'
 import {
   exportTitularesQuerySchema,
@@ -22,6 +23,7 @@ import {
   getTitularDocumentBytes,
   getTitularDocumentDownloadUrl,
   getTitularDocumentInlineUrl,
+  listConjuntoOptions,
   listEmpreendimentoOptions,
   listLogradouroOptions,
   listTitulares,
@@ -44,7 +46,9 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
     queryValidator(listTitularesQuerySchema),
     async (c) => {
       try {
-        const result = await listTitulares(c.req.valid('query'))
+        const user = getAuthenticatedUser(c)
+        const perms = await resolveUserPermissions(user.id, user.role)
+        const result = await listTitulares(c.req.valid('query'), perms)
         return c.json(result, 200)
       } catch (error) {
         return handleServiceError(c, error)
@@ -58,7 +62,9 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
     queryValidator(exportTitularesQuerySchema),
     async (c) => {
       try {
-        const bytes = await exportTitulares(c.req.valid('query'))
+        const user = getAuthenticatedUser(c)
+        const perms = await resolveUserPermissions(user.id, user.role)
+        const bytes = await exportTitulares(c.req.valid('query'), perms)
         const date = new Date().toISOString().slice(0, 10)
         c.header(
           'content-type',
@@ -80,7 +86,24 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
     requirePermission('titularCaixa', 'view'),
     async (c) => {
       try {
-        const result = await listEmpreendimentoOptions()
+        const user = getAuthenticatedUser(c)
+        const perms = await resolveUserPermissions(user.id, user.role)
+        const result = await listEmpreendimentoOptions(perms)
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // Opcoes distintas de conjunto (housing_complex) para o filtro multiselect.
+  .get(
+    '/opcoes/conjunto',
+    requirePermission('titularCaixa', 'view'),
+    async (c) => {
+      try {
+        const user = getAuthenticatedUser(c)
+        const perms = await resolveUserPermissions(user.id, user.role)
+        const result = await listConjuntoOptions(perms)
         return c.json(result, 200)
       } catch (error) {
         return handleServiceError(c, error)
@@ -93,7 +116,9 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
     requirePermission('titularCaixa', 'view'),
     async (c) => {
       try {
-        const result = await listLogradouroOptions()
+        const user = getAuthenticatedUser(c)
+        const perms = await resolveUserPermissions(user.id, user.role)
+        const result = await listLogradouroOptions(perms)
         return c.json(result, 200)
       } catch (error) {
         return handleServiceError(c, error)

@@ -12,6 +12,7 @@ export type TitularesSearch = {
   municipio?: string
   modalidade?: string[]
   empreendimento?: string[]
+  conjuntoIds?: string[]
   logradouros?: string[]
   quitacaoStatuses?: TitularQuitacaoStatus[]
   averbacoes?: TitularAverbacao[]
@@ -79,6 +80,7 @@ export function parseTitularesSearch(
   const municipio = parseText(search.municipio)
   const modalidade = parseStringArray(search.modalidade)
   const empreendimento = parseStringArray(search.empreendimento)
+  const conjuntoIds = parseStringArray(search.conjuntoIds)
   const logradouros = parseStringArray(search.logradouros)
   const quitacaoStatuses = parseQuitacaoStatuses(search.quitacaoStatuses)
   const averbacoes = parseAverbacoes(search.averbacoes)
@@ -92,6 +94,7 @@ export function parseTitularesSearch(
     ...(municipio ? { municipio } : {}),
     ...(modalidade ? { modalidade } : {}),
     ...(empreendimento ? { empreendimento } : {}),
+    ...(conjuntoIds ? { conjuntoIds } : {}),
     ...(logradouros ? { logradouros } : {}),
     ...(quitacaoStatuses ? { quitacaoStatuses } : {}),
     ...(averbacoes ? { averbacoes } : {}),
