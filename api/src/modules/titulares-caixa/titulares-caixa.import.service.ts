@@ -231,8 +231,10 @@ export async function importTitularesFromXlsx(input: {
           numeroImovel: sql`excluded.numero_imovel`,
           bairro: sql`excluded.bairro`,
           // Reimport re-resolve o conjunto: pega conjuntos cadastrados DEPOIS do
-          // primeiro import (empreendimento antes sem match passa a linkar).
-          housingComplexId: sql`excluded.housing_complex_id`,
+          // primeiro import (empreendimento antes sem match passa a linkar). COALESCE
+          // preserva o vinculo existente quando o re-resolve dá null (ex.: conjunto
+          // renomeado — o FK antigo continua valido); so um null->id propaga.
+          housingComplexId: sql`coalesce(excluded.housing_complex_id, ${titularContratoCaixa.housingComplexId})`,
           importBatchId: sql`excluded.import_batch_id`,
           updatedAt: sql`now()`,
         },

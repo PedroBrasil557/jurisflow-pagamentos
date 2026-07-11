@@ -3,10 +3,10 @@ import {
   asc,
   desc,
   eq,
+  exists,
   gte,
   ilike,
   inArray,
-  isNotNull,
   lte,
   or,
   sql,
@@ -301,25 +301,30 @@ export async function listLogradouroOptions(
 }
 
 // Opcoes distintas de CONJUNTO (housing_complex) presentes nos titulares visiveis
-// — alimenta o filtro "Conjunto" do menu. Titulares sem conjunto (housingComplexId
-// NULL) nao entram (join interno). Retorna id + nome ordenado por nome.
+// — alimenta o filtro "Conjunto" do menu. Dirigido pela tabela PEQUENA de conjuntos
+// + EXISTS (probe pelo indice titular_housing_complex_idx) em vez de GROUP BY sobre
+// a tabela inteira de titulares (evita full scan). Titular sem conjunto nao casa
+// nenhum housing_complex, entao naturalmente fica de fora.
 export async function listConjuntoOptions(perms: ResolvedPermissions): Promise<{
   options: Array<{ id: string; nome: string }>
 }> {
+  const visibility = buildTitularesVisibilityFilter(perms)
   const rows = await db
     .select({ id: housingComplex.id, nome: housingComplex.name })
-    .from(titularContratoCaixa)
-    .innerJoin(
-      housingComplex,
-      eq(housingComplex.id, titularContratoCaixa.housingComplexId),
-    )
+    .from(housingComplex)
     .where(
-      and(
-        buildTitularesVisibilityFilter(perms),
-        isNotNull(titularContratoCaixa.housingComplexId),
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(titularContratoCaixa)
+          .where(
+            and(
+              eq(titularContratoCaixa.housingComplexId, housingComplex.id),
+              visibility,
+            ),
+          ),
       ),
     )
-    .groupBy(housingComplex.id, housingComplex.name)
     .orderBy(asc(housingComplex.name))
     .limit(EMPREENDIMENTO_OPTIONS_CAP)
 
@@ -328,13 +333,21 @@ export async function listConjuntoOptions(perms: ResolvedPermissions): Promise<{
 
 // Reconsulta manual: reenfileira os titulares selecionados com prioridade alta e
 // volta a projecao para 'pending'. Idempotente (enqueue faz upsert por subject).
+// Recorta pelos conjuntos visiveis ao usuario: ids fora do escopo sao ignorados
+// (sem mutacao, sem job no portal, e o `enqueued` nao vira oraculo de existencia).
 export async function reconsultarTitulares(
   ids: string[],
+  perms: ResolvedPermissions,
 ): Promise<{ enqueued: number }> {
   const rows = await db
     .select({ id: titularContratoCaixa.id, cpf: titularContratoCaixa.cpf })
     .from(titularContratoCaixa)
-    .where(inArray(titularContratoCaixa.id, ids))
+    .where(
+      and(
+        inArray(titularContratoCaixa.id, ids),
+        buildTitularesVisibilityFilter(perms),
+      ),
+    )
 
   for (const row of rows) {
     await enqueueQuitacao({
@@ -359,10 +372,14 @@ export async function reconsultarTitulares(
   return { enqueued: rows.length }
 }
 
-// URL pre-assinada de download do documento (verifica que pertence ao titular).
+// Carrega o documento verificando que (a) pertence ao titular informado E (b) o
+// titular esta num conjunto visivel ao usuario (join + buildTitularesVisibilityFilter).
+// Fora do escopo => 404 (mesmo recorte da lista; nao vaza CPF/PIS/endereco do termo
+// nem existencia). Espelha assertCanViewProcess dos processos.
 async function loadTitularDocument(input: {
   titularId: string
   docId: string
+  perms: ResolvedPermissions
 }) {
   const [doc] = await db
     .select({
@@ -371,10 +388,15 @@ async function loadTitularDocument(input: {
       contentType: titularDocumento.contentType,
     })
     .from(titularDocumento)
+    .innerJoin(
+      titularContratoCaixa,
+      eq(titularContratoCaixa.id, titularDocumento.titularId),
+    )
     .where(
       and(
         eq(titularDocumento.id, input.docId),
         eq(titularDocumento.titularId, input.titularId),
+        buildTitularesVisibilityFilter(input.perms),
       ),
     )
     .limit(1)
@@ -388,6 +410,7 @@ async function loadTitularDocument(input: {
 export async function getTitularDocumentDownloadUrl(input: {
   titularId: string
   docId: string
+  perms: ResolvedPermissions
 }): Promise<string> {
   const doc = await loadTitularDocument(input)
   return createStorageObjectDownloadUrl({
@@ -401,6 +424,7 @@ export async function getTitularDocumentDownloadUrl(input: {
 export async function getTitularDocumentInlineUrl(input: {
   titularId: string
   docId: string
+  perms: ResolvedPermissions
 }): Promise<string> {
   const doc = await loadTitularDocument(input)
   return createStorageObjectInlineUrl({
@@ -416,6 +440,7 @@ export async function getTitularDocumentInlineUrl(input: {
 export async function getTitularDocumentBytes(input: {
   titularId: string
   docId: string
+  perms: ResolvedPermissions
 }): Promise<{ bytes: Uint8Array; contentType: string; filename: string }> {
   const doc = await loadTitularDocument(input)
   const bytes = await getStorageObjectBytes({
