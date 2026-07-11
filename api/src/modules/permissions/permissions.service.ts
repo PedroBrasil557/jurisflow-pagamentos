@@ -190,6 +190,22 @@ export function assertTitularCaixaCan(
 }
 
 /**
+ * Verifica uma permissão do grupo Cadastros (ex.: conjuntos). Sem bypass de admin
+ * comum: as flags já chegam resolvidas (master = tudo true; admin comum = do perfil).
+ */
+export function assertCadastrosCan(
+  perms: ResolvedPermissions,
+  action: keyof ProfilePermissions['cadastros'],
+): void {
+  if (!perms.permissions.cadastros[action]) {
+    throw new ServiceError(
+      403,
+      'Voce nao tem permissao para executar esta acao.',
+    )
+  }
+}
+
+/**
  * Verifica uma permissão genérica do perfil. Admins sempre passam.
  */
 export function assertCan(

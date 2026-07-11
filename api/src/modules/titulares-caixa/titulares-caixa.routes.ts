@@ -14,17 +14,20 @@ import {
 } from '../../shared/validation/validators'
 import { requirePermission } from '../permissions/permissions.middleware'
 import {
+  assertCadastrosCan,
   assertTitularCaixaCan,
   resolveUserPermissions,
 } from '../permissions/permissions.service'
 import { importTitularesFromXlsx } from './titulares-caixa.import.service'
 import {
+  bulkLinkConjuntoPayloadSchema,
   exportTitularesQuerySchema,
   listTitularesQuerySchema,
   reconsultarPayloadSchema,
   titularDocumentoParamsSchema,
 } from './titulares-caixa.schemas'
 import {
+  bulkLinkTitularConjunto,
   exportTitulares,
   getTitularDocumentBytes,
   getTitularDocumentDownloadUrl,
@@ -170,6 +173,31 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
       return handleServiceError(c, error)
     }
   })
+  // Vincula/desvincula titulares a um conjunto (housing_complex), em massa — alvo
+  // por `ids` OU pelo `filter` inteiro (todos os que casam o filtro atual). Curadoria
+  // de dado que muda quem enxerga o titular -> exige a permissao de gerir conjuntos
+  // (cadastros.conjuntos), nao so titularCaixa.view.
+  .post(
+    '/vincular-conjunto',
+    jsonValidator(bulkLinkConjuntoPayloadSchema),
+    async (c) => {
+      try {
+        const user = getAuthenticatedUser(c)
+        const perms = await resolveUserPermissions(user.id, user.role)
+        assertCadastrosCan(perms, 'conjuntos')
+        const { housingComplexId, ids, filter } = c.req.valid('json')
+        const result = await bulkLinkTitularConjunto({
+          housingComplexId,
+          ids,
+          filter,
+          perms,
+        })
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
   .get(
     '/:id/documentos/:docId',
     paramsValidator(titularDocumentoParamsSchema),

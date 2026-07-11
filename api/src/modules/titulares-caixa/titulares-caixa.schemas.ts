@@ -72,6 +72,24 @@ export const titularIdParamsSchema = z.object({
   id: z.string().min(1),
 })
 
+// Vincular (ou desvincular, com null) titulares a um conjunto (housing_complex),
+// em massa. Alvo = exatamente UM de: `ids` (selecao explicita) OU `filter` (todos os
+// titulares que casam o filtro atual — mesmos campos da listagem/export). Ambos
+// respeitam o recorte de visibilidade por conjunto no servico.
+export const bulkLinkConjuntoPayloadSchema = z
+  .object({
+    housingComplexId: z.string().min(1).nullable(),
+    ids: z.array(z.string().min(1)).min(1).max(50_000).optional(),
+    filter: exportTitularesQuerySchema.optional(),
+  })
+  .refine((v) => (v.ids === undefined) !== (v.filter === undefined), {
+    message: 'Informe exatamente um alvo: ids OU filter.',
+  })
+
+export type BulkLinkConjuntoPayload = z.infer<
+  typeof bulkLinkConjuntoPayloadSchema
+>
+
 export const titularDocumentoParamsSchema = z.object({
   id: z.string().min(1),
   docId: z.string().min(1),

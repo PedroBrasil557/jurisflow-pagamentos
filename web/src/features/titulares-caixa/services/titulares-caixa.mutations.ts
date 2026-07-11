@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { titularKeys } from './titulares-caixa.queries'
 import {
+  bulkLinkConjuntoRequest,
   importTitularesRequest,
   reconsultarTitularesRequest,
 } from './titulares-caixa.service'
@@ -23,6 +24,18 @@ export function useReconsultarTitulares() {
     mutationFn: (ids: string[]) => reconsultarTitularesRequest(ids),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: titularKeys.lists() })
+    },
+  })
+}
+
+export function useBulkLinkConjunto() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: bulkLinkConjuntoRequest,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: titularKeys.lists() })
+      queryClient.invalidateQueries({ queryKey: titularKeys.conjuntoOptions() })
     },
   })
 }

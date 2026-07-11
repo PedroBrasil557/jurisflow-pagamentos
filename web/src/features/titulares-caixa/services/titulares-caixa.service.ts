@@ -219,6 +219,36 @@ export async function reconsultarTitularesRequest(
   return (await response.json()) as { enqueued: number }
 }
 
+// Filtro do vinculo em massa: mesmos campos da listagem, sem page/limit.
+export type TitularesFilter = Omit<TitularesListQuery, 'page' | 'limit'>
+
+// Vincula/desvincula titulares a um conjunto em massa. Alvo = `ids` (selecao) OU
+// `filter` (todos os que casam o filtro atual). housingComplexId=null desvincula.
+export async function bulkLinkConjuntoRequest(input: {
+  housingComplexId: string | null
+  ids?: string[]
+  filter?: TitularesFilter
+}): Promise<{ linked: number; conjuntoNome: string | null }> {
+  const response = await titularesRoute['vincular-conjunto'].$post({
+    json: {
+      housingComplexId: input.housingComplexId,
+      ...(input.ids ? { ids: input.ids } : {}),
+      ...(input.filter ? { filter: input.filter } : {}),
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel vincular o conjunto.'),
+    )
+  }
+
+  return (await response.json()) as {
+    linked: number
+    conjuntoNome: string | null
+  }
+}
+
 // URL do endpoint de download (redireciona para a URL pre-assinada). Usada como
 // href de ancora — a navegacao inclui o cookie de sessao (admin).
 export function titularDocumentDownloadUrl(
