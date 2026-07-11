@@ -249,6 +249,27 @@ export async function bulkLinkConjuntoRequest(input: {
   }
 }
 
+// Upsert do terceiro vinculado ao titular (exatamente um por titular — salvar de
+// novo edita em vez de duplicar).
+export async function upsertTerceiroRequest(input: {
+  titularId: string
+  nome: string
+  telefones: string[]
+}) {
+  const response = await titularesRoute[':id'].terceiro.$put({
+    param: { id: input.titularId },
+    json: { nome: input.nome, telefones: input.telefones },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(response, 'Nao foi possivel salvar o terceiro.'),
+    )
+  }
+
+  return await response.json()
+}
+
 // URL do endpoint de download (redireciona para a URL pre-assinada). Usada como
 // href de ancora — a navegacao inclui o cookie de sessao (admin).
 export function titularDocumentDownloadUrl(

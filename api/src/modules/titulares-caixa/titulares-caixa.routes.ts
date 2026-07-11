@@ -25,6 +25,8 @@ import {
   listTitularesQuerySchema,
   reconsultarPayloadSchema,
   titularDocumentoParamsSchema,
+  titularIdParamsSchema,
+  upsertTerceiroPayloadSchema,
 } from './titulares-caixa.schemas'
 import {
   bulkLinkTitularConjunto,
@@ -37,6 +39,7 @@ import {
   listLogradouroOptions,
   listTitulares,
   reconsultarTitulares,
+  upsertTitularTerceiro,
 } from './titulares-caixa.service'
 // Registra o handler do subject 'titular' na fila de quitacao (efeito colateral).
 import './titulares-caixa.subject'
@@ -193,6 +196,30 @@ export const titularesCaixaRoutes = new Hono<AppBindings>()
           perms,
         })
         return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // Upsert do terceiro (exatamente um por titular). Sem delete: telefones min(1)
+  // torna terceiro vazio impossivel; correcao = editar. Gate: titularCaixa.view
+  // (decisao de produto: quem ve o menu pode criar/editar o terceiro).
+  .put(
+    '/:id/terceiro',
+    paramsValidator(titularIdParamsSchema),
+    jsonValidator(upsertTerceiroPayloadSchema),
+    async (c) => {
+      try {
+        const user = getAuthenticatedUser(c)
+        const perms = await resolveUserPermissions(user.id, user.role)
+        assertTitularCaixaCan(perms, 'view')
+        const { id } = c.req.valid('param')
+        const terceiro = await upsertTitularTerceiro({
+          titularId: id,
+          ...c.req.valid('json'),
+          perms,
+        })
+        return c.json({ terceiro }, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }

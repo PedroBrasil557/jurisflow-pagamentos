@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
   Building2,
+  Contact,
   Download,
   Eye,
   FileDown,
@@ -33,6 +34,7 @@ import {
 } from '@/shared/components/ui/data-table'
 import { useDebouncedValue } from '@/shared/hooks/use-debounced-value'
 import { LinkConjuntoDialog } from '../components/link-conjunto-dialog'
+import { TerceiroDialog } from '../components/terceiro-dialog'
 import {
   canExportTitulares,
   canImportTitulares,
@@ -147,6 +149,9 @@ export function TitularesCaixaPage({
     nome: string
   } | null>(null)
   const [linkTarget, setLinkTarget] = useState<LinkTarget | null>(null)
+  const [terceiroTarget, setTerceiroTarget] = useState<TitularListItem | null>(
+    null,
+  )
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [allFiltered, setAllFiltered] = useState(false)
 
@@ -540,6 +545,14 @@ export function TitularesCaixaPage({
                 Conjunto
               </Button>
             ) : null}
+            <Button
+              onClick={() => setTerceiroTarget(t)}
+              size="sm"
+              variant={t.terceiroId ? 'outline' : 'ghost'}
+            >
+              <Contact className="size-4" />
+              Terceiro
+            </Button>
           </div>
         )
       },
@@ -749,6 +762,14 @@ export function TitularesCaixaPage({
                         Conjunto
                       </Button>
                     ) : null}
+                    <Button
+                      onClick={() => setTerceiroTarget(t)}
+                      size="sm"
+                      variant={t.terceiroId ? 'outline' : 'ghost'}
+                    >
+                      <Contact className="size-4" />
+                      Terceiro
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
@@ -824,6 +845,13 @@ export function TitularesCaixaPage({
                 : ''
           }
           prefillUf={linkTarget.kind === 'single' ? linkTarget.titular.uf : ''}
+        />
+      ) : null}
+
+      {terceiroTarget ? (
+        <TerceiroDialog
+          onClose={() => setTerceiroTarget(null)}
+          titular={terceiroTarget}
         />
       ) : null}
 
