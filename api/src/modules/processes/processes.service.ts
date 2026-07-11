@@ -28,6 +28,7 @@ import {
   buildProcessRelationship,
 } from '../permissions/permissions.service'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
+import { reconcileOwnerType } from './derive/reconcile'
 import {
   buildProcessVisibilityFilter,
   getProcessContextOrThrow,
@@ -883,14 +884,23 @@ export async function updateProcess(
   })
 
   if (
+    // ownerType (confirmacao humana), a identidade do titular (fullName/cpf/
+    // rg/birthDate alimentam o fato titularProcesso) e o conjunto (human-lock
+    // resolve o card "revisar conjunto"; muda docs de escopo de conjunto e o
+    // pre-requisito de completude) mudam a derivacao inteira: re-roda o pipeline
+    // completo (evidencia, cards, quitacaoConsultas e o status no fim).
     changedFields.ownerType ||
-    changedFields.spouseContractSigned ||
-    changedFields.propertyPaidOff ||
-    // Vincular/mudar o conjunto altera a obrigatoriedade dos docs de conjunto e o
-    // pre-requisito de completude (resolucao humana do caso "conjunto cadastrado
-    // depois") — reconcilia o status.
+    changedFields.fullName ||
+    changedFields.cpf ||
+    changedFields.rg ||
+    changedFields.birthDate ||
     changedFields.housingComplex
   ) {
+    await reconcileOwnerType({ processId, triggeredByUserId: actor.id })
+    return getProcessRecordOrThrow(processId)
+  }
+
+  if (changedFields.spouseContractSigned || changedFields.propertyPaidOff) {
     // O reconciliador le tudo fresco (status + checklist); nao monta snapshot aqui.
     return syncProcessStatusAfterChecklistChange({ processId, actor })
   }
