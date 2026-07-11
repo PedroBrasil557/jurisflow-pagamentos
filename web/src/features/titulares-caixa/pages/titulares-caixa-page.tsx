@@ -392,6 +392,9 @@ export function TitularesCaixaPage({
       <Checkbox
         aria-label="Selecionar titular"
         checked={isRowSelected(t.id)}
+        // Em "todos do filtro" a selecao é cross-pagina; desmarcar 1 linha aqui
+        // colapsaria para a pagina atual. Trava o toggle por linha — use "Limpar".
+        disabled={allFiltered}
         onCheckedChange={() => toggleRow(t.id)}
       />
     ),
@@ -671,6 +674,7 @@ export function TitularesCaixaPage({
                           aria-label="Selecionar titular"
                           checked={isRowSelected(t.id)}
                           className="mt-1"
+                          disabled={allFiltered}
                           onCheckedChange={() => toggleRow(t.id)}
                         />
                       ) : null}

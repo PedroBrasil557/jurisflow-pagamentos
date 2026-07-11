@@ -79,6 +79,7 @@ function factsSnapshot(f: ProcessFacts) {
     },
     outorgantes: { state: f.outorgantes.state, value: persons(f.outorgantes) },
     housingComplexLinked: f.housingComplexLinked,
+    ownerTypeHuman: f.ownerTypeHuman,
     conjuntoMatch: {
       state: f.conjuntoMatch.state,
       result: f.conjuntoMatch.value?.result,
@@ -212,6 +213,7 @@ export async function reconcileOwnerType(input: {
         ownerTypeSource: process.ownerTypeSource,
         housingComplex: process.housingComplex,
         housingComplexSource: process.housingComplexSource,
+        procuracaoConjuntoStatus: process.procuracaoConjuntoStatus,
       })
       .from(process)
       .where(eq(process.id, processId))
@@ -260,6 +262,7 @@ export async function reconcileOwnerType(input: {
     await applyConjuntoMatch(processId, r.facts.conjuntoMatch, {
       housingComplex: proc.housingComplex,
       housingComplexSource: proc.housingComplexSource,
+      procuracaoConjuntoStatus: proc.procuracaoConjuntoStatus,
     })
 
     // ── Quitacao: reconcilia o ESTADO DE CONSULTA por CPF contra os titulares do
@@ -356,7 +359,11 @@ async function reconcileQuitacaoConsultas(
 async function applyConjuntoMatch(
   processId: string,
   conjuntoMatch: ProcessFacts['conjuntoMatch'],
-  proc: { housingComplex: string; housingComplexSource: string },
+  proc: {
+    housingComplex: string
+    housingComplexSource: string
+    procuracaoConjuntoStatus: string
+  },
 ): Promise<void> {
   if (conjuntoMatch.state !== 'ready' || !conjuntoMatch.value) {
     return
@@ -387,7 +394,13 @@ async function applyConjuntoMatch(
         .where(eq(process.id, processId))
     }
 
-    if (outcome.historyEvent) {
+    // Historico so em TRANSICAO de estado (review->review a cada reconcile
+    // spamava PROCURACAO_CONJUNTO_REVIEW_REQUIRED). A divergencia continua
+    // visivel pelo card via `decision` da analise, nao pelo historico.
+    if (
+      outcome.historyEvent &&
+      outcome.analysisStatus !== proc.procuracaoConjuntoStatus
+    ) {
       await createProcessHistoryEntry({
         processId,
         actorUserId: SYSTEM_ACTOR_ID,

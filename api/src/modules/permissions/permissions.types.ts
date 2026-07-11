@@ -79,6 +79,10 @@ export type ResolvedPermissions = {
   processScope: ProcessScope
   /** IDs dos conjuntos habitacionais acessíveis (union: perfil + usuário individual) */
   allowedHousingComplexIds: string[]
+  /** UFs liberadas ao usuário para Titular Caixa (grant geográfico, aditivo aos conjuntos) */
+  allowedUfs: string[]
+  /** Municípios liberados (par uf+município) para Titular Caixa */
+  allowedMunicipios: Array<{ uf: string; municipio: string }>
   permissions: ProfilePermissions
   profileId: string | null
   profileName: string | null

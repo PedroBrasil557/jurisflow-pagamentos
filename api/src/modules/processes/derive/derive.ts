@@ -106,10 +106,50 @@ function has(facts: ProcessFacts, key: string): boolean {
 }
 
 // ── deriveOwner: ownerType (rotulo) + titular do contrato Caixa (quitacao) ─────
+// Evidencia primeiro; a confirmacao humana (fato ownerTypeHuman, human-lock)
+// resolve SO a inconclusao ('review'/'undetermined') — evidencia 'derived' segue
+// vencendo no output (requiredDocs continuam dirigidos por evidencia). Pending
+// continua propagando: o humano nao bypassa o input-complete.
+function deriveOwner(facts: ProcessFacts): {
+  ownerType: Derived['ownerType']
+  quitacaoSubjects: Person[]
+} {
+  const evidence = deriveOwnerFromEvidence(facts)
+  if (evidence.ownerType.origin === 'derived' || facts.ownerTypeHuman === '') {
+    return evidence
+  }
+  return {
+    ownerType: {
+      value: facts.ownerTypeHuman,
+      origin: 'human',
+      reason: 'tipo de proprietario confirmado manualmente',
+    },
+    quitacaoSubjects: humanQuitacaoSubjects(facts),
+  }
+}
+
+// Titulares do contrato Caixa segundo a escolha humana (R1/R2 do dominio):
+// titular -> o proprio titular do processo; nao_titular -> melhor evidencia
+// disponivel (vendedores do compra e venda, senao compradores do termo).
+function humanQuitacaoSubjects(facts: ProcessFacts): Person[] {
+  if (facts.ownerTypeHuman === 'titular_contrato_caixa') {
+    return facts.titularProcesso.state === 'ready'
+      ? (facts.titularProcesso.value ?? [])
+      : []
+  }
+  if (facts.compraVenda.state === 'ready') {
+    return facts.compraVenda.value?.vendedores ?? []
+  }
+  if (facts.termoCompradores.state === 'ready') {
+    return facts.termoCompradores.value ?? []
+  }
+  return []
+}
+
 // REUSA compareCaixaOwner (titular x compradores -> titular/nao_titular/review).
 // O titular comparado e o do processo (ancorado pela procuracao, valor do doc
 // oficial). NAO le requiredDocs — e irmao dele, nao pai.
-function deriveOwner(facts: ProcessFacts): {
+function deriveOwnerFromEvidence(facts: ProcessFacts): {
   ownerType: Derived['ownerType']
   quitacaoSubjects: Person[]
 } {
@@ -267,14 +307,16 @@ function deriveReviewFlags(
     }
   }
 
-  // Indeterminado/revisao -> sinaliza para o humano.
+  // Indeterminado/revisao -> sinaliza para o humano (e orienta a saida: a
+  // confirmacao manual do ownerType e o que resolve a pendencia).
   if (owner.origin === 'review') {
+    const motivo =
+      owner.reason ||
+      'Não foi possível confirmar se o titular consta no termo da Caixa'
     flags.push({
       code: 'owner_type_ambiguo',
       titulo: 'Tipo de proprietário ambíguo',
-      detalhe:
-        owner.reason ||
-        'Não foi possível confirmar se o titular consta no termo da Caixa.',
+      detalhe: `${motivo} — edite o processo e informe o tipo de proprietário para confirmar manualmente.`,
     })
   }
 

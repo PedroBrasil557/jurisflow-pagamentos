@@ -135,6 +135,21 @@ export function decideProcuracaoConjuntoOutcome(input: {
   const matched = input.matchResult.conjunto
 
   if (input.matchResult.result === 'review' || !matched) {
+    // Human-lock: o humano ja definiu o conjunto — a analise inconclusiva esta
+    // respondida (mesmo racional do ownerTypeHuman na derivacao). Valor vazio ou
+    // definido pelo sistema segue em revisao (conservador: o conjunto dirige a
+    // vara/valor da peticao).
+    if (
+      input.housingComplexSource === 'human' &&
+      input.currentHousingComplex.trim() !== ''
+    ) {
+      return {
+        analysisStatus: 'done',
+        apply: false,
+        divergence: false,
+        historyEvent: null,
+      }
+    }
     return {
       analysisStatus: 'review',
       apply: false,

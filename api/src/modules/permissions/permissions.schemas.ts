@@ -88,10 +88,31 @@ export const updateUserHousingComplexesPayloadSchema = z.object({
   housingComplexIds: z.array(z.string().trim().min(1)).default([]),
 })
 
+export const updateUserTitularUfsPayloadSchema = z.object({
+  ufs: z.array(z.string().trim().min(1)).default([]),
+})
+
+export const updateUserTitularMunicipiosPayloadSchema = z.object({
+  municipios: z
+    .array(
+      z.object({
+        uf: z.string().trim().min(1),
+        municipio: z.string().trim().min(1),
+      }),
+    )
+    .default([]),
+})
+
 export type CreateProfilePayload = z.output<typeof createProfilePayloadSchema>
 export type UpdateProfilePayload = z.output<typeof updateProfilePayloadSchema>
 export type ListProfilesQuery = z.output<typeof listProfilesQuerySchema>
 export type AssignProfilePayload = z.output<typeof assignProfilePayloadSchema>
 export type UpdateUserHousingComplexesPayload = z.output<
   typeof updateUserHousingComplexesPayloadSchema
+>
+export type UpdateUserTitularUfsPayload = z.output<
+  typeof updateUserTitularUfsPayloadSchema
+>
+export type UpdateUserTitularMunicipiosPayload = z.output<
+  typeof updateUserTitularMunicipiosPayloadSchema
 >

@@ -13,11 +13,16 @@ import {
   createProfile,
   deleteProfile,
   getProfileOrThrow,
+  getTitularLocalidades,
   getUserHousingComplexes,
+  getUserTitularMunicipios,
+  getUserTitularUfs,
   listProfiles,
   listProfileUsers,
   updateProfile,
   updateUserHousingComplexes,
+  updateUserTitularMunicipios,
+  updateUserTitularUfs,
 } from './permissions.admin.service'
 import { requirePermission } from './permissions.middleware'
 import {
@@ -27,6 +32,8 @@ import {
   profileIdParamsSchema,
   updateProfilePayloadSchema,
   updateUserHousingComplexesPayloadSchema,
+  updateUserTitularMunicipiosPayloadSchema,
+  updateUserTitularUfsPayloadSchema,
 } from './permissions.schemas'
 
 const userIdParamsSchema = z.object({
@@ -169,6 +176,81 @@ export const permissionUserAdminRoutes = new Hono<AppBindings>()
           currentUser.id,
         )
         return c.json({ message: 'Conjuntos atualizados com sucesso.' }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+
+  // --- Grants geográficos do usuário (Titular Caixa): UF e município ---
+
+  // Localidades distintas dos titulares (fonte dos seletores). Segmento estático —
+  // não colide com /:userId/... (que tem 2 segmentos).
+  .get('/titular-localidades', async (c) => {
+    try {
+      const result = await getTitularLocalidades()
+      return c.json(result, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get(
+    '/:userId/titular-ufs',
+    paramsValidator(userIdParamsSchema),
+    async (c) => {
+      try {
+        const items = await getUserTitularUfs(c.req.valid('param').userId)
+        return c.json({ items }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .put(
+    '/:userId/titular-ufs',
+    paramsValidator(userIdParamsSchema),
+    jsonValidator(updateUserTitularUfsPayloadSchema),
+    async (c) => {
+      try {
+        const currentUser = getAuthenticatedUser(c)
+        await updateUserTitularUfs(
+          c.req.valid('param').userId,
+          c.req.valid('json'),
+          currentUser.id,
+        )
+        return c.json({ message: 'Estados atualizados com sucesso.' }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .get(
+    '/:userId/titular-municipios',
+    paramsValidator(userIdParamsSchema),
+    async (c) => {
+      try {
+        const items = await getUserTitularMunicipios(
+          c.req.valid('param').userId,
+        )
+        return c.json({ items }, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .put(
+    '/:userId/titular-municipios',
+    paramsValidator(userIdParamsSchema),
+    jsonValidator(updateUserTitularMunicipiosPayloadSchema),
+    async (c) => {
+      try {
+        const currentUser = getAuthenticatedUser(c)
+        await updateUserTitularMunicipios(
+          c.req.valid('param').userId,
+          c.req.valid('json'),
+          currentUser.id,
+        )
+        return c.json({ message: 'Municipios atualizados com sucesso.' }, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }

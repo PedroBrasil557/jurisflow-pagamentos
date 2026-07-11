@@ -29,6 +29,7 @@ function facts(overrides: Partial<ProcessFacts> = {}): ProcessFacts {
     compraVenda: absent<CompraVenda>(),
     housingComplexLinked: true,
     conjuntoMatch: absent(),
+    ownerTypeHuman: '',
     currentStatus: 'EM_DOCUMENTACAO',
     ...overrides,
   }
@@ -273,6 +274,89 @@ describe('deriveProcessState — readiness (timing)', () => {
     const keys = d.requiredDocs.flatMap((r) => r.keys)
     expect(keys).toContain(DOC.termoEntrega)
     expect(d.status).toBe('EM_DOCUMENTACAO') // nao PRONTA
+  })
+})
+
+describe('deriveProcessState — confirmacao humana do ownerType (human-lock)', () => {
+  // Match inconclusivo: nome divergente SEM CPF -> compareCaixaOwner = 'review'.
+  const compradorAmbiguo: Person = { nome: 'FULANO DE TAL', cpf: '' }
+
+  test('match inconclusivo sem confirmacao -> flag owner_type_ambiguo + nao avanca', () => {
+    const d = deriveProcessState(
+      facts({ termoCompradores: ready([compradorAmbiguo]) }),
+    )
+    expect(d.ownerType.origin).toBe('review')
+    expect(d.reviewFlags.map((f) => f.code)).toContain('owner_type_ambiguo')
+    expect(d.status).toBe('EM_DOCUMENTACAO')
+  })
+
+  test('inconclusivo + humano titular -> sem flag, origin human, quitacao no titular, PRONTA', () => {
+    const d = deriveProcessState(
+      facts({
+        termoCompradores: ready([compradorAmbiguo]),
+        ownerTypeHuman: 'titular_contrato_caixa',
+      }),
+    )
+    expect(d.ownerType.value).toBe('titular_contrato_caixa')
+    expect(d.ownerType.origin).toBe('human')
+    expect(d.reviewFlags).toHaveLength(0)
+    expect(d.quitacaoSubjects.map((s) => s.cpf)).toEqual([CPF_A])
+    expect(d.status).toBe('DOCUMENTACAO_PRONTA')
+  })
+
+  test('inconclusivo + humano nao_titular -> sem flag, exige compra_venda, quitacao no comprador do termo', () => {
+    const d = deriveProcessState(
+      facts({
+        termoCompradores: ready([compradorAmbiguo]),
+        ownerTypeHuman: 'nao_titular_contrato_caixa',
+      }),
+    )
+    expect(d.ownerType.origin).toBe('human')
+    expect(d.reviewFlags).toHaveLength(0)
+    const keys = d.requiredDocs.flatMap((r) => r.keys)
+    expect(keys).toContain(DOC.compraVenda)
+    expect(d.quitacaoSubjects.map((s) => s.nome)).toEqual(['FULANO DE TAL'])
+    // compra_venda nao anexada -> pendente -> nao PRONTA
+    expect(d.status).toBe('EM_DOCUMENTACAO')
+  })
+
+  test('evidencia conclusiva VENCE a confirmacao humana divergente (origin derived)', () => {
+    const d = deriveProcessState(
+      facts({
+        termoCompradores: ready([titularA]), // match por CPF -> derived
+        ownerTypeHuman: 'nao_titular_contrato_caixa',
+      }),
+    )
+    expect(d.ownerType.value).toBe('titular_contrato_caixa')
+    expect(d.ownerType.origin).toBe('derived')
+  })
+
+  test('confirmacao humana NAO bypassa fato exigido em voo (readiness pending)', () => {
+    const d = deriveProcessState(
+      facts({
+        termoCompradores: pending<Person[]>(),
+        ownerTypeHuman: 'titular_contrato_caixa',
+      }),
+    )
+    expect(d.readiness).toBe('pending')
+    expect(d.status).not.toBe('DOCUMENTACAO_PRONTA')
+  })
+
+  test('undetermined (sem documento do imovel) + humano -> origin human, sem flag', () => {
+    const classified = new Set(ALL_BASE)
+    const attached = new Set(ALL_BASE)
+    const d = deriveProcessState(
+      facts({
+        classifiedTypes: ready(classified),
+        attachedTypes: attached,
+        termoCompradores: absent<Person[]>(),
+        ownerTypeHuman: 'titular_contrato_caixa',
+      }),
+    )
+    expect(d.ownerType.origin).toBe('human')
+    expect(d.reviewFlags).toHaveLength(0)
+    // vinculo do imovel (termo) segue exigido -> nao PRONTA
+    expect(d.status).toBe('EM_DOCUMENTACAO')
   })
 })
 

@@ -15,7 +15,13 @@ import {
   processDocumentType,
 } from '../processes.schema'
 import { DOC } from './derive'
-import type { CompraVenda, Fact, Person, ProcessFacts } from './facts.types'
+import type {
+  CompraVenda,
+  Fact,
+  OwnerType,
+  Person,
+  ProcessFacts,
+} from './facts.types'
 
 // gatherFacts: UNICO ponto que LE o mundo. Projeta colunas/audits/checklist nos
 // fatos com ciclo de vida. Impuro; deriveProcessState (puro) consome a saida.
@@ -54,6 +60,11 @@ function toPerson(r: RawP | undefined): Person | null {
 }
 const toPersons = (rs: RawP[] | undefined): Person[] =>
   (rs ?? []).map(toPerson).filter((p): p is Person => p !== null)
+
+// Guarda contra valor legado na coluna text (ex.: conjuge_titular_contrato_caixa,
+// removido na migracao 0025): so os valores vigentes contam como confirmacao.
+const isKnownOwnerType = (v: string): v is Exclude<OwnerType, ''> =>
+  v === 'titular_contrato_caixa' || v === 'nao_titular_contrato_caixa'
 
 // Junta os termoCompradores espalhados em audits diferentes (o termo_entrega tem o
 // CPF; a declaracao de quitacao pode so ter o nome). Dedup por nome NORMALIZADO
@@ -100,6 +111,8 @@ export async function gatherFacts(
       cpf: process.cpf,
       rg: process.rg,
       birthDate: process.birthDate,
+      ownerType: process.ownerType,
+      ownerTypeSource: process.ownerTypeSource,
     })
     .from(process)
     .where(eq(process.id, processId))
@@ -302,6 +315,12 @@ export async function gatherFacts(
     conjuntoMatch = absent()
   }
 
+  // ── ownerTypeHuman (human-lock projetado como fato) ──
+  const ownerTypeHuman: OwnerType =
+    proc.ownerTypeSource === 'human' && isKnownOwnerType(proc.ownerType)
+      ? proc.ownerType
+      : ''
+
   return {
     classifiedTypes,
     attachedTypes,
@@ -312,6 +331,7 @@ export async function gatherFacts(
     compraVenda,
     housingComplexLinked: proc.housingComplexId !== null,
     conjuntoMatch,
+    ownerTypeHuman,
     currentStatus: proc.status,
   }
 }

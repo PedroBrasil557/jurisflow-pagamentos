@@ -14,7 +14,9 @@ export function canViewTitularesCaixa(permissions: ResolvedPermissions) {
   return (
     permissions.isAdmin ||
     permissions.processScope === 'all' ||
-    permissions.allowedHousingComplexIds.length > 0
+    permissions.allowedHousingComplexIds.length > 0 ||
+    permissions.allowedUfs.length > 0 ||
+    permissions.allowedMunicipios.length > 0
   )
 }
 

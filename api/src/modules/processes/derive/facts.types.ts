@@ -53,6 +53,11 @@ export type ProcessFacts = {
   // e decidido no reconcile (flag + human-lock). 'absent' sem procuracao/endereco.
   conjuntoMatch: Fact<ConjuntoMatchResult>
 
+  // Tipo de proprietario confirmado manualmente (human-lock: ownerTypeSource
+  // ='human' e ownerType nao-vazio). '' = sem confirmacao humana. Resolve a
+  // inconclusao da evidencia em deriveOwner; evidencia 'derived' segue vencendo.
+  ownerTypeHuman: OwnerType
+
   // Status atual (sempre conhecido — nao e um fato com ciclo de vida).
   currentStatus: ProcessStatus
 }
