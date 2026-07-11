@@ -394,6 +394,18 @@ export async function bulkLinkTitularConjunto(input: {
 }): Promise<{ linked: number; conjuntoNome: string | null }> {
   let conjuntoNome: string | null = null
   if (input.housingComplexId) {
+    // Recorte de destino: usuario com escopo (nao admin/all) so vincula a conjunto
+    // que ele proprio ve — evita empurrar PII para/de conjuntos fora do seu escopo.
+    if (
+      !input.perms.isAdmin &&
+      input.perms.processScope !== 'all' &&
+      !input.perms.allowedHousingComplexIds.includes(input.housingComplexId)
+    ) {
+      throw new ServiceError(
+        403,
+        'Voce nao tem permissao para vincular a este conjunto.',
+      )
+    }
     const [hc] = await db
       .select({ id: housingComplex.id, name: housingComplex.name })
       .from(housingComplex)
@@ -415,6 +427,16 @@ export async function bulkLinkTitularConjunto(input: {
     where = buildTitularesWhere(input.filter, input.perms)
   } else {
     throw new ServiceError(400, 'Informe ids ou filter.')
+  }
+
+  // Trava de seguranca: `where` so e undefined no modo filter para admin/all-scope
+  // com filtro VAZIO -> seria um UPDATE sem WHERE (tabela inteira). Recusa: um
+  // vinculo em massa por filtro exige um recorte explicito.
+  if (!where) {
+    throw new ServiceError(
+      400,
+      'Vinculo em massa por filtro exige ao menos um filtro (evita alterar a base inteira).',
+    )
   }
 
   const updated = await db
