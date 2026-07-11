@@ -22,8 +22,8 @@ const processChecklistFileClientRoute =
   processChecklistItemClientRoute.files[':fileId']
 const processChecklistFileDownloadClientRoute =
   processChecklistFileClientRoute.download
-const processChecklistFileContentClientRoute =
-  processChecklistClientRoute.files[':fileId'].conteudo
+const processChecklistFilePreviewUrlClientRoute =
+  processChecklistClientRoute.files[':fileId']['preview-url']
 const processBatchClientRoute = processClientRoute.batch
 const processBatchFileClientRoute = processBatchClientRoute[':fileId']
 const processBatchFileSplitClientRoute = processBatchFileClientRoute.split
@@ -592,20 +592,31 @@ export async function getProcessChecklistFileDownloadRequest(input: {
   return (await response.json()) as GetProcessChecklistFileDownloadResponse
 }
 
-// URL do CONTEUDO (bytes) same-origin de um arquivo do checklist — consumida pelo
-// DocumentViewer (react-pdf / <img>). `source` distingue arquivo do processo vs do
-// conjunto habitacional. A navegacao inclui o cookie de sessao (same-origin).
-export function processChecklistFileContentUrl(input: {
+// URL pre-assinada INLINE de um arquivo do checklist — consumida pelo
+// DocumentViewer (react-pdf / <img>), que busca os bytes DIRETO do S3/MinIO
+// (servir bytes pela API estoura o teto de 10MB do gateway em prod). `source`
+// distingue arquivo do processo vs do conjunto habitacional.
+export async function fetchProcessChecklistFilePreviewUrl(input: {
   processId: string
   fileId: string
   source: 'process' | 'housing_complex'
-}): string {
-  return processChecklistFileContentClientRoute
-    .$url({
-      param: { processId: input.processId, fileId: input.fileId },
-      query: { source: input.source },
-    })
-    .toString()
+}): Promise<string> {
+  const response = await processChecklistFilePreviewUrlClientRoute.$get({
+    param: { processId: input.processId, fileId: input.fileId },
+    query: { source: input.source },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar o documento.',
+      ),
+    )
+  }
+
+  const body = (await response.json()) as { url: string }
+  return body.url
 }
 
 export async function deleteChecklistFileRequest(input: {

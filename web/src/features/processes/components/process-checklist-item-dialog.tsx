@@ -1,20 +1,20 @@
-import { Download, Eye, FileUp, Trash2 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Download, Eye, FileUp, Loader2, Trash2 } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Controller } from 'react-hook-form'
 import { Button } from '#/components/ui/button'
 import { AppDialog } from '@/shared/components/app-dialog'
 import { ScanButton } from '@/shared/components/document-scanner/scan-button'
 import { DocumentViewer } from '@/shared/components/document-viewer/document-viewer'
+import { QueryError } from '@/shared/components/query-error'
 import { FormTextArea, useZodForm } from '@/shared/components/ui/form'
 import { formatBytes } from '@/shared/lib/format'
 import {
   type ProcessChecklistItemFormValues,
   processChecklistItemFormSchema,
 } from '../schemas/process-checklist-item-form.schema'
-import {
-  type ProcessChecklistItem,
-  processChecklistFileContentUrl,
-} from '../services/processes.service'
+import { processChecklistFilePreviewUrlOptions } from '../services/processes.queries'
+import type { ProcessChecklistItem } from '../services/processes.service'
 
 type PreviewFile = {
   id: string
@@ -421,27 +421,64 @@ export function ChecklistItemDialog({
       </AppDialog>
 
       {previewFile ? (
-        <AppDialog
-          icon={Eye}
-          maxWidth="screen"
+        <ChecklistFilePreviewDialog
+          file={previewFile}
           onClose={() => setPreviewFile(null)}
-          open
-          title={previewFile.name}
-          variant="info"
-        >
-          <div className="h-[80vh] overflow-hidden rounded-md border border-border">
-            <DocumentViewer
-              fileName={previewFile.name}
-              mimeType={previewFile.mimeType}
-              url={processChecklistFileContentUrl({
-                processId,
-                fileId: previewFile.id,
-                source: previewFile.source,
-              })}
-            />
-          </div>
-        </AppDialog>
+          processId={processId}
+        />
       ) : null}
     </>
+  )
+}
+
+type ChecklistFilePreviewDialogProps = {
+  file: PreviewFile
+  onClose: () => void
+  processId: string
+}
+
+// Busca a URL pre-assinada do arquivo e renderiza o viewer. Os bytes vem DIRETO
+// do storage (S3/MinIO) — pela API o gateway corta respostas acima de 10MB.
+function ChecklistFilePreviewDialog({
+  file,
+  onClose,
+  processId,
+}: ChecklistFilePreviewDialogProps) {
+  const previewUrlQuery = useQuery(
+    processChecklistFilePreviewUrlOptions({
+      processId,
+      fileId: file.id,
+      source: file.source,
+    }),
+  )
+
+  return (
+    <AppDialog
+      icon={Eye}
+      maxWidth="screen"
+      onClose={onClose}
+      open
+      title={file.name}
+      variant="info"
+    >
+      <div className="h-[80vh] overflow-hidden rounded-md border border-border">
+        {previewUrlQuery.isPending ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : previewUrlQuery.isError ? (
+          <QueryError
+            message="Nao foi possivel carregar o documento."
+            onRetry={() => void previewUrlQuery.refetch()}
+          />
+        ) : (
+          <DocumentViewer
+            fileName={file.name}
+            mimeType={file.mimeType}
+            url={previewUrlQuery.data}
+          />
+        )}
+      </div>
+    </AppDialog>
   )
 }

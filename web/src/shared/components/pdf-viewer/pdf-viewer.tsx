@@ -50,7 +50,9 @@ export function PdfViewer({ url, className }: PdfViewerProps) {
   const [error, setError] = useState(false)
 
   // Objeto `file` estavel: evita o react-pdf refazer o fetch a cada render.
-  const file = useMemo(() => ({ url, withCredentials: true }), [url])
+  // Sem withCredentials: a URL e pre-assinada (a autorizacao vai na propria URL)
+  // e o fetch com credenciais falharia no CORS do S3/MinIO.
+  const file = useMemo(() => ({ url }), [url])
 
   // Mede o container (base do ajuste a largura/pagina).
   useEffect(() => {

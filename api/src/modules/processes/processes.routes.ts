@@ -50,8 +50,8 @@ import {
   downloadAllChecklistFiles,
   downloadAllChecklistFilesZip,
   getProcessChecklist,
-  getProcessChecklistFileBytes,
   getProcessChecklistFileDownload,
+  getProcessChecklistFilePreviewUrl,
   submitProcessChecklistItem,
   uploadProcessChecklistFile,
 } from './processes.checklist.service'
@@ -432,26 +432,24 @@ export const processRoutes = new Hono<AppBindings>()
       }
     },
   )
-  // Conteudo (bytes) SAME-ORIGIN para o viewer inline (PDF/imagem) — evita
-  // CORS/redirect ao S3 e permite range requests do pdfjs. Cookie-auth + mesma
-  // checagem de acesso do checklist. `source` distingue processo vs conjunto.
+  // URL pre-assinada INLINE para o viewer (PDF/imagem). O browser busca os bytes
+  // DIRETO do S3/MinIO (CORS do bucket ja permite GET do web) — servir bytes pela
+  // API estoura o teto de 10MB de resposta do API Gateway em prod. Mesma checagem
+  // de acesso do checklist. `source` distingue processo vs conjunto.
   .get(
-    '/:processId/checklist/files/:fileId/conteudo',
+    '/:processId/checklist/files/:fileId/preview-url',
     paramsValidator(processChecklistFileContentParamsSchema),
     queryValidator(processChecklistFileContentQuerySchema),
     async (c) => {
       try {
         const { currentUser, perms } = await getCurrentUserWithPermissions(c)
-        const doc = await getProcessChecklistFileBytes({
+        const result = await getProcessChecklistFilePreviewUrl({
           ...c.req.valid('param'),
           source: c.req.valid('query').source,
           userId: currentUser.id,
           perms,
         })
-        c.header('content-type', doc.contentType || 'application/octet-stream')
-        c.header('content-disposition', 'inline')
-        c.header('cache-control', 'private, max-age=300')
-        return c.body(doc.bytes.slice().buffer as ArrayBuffer)
+        return c.json(result, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }

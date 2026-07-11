@@ -281,23 +281,25 @@ export function titularDocumentDownloadUrl(
     .toString()
 }
 
-// URL do endpoint de PREVIEW inline (redireciona para a URL pre-assinada inline).
-// Usada como src de iframe — renderiza o PDF no navegador sem baixar.
-export function titularDocumentPreviewUrl(
+// URL pre-assinada INLINE do documento — o viewer de PDF busca os bytes direto
+// do S3/MinIO (servir bytes pela API estoura o teto de 10MB do gateway em prod).
+export async function fetchTitularDocumentPreviewUrl(
   titularId: string,
   docId: string,
-): string {
-  return titularDocumentoRoute.preview
-    .$url({ param: { id: titularId, docId } })
-    .toString()
-}
+): Promise<string> {
+  const response = await titularDocumentoRoute['preview-url'].$get({
+    param: { id: titularId, docId },
+  })
 
-// URL do CONTEUDO (bytes) same-origin — consumida pelo viewer de PDF (react-pdf).
-export function titularDocumentContentUrl(
-  titularId: string,
-  docId: string,
-): string {
-  return titularDocumentoRoute.conteudo
-    .$url({ param: { id: titularId, docId } })
-    .toString()
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar o documento.',
+      ),
+    )
+  }
+
+  const body = (await response.json()) as { url: string }
+  return body.url
 }

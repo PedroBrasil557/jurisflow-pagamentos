@@ -2,7 +2,7 @@ import { cn } from '#/lib/utils'
 import { PdfViewer } from '@/shared/components/pdf-viewer/pdf-viewer'
 
 type DocumentViewerProps = {
-  // URL same-origin do conteudo (bytes) — cookie de sessao acompanha a requisicao.
+  // URL pre-assinada do conteudo — o browser busca os bytes direto do storage.
   url: string
   mimeType: string
   fileName?: string

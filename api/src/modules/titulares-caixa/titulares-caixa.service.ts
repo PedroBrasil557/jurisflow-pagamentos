@@ -18,7 +18,6 @@ import { ServiceError } from '../../shared/errors/service-error'
 import {
   createStorageObjectDownloadUrl,
   createStorageObjectInlineUrl,
-  getStorageObjectBytes,
   storageBuckets,
 } from '../../shared/storage/s3'
 import { formatCpf, normalizeCpf } from '../../shared/utils/cpf'
@@ -559,7 +558,8 @@ export async function getTitularDocumentDownloadUrl(input: {
   })
 }
 
-// URL de VISUALIZACAO inline (preview no navegador, sem download).
+// URL de VISUALIZACAO inline (o viewer de PDF busca os bytes direto do storage;
+// servir bytes pela API estoura o teto de 10MB do API Gateway em prod).
 export async function getTitularDocumentInlineUrl(input: {
   titularId: string
   docId: string
@@ -571,20 +571,4 @@ export async function getTitularDocumentInlineUrl(input: {
     objectKey: doc.storageKey,
     contentType: doc.contentType,
   })
-}
-
-// Bytes do documento (streaming SAME-ORIGIN pela API). Usado pelo viewer de PDF
-// (react-pdf/pdfjs faz range requests; servir same-origin evita CORS/redirect ao
-// MinIO que o preview por URL pre-assinada teria).
-export async function getTitularDocumentBytes(input: {
-  titularId: string
-  docId: string
-  perms: ResolvedPermissions
-}): Promise<{ bytes: Uint8Array; contentType: string; filename: string }> {
-  const doc = await loadTitularDocument(input)
-  const bytes = await getStorageObjectBytes({
-    bucketName: storageBuckets.processDocuments,
-    objectKey: doc.storageKey,
-  })
-  return { bytes, contentType: doc.contentType, filename: doc.filename }
 }

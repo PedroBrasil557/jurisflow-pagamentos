@@ -3,8 +3,8 @@ import { db } from '../../shared/db'
 import {
   buildStorageObjectKey,
   createStorageObjectDownloadUrl,
+  createStorageObjectInlineUrl,
   deleteStorageObject,
-  getStorageObjectBytes,
   storageBuckets,
   uploadStorageObject,
 } from '../../shared/storage/s3'
@@ -168,19 +168,19 @@ export async function listHousingComplexFiles(housingComplexId: string) {
   return { items }
 }
 
-// Bytes de um arquivo do conjunto para stream INLINE (viewer same-origin do
-// checklist do processo). Valida que o arquivo pertence ao conjunto informado
-// (ownership) — o caller ja checou o acesso do usuario ao processo/checklist.
-export async function getHousingComplexFileContent(input: {
+// URL pre-assinada INLINE de um arquivo do conjunto (viewer do checklist do
+// processo busca os bytes direto do storage). Valida que o arquivo pertence ao
+// conjunto informado (ownership) — o caller ja checou o acesso do usuario ao
+// processo/checklist.
+export async function getHousingComplexFilePreviewUrl(input: {
   housingComplexId: string
   fileId: string
-}): Promise<{ bytes: Uint8Array; contentType: string; filename: string }> {
+}): Promise<{ url: string }> {
   const [row] = await db
     .select({
       bucketName: housingComplexFile.bucketName,
       objectKey: housingComplexFile.objectKey,
       mimeType: housingComplexFile.mimeType,
-      originalFileName: housingComplexFile.originalFileName,
     })
     .from(housingComplexFile)
     .where(
@@ -196,11 +196,12 @@ export async function getHousingComplexFileContent(input: {
     throw new HousingComplexServiceError(404, 'Arquivo nao encontrado.')
   }
 
-  const bytes = await getStorageObjectBytes({
+  const url = await createStorageObjectInlineUrl({
     bucketName: row.bucketName,
     objectKey: row.objectKey,
+    contentType: row.mimeType,
   })
-  return { bytes, contentType: row.mimeType, filename: row.originalFileName }
+  return { url }
 }
 
 export async function deleteHousingComplexFile(input: {

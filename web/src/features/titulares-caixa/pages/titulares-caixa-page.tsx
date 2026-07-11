@@ -7,6 +7,7 @@ import {
   Eye,
   FileDown,
   FileSpreadsheet,
+  Loader2,
   RefreshCw,
   SlidersHorizontal,
   Upload,
@@ -25,6 +26,7 @@ import { useSession } from '@/features/auth/hooks/use-session'
 import { AppDialog, DialogFooter } from '@/shared/components/app-dialog'
 import { PageHeader } from '@/shared/components/page-header'
 import { PdfViewer } from '@/shared/components/pdf-viewer/pdf-viewer'
+import { QueryError } from '@/shared/components/query-error'
 import { SearchInput } from '@/shared/components/search-input'
 import { SearchableMultiSelect } from '@/shared/components/searchable-multi-select'
 import { StatusBadge } from '@/shared/components/status-badge'
@@ -50,6 +52,7 @@ import {
   conjuntoOptionsQuery,
   empreendimentoOptionsQuery,
   logradouroOptionsQuery,
+  titularDocumentPreviewUrlQuery,
   titularListOptions,
 } from '../services/titulares-caixa.queries'
 import {
@@ -60,7 +63,6 @@ import {
   type TitularQuitacaoStatus,
   titularAverbacaoLabels,
   titularAverbacaoValues,
-  titularDocumentContentUrl,
   titularDocumentDownloadUrl,
   titularesExportUrl,
   titularQuitacaoStatuses,
@@ -111,12 +113,6 @@ type TitularesCaixaPageProps = {
   currentAssinaturaTo?: string
 }
 
-// Alvo do dialogo de vinculo: um titular (por linha) ou a selecao atual (ids ou
-// "todos do filtro"). O alvo de massa resolve ids-vs-filtro na hora do envio.
-type LinkTarget =
-  | { kind: 'single'; titular: TitularListItem }
-  | { kind: 'bulk' }
-
 export function TitularesCaixaPage({
   currentPage,
   currentSearch,
@@ -148,7 +144,9 @@ export function TitularesCaixaPage({
     docId: string
     nome: string
   } | null>(null)
-  const [linkTarget, setLinkTarget] = useState<LinkTarget | null>(null)
+  // Vinculo de conjunto e SEMPRE em lote (selecao por ids ou "todos do filtro");
+  // o alvo resolve ids-vs-filtro na hora do envio.
+  const [bulkLinkOpen, setBulkLinkOpen] = useState(false)
   const [terceiroTarget, setTerceiroTarget] = useState<TitularListItem | null>(
     null,
   )
@@ -266,13 +264,9 @@ export function TitularesCaixaPage({
   }
 
   function handleLink(housingComplexId: string | null) {
-    const isBulk = linkTarget?.kind === 'bulk'
-    const payload =
-      linkTarget?.kind === 'single'
-        ? { housingComplexId, ids: [linkTarget.titular.id] }
-        : allFiltered
-          ? { housingComplexId, filter: currentFilter }
-          : { housingComplexId, ids: [...selectedIds] }
+    const payload = allFiltered
+      ? { housingComplexId, filter: currentFilter }
+      : { housingComplexId, ids: [...selectedIds] }
     bulkLinkMutation.mutate(payload, {
       onSuccess: (result) => {
         toast.success(
@@ -280,10 +274,8 @@ export function TitularesCaixaPage({
             ? `${result.linked} titular(es) vinculado(s) a ${result.conjuntoNome}.`
             : `${result.linked} titular(es) desvinculado(s).`,
         )
-        if (isBulk) {
-          clearSelection()
-        }
-        setLinkTarget(null)
+        clearSelection()
+        setBulkLinkOpen(false)
       },
     })
   }
@@ -535,16 +527,6 @@ export function TitularesCaixaPage({
                 Reconsultar
               </Button>
             ) : null}
-            {allowLinkConjunto ? (
-              <Button
-                onClick={() => setLinkTarget({ kind: 'single', titular: t })}
-                size="sm"
-                variant="ghost"
-              >
-                <Building2 className="size-4" />
-                Conjunto
-              </Button>
-            ) : null}
             <Button
               onClick={() => setTerceiroTarget(t)}
               size="sm"
@@ -643,7 +625,7 @@ export function TitularesCaixaPage({
             ) : null}
           </div>
           <div className="flex gap-2">
-            <Button onClick={() => setLinkTarget({ kind: 'bulk' })} size="sm">
+            <Button onClick={() => setBulkLinkOpen(true)} size="sm">
               <Building2 className="size-4" />
               Vincular conjunto
             </Button>
@@ -750,18 +732,6 @@ export function TitularesCaixaPage({
                         Reconsultar
                       </Button>
                     ) : null}
-                    {allowLinkConjunto ? (
-                      <Button
-                        onClick={() =>
-                          setLinkTarget({ kind: 'single', titular: t })
-                        }
-                        size="sm"
-                        variant="ghost"
-                      >
-                        <Building2 className="size-4" />
-                        Conjunto
-                      </Button>
-                    ) : null}
                     <Button
                       onClick={() => setTerceiroTarget(t)}
                       size="sm"
@@ -811,40 +781,22 @@ export function TitularesCaixaPage({
         open={filtersOpen}
       />
 
-      {linkTarget ? (
+      {bulkLinkOpen ? (
         <LinkConjuntoDialog
-          allowUnlink={linkTarget.kind === 'single'}
-          currentConjuntoNome={
-            linkTarget.kind === 'single'
-              ? linkTarget.titular.conjuntoNome
-              : null
-          }
-          currentHousingComplexId={
-            linkTarget.kind === 'single'
-              ? linkTarget.titular.housingComplexId
-              : null
-          }
+          allowUnlink
           description={
-            linkTarget.kind === 'single'
-              ? `${linkTarget.titular.mutuarioNome} · ${linkTarget.titular.empreendimento}`
-              : allFiltered
-                ? `${total} titulares do filtro atual`
-                : `${selectedIds.size} titular(es) selecionado(s)`
+            allFiltered
+              ? `${total} titulares do filtro atual`
+              : `${selectedIds.size} titular(es) selecionado(s)`
           }
           isPending={bulkLinkMutation.isPending}
-          onClose={() => setLinkTarget(null)}
+          onClose={() => setBulkLinkOpen(false)}
           onLink={handleLink}
-          prefillMunicipio={
-            linkTarget.kind === 'single' ? linkTarget.titular.municipio : ''
-          }
           prefillName={
-            linkTarget.kind === 'single'
-              ? linkTarget.titular.empreendimento
-              : allFiltered && currentEmpreendimento.length === 1
-                ? currentEmpreendimento[0]
-                : ''
+            allFiltered && currentEmpreendimento.length === 1
+              ? currentEmpreendimento[0]
+              : ''
           }
-          prefillUf={linkTarget.kind === 'single' ? linkTarget.titular.uf : ''}
         />
       ) : null}
 
@@ -856,39 +808,65 @@ export function TitularesCaixaPage({
       ) : null}
 
       {previewDoc ? (
-        <AppDialog
-          footer={
-            <DialogFooter>
-              <Button asChild variant="outline">
-                <a
-                  href={titularDocumentDownloadUrl(
-                    previewDoc.id,
-                    previewDoc.docId,
-                  )}
-                  rel="noreferrer"
-                >
-                  <Download className="size-4" />
-                  Baixar
-                </a>
-              </Button>
-              <Button onClick={() => setPreviewDoc(null)}>Fechar</Button>
-            </DialogFooter>
-          }
-          icon={FileSpreadsheet}
-          maxWidth="screen"
+        <TermoPreviewDialog
+          doc={previewDoc}
           onClose={() => setPreviewDoc(null)}
-          open
-          title={`Termo de quitacao — ${previewDoc.nome}`}
-          variant="info"
-        >
-          <div className="h-[80vh] overflow-hidden rounded-md border border-border">
-            <PdfViewer
-              url={titularDocumentContentUrl(previewDoc.id, previewDoc.docId)}
-            />
-          </div>
-        </AppDialog>
+        />
       ) : null}
     </div>
+  )
+}
+
+type TermoPreviewDialogProps = {
+  doc: { id: string; docId: string; nome: string }
+  onClose: () => void
+}
+
+// Busca a URL pre-assinada do termo e renderiza o viewer. O PDF vem DIRETO do
+// storage (S3/MinIO) — pela API o gateway corta respostas acima de 10MB.
+function TermoPreviewDialog({ doc, onClose }: TermoPreviewDialogProps) {
+  const previewUrlQuery = useQuery(
+    titularDocumentPreviewUrlQuery(doc.id, doc.docId),
+  )
+
+  return (
+    <AppDialog
+      footer={
+        <DialogFooter>
+          <Button asChild variant="outline">
+            <a
+              href={titularDocumentDownloadUrl(doc.id, doc.docId)}
+              rel="noreferrer"
+            >
+              <Download className="size-4" />
+              Baixar
+            </a>
+          </Button>
+          <Button onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      }
+      icon={FileSpreadsheet}
+      maxWidth="screen"
+      onClose={onClose}
+      open
+      title={`Termo de quitacao — ${doc.nome}`}
+      variant="info"
+    >
+      <div className="h-[80vh] overflow-hidden rounded-md border border-border">
+        {previewUrlQuery.isPending ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : previewUrlQuery.isError ? (
+          <QueryError
+            message="Nao foi possivel carregar o documento."
+            onRetry={() => void previewUrlQuery.refetch()}
+          />
+        ) : (
+          <PdfViewer url={previewUrlQuery.data} />
+        )}
+      </div>
+    </AppDialog>
   )
 }
 

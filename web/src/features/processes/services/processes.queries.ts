@@ -4,6 +4,7 @@ import {
   fetchBatchFiles,
   fetchProcess,
   fetchProcessChecklist,
+  fetchProcessChecklistFilePreviewUrl,
   fetchProcesses,
   fetchProcessHistory,
   fetchUserOptions,
@@ -18,6 +19,18 @@ export const processKeys = {
   details: () => [...processKeys.all, 'detail'] as const,
   detail: (id: string) => [...processKeys.details(), id] as const,
   checklist: (id: string) => [...processKeys.all, 'checklist', id] as const,
+  checklistFilePreviewUrl: (
+    processId: string,
+    fileId: string,
+    source: 'process' | 'housing_complex',
+  ) =>
+    [
+      ...processKeys.all,
+      'checklist-file-preview-url',
+      processId,
+      fileId,
+      source,
+    ] as const,
   pdfModels: (id: string) => [...processKeys.all, 'pdf-models', id] as const,
   batch: (id: string) => [...processKeys.all, 'batch', id] as const,
   history: (id: string) => [...processKeys.all, 'history', id] as const,
@@ -69,6 +82,24 @@ export function processChecklistOptions(processId: string) {
   return queryOptions({
     queryKey: processKeys.checklist(processId),
     queryFn: () => fetchProcessChecklist(processId),
+  })
+}
+
+export function processChecklistFilePreviewUrlOptions(input: {
+  processId: string
+  fileId: string
+  source: 'process' | 'housing_complex'
+}) {
+  return queryOptions({
+    queryKey: processKeys.checklistFilePreviewUrl(
+      input.processId,
+      input.fileId,
+      input.source,
+    ),
+    queryFn: () => fetchProcessChecklistFilePreviewUrl(input),
+    // URL pre-assinada expira (10 min) — nao reaproveitar entre aberturas.
+    staleTime: 0,
+    gcTime: 0,
   })
 }
 
