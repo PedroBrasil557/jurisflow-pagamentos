@@ -1,7 +1,6 @@
 import {
   and,
   asc,
-  desc,
   eq,
   exists,
   gte,
@@ -187,7 +186,11 @@ export async function listTitulares(
         eq(titularTerceiro.titularId, titularContratoCaixa.id),
       )
       .where(whereClause)
-      .orderBy(desc(titularContratoCaixa.createdAt))
+      .orderBy(
+        asc(titularContratoCaixa.empreendimento),
+        asc(titularContratoCaixa.mutuarioNome),
+        asc(titularContratoCaixa.id), // desempate único → ordem 100% determinística
+      )
       .limit(query.limit)
       .offset(offset),
     db
@@ -269,6 +272,7 @@ export async function exportTitulares(
     .orderBy(
       asc(titularContratoCaixa.empreendimento),
       asc(titularContratoCaixa.mutuarioNome),
+      asc(titularContratoCaixa.id), // mesmo desempate da lista → export e tela iguais
     )
     .limit(EXPORT_ROW_CAP)
 
