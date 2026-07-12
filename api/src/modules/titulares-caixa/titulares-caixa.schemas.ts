@@ -34,6 +34,8 @@ export const listTitularesQuerySchema = z.object({
   averbacoes: z
     .preprocess(toArray, z.array(z.enum(titularAverbacaoValues)))
     .optional(),
+  // Presenca de terceiro vinculado ao titular: 'com' = tem, 'sem' = nao tem.
+  terceiro: z.enum(['com', 'sem']).optional(),
   assinaturaFrom: z.string().trim().optional(),
   assinaturaTo: z.string().trim().optional(),
 })
@@ -56,6 +58,8 @@ export const exportTitularesQuerySchema = z.object({
   averbacoes: z
     .preprocess(toArray, z.array(z.enum(titularAverbacaoValues)))
     .optional(),
+  // Presenca de terceiro vinculado ao titular: 'com' = tem, 'sem' = nao tem.
+  terceiro: z.enum(['com', 'sem']).optional(),
   assinaturaFrom: z.string().trim().optional(),
   assinaturaTo: z.string().trim().optional(),
 })

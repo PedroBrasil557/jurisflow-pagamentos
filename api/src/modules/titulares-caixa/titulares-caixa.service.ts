@@ -8,6 +8,7 @@ import {
   ilike,
   inArray,
   lte,
+  notExists,
   or,
   type SQL,
   sql,
@@ -97,6 +98,28 @@ function buildTitularesWhere(
   }
   if (query.averbacoes?.length) {
     filters.push(inArray(titularContratoCaixa.averbacao, query.averbacoes))
+  }
+  // Presenca de terceiro: subquery correlacionada (nao join) para funcionar igual
+  // na listagem, no count e no export. O indice unico titular_terceiro_titular_idx
+  // torna o EXISTS eficiente.
+  if (query.terceiro === 'com') {
+    filters.push(
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(titularTerceiro)
+          .where(eq(titularTerceiro.titularId, titularContratoCaixa.id)),
+      ),
+    )
+  } else if (query.terceiro === 'sem') {
+    filters.push(
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(titularTerceiro)
+          .where(eq(titularTerceiro.titularId, titularContratoCaixa.id)),
+      ),
+    )
   }
   if (query.assinaturaFrom) {
     filters.push(gte(titularContratoCaixa.dataAssinatura, query.assinaturaFrom))

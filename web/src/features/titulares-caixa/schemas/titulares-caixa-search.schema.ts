@@ -16,6 +16,7 @@ export type TitularesSearch = {
   logradouros?: string[]
   quitacaoStatuses?: TitularQuitacaoStatus[]
   averbacoes?: TitularAverbacao[]
+  terceiro?: 'com' | 'sem'
   assinaturaFrom?: string
   assinaturaTo?: string
 }
@@ -63,6 +64,10 @@ function parseAverbacoes(value: unknown): TitularAverbacao[] | undefined {
   return valid.length > 0 ? valid : undefined
 }
 
+function parseTerceiro(value: unknown): 'com' | 'sem' | undefined {
+  return value === 'com' || value === 'sem' ? value : undefined
+}
+
 function parseIsoDate(value: unknown): string | undefined {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return undefined
@@ -84,6 +89,7 @@ export function parseTitularesSearch(
   const logradouros = parseStringArray(search.logradouros)
   const quitacaoStatuses = parseQuitacaoStatuses(search.quitacaoStatuses)
   const averbacoes = parseAverbacoes(search.averbacoes)
+  const terceiro = parseTerceiro(search.terceiro)
   const assinaturaFrom = parseIsoDate(search.assinaturaFrom)
   const assinaturaTo = parseIsoDate(search.assinaturaTo)
 
@@ -98,6 +104,7 @@ export function parseTitularesSearch(
     ...(logradouros ? { logradouros } : {}),
     ...(quitacaoStatuses ? { quitacaoStatuses } : {}),
     ...(averbacoes ? { averbacoes } : {}),
+    ...(terceiro ? { terceiro } : {}),
     ...(assinaturaFrom ? { assinaturaFrom } : {}),
     ...(assinaturaTo ? { assinaturaTo } : {}),
   }
