@@ -43,10 +43,11 @@ import {
 //   ... --apply                                                       # grava
 //
 // Filtros opcionais:
-//   --municipio JUAZEIRO   limita a uma cidade (process.city, case-insensitive)
-//   --cpf 56476604520      um unico processo (para testar)
-//   --limit 10             processa no maximo N arquivos (primeira rodada cautelosa)
-//   --max-bytes 1900000    sobrepoe o alvo (default = env.checklistFileMaxBytes)
+//   --municipio JUAZEIRO       limita a uma cidade (process.city, case-insensitive)
+//   --cpf 56476604520          um unico processo (para testar)
+//   --limit 10                 processa no maximo N arquivos (primeira rodada cautelosa)
+//   --max-bytes 1900000        sobrepoe o alvo (default = env.checklistFileMaxBytes)
+//   --exclude-status EM_PROCESSO  pula status extras (CSV) alem dos terminais
 
 function argValue(flag: string): string | null {
   const i = process.argv.indexOf(flag)
@@ -59,8 +60,21 @@ const cpf = argValue('--cpf')?.replace(/\D/g, '') || null
 const limit = Number(argValue('--limit')) || Number.POSITIVE_INFINITY
 const maxBytes = Number(argValue('--max-bytes')) || env.checklistFileMaxBytes
 
-// Terminais: read-only e normalmente ja protocolados/resolvidos.
-const TERMINAL_STATUSES = ['FINALIZADO', 'CANCELADO'] as const
+type ProcStatus = (typeof processTable.$inferSelect)['status']
+
+// Terminais: read-only e ja protocolados/resolvidos — SEMPRE pulados.
+const TERMINAL_STATUSES: ProcStatus[] = ['FINALIZADO', 'CANCELADO']
+// --exclude-status: status EXTRAS a pular (CSV), somados aos terminais. Ex.:
+// --exclude-status EM_PROCESSO (processo ja no tramite juridico, docs
+// possivelmente ja protocolados — nao mexer).
+const extraExcludedStatuses = (argValue('--exclude-status') ?? '')
+  .split(',')
+  .map((s) => s.trim().toUpperCase())
+  .filter(Boolean) as ProcStatus[]
+const excludedStatuses: ProcStatus[] = [
+  ...TERMINAL_STATUSES,
+  ...extraExcludedStatuses,
+]
 
 type TargetRow = {
   fileId: string
@@ -82,7 +96,7 @@ async function loadTargets(): Promise<TargetRow[]> {
   const conditions = [
     eq(processDocumentFile.isCurrent, true),
     gt(processDocumentFile.sizeInBytes, maxBytes),
-    notInArray(processTable.status, [...TERMINAL_STATUSES]),
+    notInArray(processTable.status, excludedStatuses),
   ]
   if (municipio) {
     conditions.push(sql`lower(${processTable.city}) = lower(${municipio})`)
@@ -128,7 +142,7 @@ const mb = (bytes: number) => (bytes / 1_000_000).toFixed(2)
 function reportDryRun(rows: TargetRow[]) {
   const totalBytes = rows.reduce((sum, r) => sum + r.sizeInBytes, 0)
   console.log(
-    `\nArquivos > ${mb(maxBytes)} MB (is_current, sem terminais): ${rows.length} | soma ${mb(totalBytes)} MB`,
+    `\nArquivos > ${mb(maxBytes)} MB (is_current, pulando ${excludedStatuses.join('/')}): ${rows.length} | soma ${mb(totalBytes)} MB`,
   )
 
   const byStatus = new Map<string, number>()
@@ -226,7 +240,7 @@ async function writeNewRevision(row: TargetRow, newBytes: Uint8Array) {
 
 async function main() {
   console.log(
-    `Alvo por arquivo: ${mb(maxBytes)} MB (${maxBytes} bytes)` +
+    `Alvo por arquivo: ${mb(maxBytes)} MB (${maxBytes} bytes) | pulando ${excludedStatuses.join('/')}` +
       (municipio ? ` | municipio=${municipio}` : '') +
       (cpf ? ` | cpf=${cpf}` : '') +
       (Number.isFinite(limit) ? ` | limit=${limit}` : ''),
