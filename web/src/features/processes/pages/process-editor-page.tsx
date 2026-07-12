@@ -625,6 +625,14 @@ function ProcessFormShell({ mode, processId }: ProcessFormShellProps) {
                   placeholder="Selecione o conjunto..."
                   required
                   searchPlaceholder="Buscar conjunto..."
+                  selectedOption={
+                    values.housingComplex
+                      ? {
+                          value: values.housingComplex,
+                          label: values.housingComplex,
+                        }
+                      : undefined
+                  }
                   value={values.housingComplex}
                 />
               </div>
