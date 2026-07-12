@@ -205,10 +205,18 @@ export function titularesExportUrl(
     .toString()
 }
 
-export async function reconsultarTitularesRequest(
-  ids: string[],
-): Promise<{ enqueued: number }> {
-  const response = await titularesRoute.reconsultar.$post({ json: { ids } })
+// Reconsulta em massa. Alvo = `ids` (selecao) OU `filter` (todos os que casam o
+// filtro atual) — mesmo padrao do vinculo de conjunto.
+export async function reconsultarTitularesRequest(input: {
+  ids?: string[]
+  filter?: TitularesFilter
+}): Promise<{ enqueued: number }> {
+  const response = await titularesRoute.reconsultar.$post({
+    json: {
+      ...(input.ids ? { ids: input.ids } : {}),
+      ...(input.filter ? { filter: input.filter } : {}),
+    },
+  })
 
   if (!response.ok) {
     throw new Error(

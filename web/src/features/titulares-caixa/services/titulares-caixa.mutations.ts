@@ -4,6 +4,7 @@ import {
   bulkLinkConjuntoRequest,
   importTitularesRequest,
   reconsultarTitularesRequest,
+  type TitularesFilter,
   upsertTerceiroRequest,
 } from './titulares-caixa.service'
 
@@ -22,7 +23,8 @@ export function useReconsultarTitulares() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (ids: string[]) => reconsultarTitularesRequest(ids),
+    mutationFn: (payload: { ids?: string[]; filter?: TitularesFilter }) =>
+      reconsultarTitularesRequest(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: titularKeys.lists() })
     },

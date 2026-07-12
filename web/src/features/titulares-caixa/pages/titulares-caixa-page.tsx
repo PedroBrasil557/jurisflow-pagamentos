@@ -31,6 +31,7 @@ import {
 import { canManageConjuntos } from '@/features/admin/lib/cadastros-access'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { AppDialog, DialogFooter } from '@/shared/components/app-dialog'
+import { ConfirmDialog } from '@/shared/components/confirm-dialog'
 import { PageHeader } from '@/shared/components/page-header'
 import { PdfViewer } from '@/shared/components/pdf-viewer/pdf-viewer'
 import { QueryError } from '@/shared/components/query-error'
@@ -153,9 +154,11 @@ export function TitularesCaixaPage({
     docId: string
     nome: string
   } | null>(null)
-  // Vinculo de conjunto e SEMPRE em lote (selecao por ids ou "todos do filtro");
-  // o alvo resolve ids-vs-filtro na hora do envio.
+  // As acoes em lote (vincular conjunto e reconsultar) compartilham a mesma selecao
+  // e o mesmo idioma de alvo: `ids` explicitos OU "todos do filtro" — o alvo resolve
+  // ids-vs-filtro na hora do envio.
   const [bulkLinkOpen, setBulkLinkOpen] = useState(false)
+  const [reconsultarLoteOpen, setReconsultarLoteOpen] = useState(false)
   const [terceiroTarget, setTerceiroTarget] = useState<TitularListItem | null>(
     null,
   )
@@ -360,9 +363,24 @@ export function TitularesCaixaPage({
     })
   }
 
-  function handleReconsultar(id: string) {
-    reconsultarMutation.mutate([id], {
-      onSuccess: () => toast.success('Reconsulta enfileirada.'),
+  function handleReconsultarLote() {
+    if (!reconsultarLoteEnabled) {
+      setReconsultarLoteOpen(false)
+      return
+    }
+    const payload = allFiltered
+      ? { filter: currentFilter }
+      : { ids: [...selectedIds] }
+    reconsultarMutation.mutate(payload, {
+      onSuccess: (result) => {
+        if (result.enqueued > 0) {
+          toast.success(`${result.enqueued} reconsulta(s) enfileirada(s).`)
+        } else {
+          toast.info('Nenhum titular elegivel para reconsulta.')
+        }
+        clearSelection()
+        setReconsultarLoteOpen(false)
+      },
     })
   }
 
@@ -388,6 +406,13 @@ export function TitularesCaixaPage({
     (currentTerceiro ? 1 : 0) +
     (currentAssinaturaFrom ? 1 : 0) +
     (currentAssinaturaTo ? 1 : 0)
+
+  // Reconsulta em lote so com alvo valido: em "todos do filtro" exige ao menos um
+  // filtro ativo (senao seria a base inteira e, p/ admin, um 400 garantido); caso
+  // contrario exige selecao explicita (evita enviar { ids: [] }).
+  const reconsultarLoteEnabled = allFiltered
+    ? activeFilterCount > 0
+    : selectedIds.size > 0
 
   const selectColumn: DataTableColumn<TitularListItem> = {
     id: 'select',
@@ -530,17 +555,6 @@ export function TitularesCaixaPage({
                 </Button>
               </>
             ) : null}
-            {allowReconsultar ? (
-              <Button
-                disabled={reconsultarMutation.isPending}
-                onClick={() => handleReconsultar(t.id)}
-                size="sm"
-                variant="ghost"
-              >
-                <RefreshCw className="size-4" />
-                Reconsultar
-              </Button>
-            ) : null}
             <Button
               onClick={() => setTerceiroTarget(t)}
               size="sm"
@@ -555,8 +569,9 @@ export function TitularesCaixaPage({
     },
   ]
 
-  // Coluna de selecao so quando o usuario pode vincular conjuntos.
-  const columns = allowLinkConjunto
+  // Coluna de selecao quando o usuario pode vincular conjuntos OU reconsultar em lote.
+  const allowBulkSelection = allowLinkConjunto || allowReconsultar
+  const columns = allowBulkSelection
     ? [selectColumn, ...baseColumns]
     : baseColumns
 
@@ -618,7 +633,7 @@ export function TitularesCaixaPage({
         ) : null}
       </div>
 
-      {allowLinkConjunto && hasSelection ? (
+      {allowBulkSelection && hasSelection ? (
         <div className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-sm">
             {allFiltered
@@ -639,10 +654,25 @@ export function TitularesCaixaPage({
             ) : null}
           </div>
           <div className="flex gap-2">
-            <Button onClick={() => setBulkLinkOpen(true)} size="sm">
-              <Building2 className="size-4" />
-              Vincular conjunto
-            </Button>
+            {allowReconsultar ? (
+              <Button
+                disabled={
+                  reconsultarMutation.isPending || !reconsultarLoteEnabled
+                }
+                onClick={() => setReconsultarLoteOpen(true)}
+                size="sm"
+                variant="outline"
+              >
+                <RefreshCw className="size-4" />
+                Reconsultar em lote
+              </Button>
+            ) : null}
+            {allowLinkConjunto ? (
+              <Button onClick={() => setBulkLinkOpen(true)} size="sm">
+                <Building2 className="size-4" />
+                Vincular conjunto
+              </Button>
+            ) : null}
             <Button onClick={clearSelection} size="sm" variant="ghost">
               Limpar
             </Button>
@@ -678,7 +708,7 @@ export function TitularesCaixaPage({
                 <CardContent className="grid gap-2 p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-start gap-2">
-                      {allowLinkConjunto ? (
+                      {allowBulkSelection ? (
                         <Checkbox
                           aria-label="Selecionar titular"
                           checked={isRowSelected(t.id)}
@@ -734,17 +764,6 @@ export function TitularesCaixaPage({
                           </a>
                         </Button>
                       </>
-                    ) : null}
-                    {allowReconsultar ? (
-                      <Button
-                        disabled={reconsultarMutation.isPending}
-                        onClick={() => handleReconsultar(t.id)}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        <RefreshCw className="size-4" />
-                        Reconsultar
-                      </Button>
                     ) : null}
                     <Button
                       onClick={() => setTerceiroTarget(t)}
@@ -814,6 +833,24 @@ export function TitularesCaixaPage({
           }
         />
       ) : null}
+
+      <ConfirmDialog
+        confirmDisabled={!reconsultarLoteEnabled}
+        confirmLabel="Reconsultar"
+        description={
+          allFiltered
+            ? `Todos os ${total} titulares do filtro atual serao reenfileirados para nova consulta de quitacao no portal Caixa.`
+            : `${selectionCount} titular(es) selecionado(s) serao reenfileirados para nova consulta de quitacao no portal Caixa.`
+        }
+        detail='A reconsulta entra na fila com prioridade alta e a coluna Quitacao volta para "pendente" ate o resultado chegar.'
+        icon={RefreshCw}
+        isLoading={reconsultarMutation.isPending}
+        loadingLabel="Enfileirando..."
+        onClose={() => setReconsultarLoteOpen(false)}
+        onConfirm={handleReconsultarLote}
+        open={reconsultarLoteOpen}
+        title="Reconsultar em lote"
+      />
 
       {terceiroTarget ? (
         <TerceiroDialog

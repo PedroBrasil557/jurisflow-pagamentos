@@ -1,5 +1,7 @@
 import { and, desc, eq } from 'drizzle-orm'
+import { env } from '../../shared/config/env'
 import { db } from '../../shared/db'
+import { fitPdf } from '../../shared/scan-enhance/client'
 import {
   buildStorageObjectKey,
   createStorageObjectDownloadUrl,
@@ -68,7 +70,40 @@ export async function uploadHousingComplexFile(input: {
 
   const fileId = crypto.randomUUID()
   const bucketName = storageBuckets.processDocuments
-  const mimeType = input.file.type || 'application/octet-stream'
+  let mimeType = input.file.type || 'application/octet-stream'
+  let bytes = new Uint8Array(await input.file.arrayBuffer())
+
+  // Otimizacao BEST-EFFORT: PDF de conjunto acima do alvo do portal e reduzido-
+  // para-caber pelo microservico (/fit), SO se o resultado ficar menor (nunca
+  // grava algo maior). Best-effort de proposito (≠ worker, que e invariante): o
+  // upload e sincrono e voltado ao usuario — se o /fit cair, segue com o
+  // original e o backfill cobre depois. Em prod a API ainda nao alcanca o /fit
+  // (sem SCAN_ENHANCE_URL) => fitPdf retorna null e nada muda; vale no dev e
+  // quando a API for ligada ao /fit.
+  if (
+    mimeType === 'application/pdf' &&
+    bytes.length > env.checklistFileMaxBytes
+  ) {
+    try {
+      const fitted = await fitPdf(bytes, env.checklistFileMaxBytes)
+      if (fitted && fitted.bytes.length < bytes.length) {
+        console.info('conjunto: fit aplicado no upload', {
+          housingComplexId: input.housingComplexId,
+          documentTypeKey: input.documentTypeKey,
+          bytesBefore: bytes.length,
+          bytesAfter: fitted.bytes.length,
+        })
+        bytes = fitted.bytes
+        mimeType = 'application/pdf'
+      }
+    } catch (error) {
+      console.error(
+        'conjunto: fit falhou no upload (seguindo com o original)',
+        { error: String(error) },
+      )
+    }
+  }
+
   const objectKey = buildStorageObjectKey([
     'housing-complexes',
     input.housingComplexId,
@@ -77,7 +112,6 @@ export async function uploadHousingComplexFile(input: {
     `${fileId}-${sanitizeFileName(input.file.name)}`,
   ])
 
-  const bytes = new Uint8Array(await input.file.arrayBuffer())
   await uploadStorageObject({
     body: bytes,
     bucketName,
@@ -108,7 +142,7 @@ export async function uploadHousingComplexFile(input: {
         objectKey,
         originalFileName: input.file.name,
         mimeType,
-        sizeInBytes: input.file.size,
+        sizeInBytes: bytes.length,
         isCurrent: true,
         uploadedByUserId: input.actor.id,
       })

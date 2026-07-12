@@ -6,6 +6,7 @@ type ConfirmDialogVariant = 'default' | 'destructive'
 
 type ConfirmDialogProps = {
   cancelLabel?: string
+  confirmDisabled?: boolean
   confirmLabel: string
   description: string
   detail?: string
@@ -22,6 +23,7 @@ type ConfirmDialogProps = {
 
 export function ConfirmDialog({
   cancelLabel = 'Cancelar',
+  confirmDisabled = false,
   confirmLabel,
   description,
   detail,
@@ -68,7 +70,7 @@ export function ConfirmDialog({
           {cancelLabel}
         </Button>
         <Button
-          disabled={isLoading}
+          disabled={isLoading || confirmDisabled}
           onClick={onConfirm}
           type="button"
           variant={variant === 'destructive' ? 'destructive' : 'default'}

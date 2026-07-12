@@ -24,7 +24,7 @@ import {
 import { formatCpf, normalizeCpf } from '../../shared/utils/cpf'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
-import { enqueueQuitacao } from '../quitacao-queue/quitacao-queue.service'
+import { enqueueManyQuitacao } from '../quitacao-queue/quitacao-queue.service'
 import { buildTitularesVisibilityFilter } from './titulares-caixa.access'
 import {
   titularContratoCaixa,
@@ -372,33 +372,65 @@ export async function listConjuntoOptions(perms: ResolvedPermissions): Promise<{
   return { options: rows }
 }
 
-// Reconsulta manual: reenfileira os titulares selecionados com prioridade alta e
-// volta a projecao para 'pending'. Idempotente (enqueue faz upsert por subject).
-// Recorta pelos conjuntos visiveis ao usuario: ids fora do escopo sao ignorados
-// (sem mutacao, sem job no portal, e o `enqueued` nao vira oraculo de existencia).
-export async function reconsultarTitulares(
-  ids: string[],
-  perms: ResolvedPermissions,
-): Promise<{ enqueued: number }> {
+// Reconsulta manual em massa: reenfileira os titulares-alvo com prioridade alta e
+// volta a projecao para 'pending'. Alvo = `ids` explicitos (recortados pela
+// visibilidade) OU o `filter` inteiro (buildTitularesWhere ja embute o recorte).
+// Idempotente (enqueue faz upsert por subject). So atua sobre titular VISIVEL ao
+// usuario; ids fora do escopo sao ignorados (o `enqueued` nao vira oraculo de
+// existencia). O enqueue em lote (chunked) escala para milhares.
+// Resolve o WHERE de uma operacao em massa sobre titulares. Alvo = `ids` explicitos
+// (recortados pela visibilidade) OU o `filter` inteiro (buildTitularesWhere ja embute
+// o recorte). A trava de filtro-vazio (`where` undefined => admin/all-scope + filtro
+// vazio => afetaria a base inteira ~13k) e a invariante de seguranca compartilhada
+// pela reconsulta e pelo vinculo em massa.
+function resolveTitularesTargetWhere(input: {
+  ids?: string[]
+  filter?: ExportTitularesQuery
+  perms: ResolvedPermissions
+}): SQL {
+  let where: SQL | undefined
+  if (input.ids) {
+    where = and(
+      inArray(titularContratoCaixa.id, input.ids),
+      buildTitularesVisibilityFilter(input.perms),
+    )
+  } else if (input.filter) {
+    where = buildTitularesWhere(input.filter, input.perms)
+  } else {
+    throw new ServiceError(400, 'Informe ids ou filter.')
+  }
+  if (!where) {
+    throw new ServiceError(
+      400,
+      'Operacao em massa por filtro exige ao menos um filtro (evita afetar a base inteira).',
+    )
+  }
+  return where
+}
+
+export async function reconsultarTitulares(input: {
+  ids?: string[]
+  filter?: ExportTitularesQuery
+  perms: ResolvedPermissions
+}): Promise<{ enqueued: number }> {
+  const where = resolveTitularesTargetWhere(input)
+
   const rows = await db
     .select({ id: titularContratoCaixa.id, cpf: titularContratoCaixa.cpf })
     .from(titularContratoCaixa)
-    .where(
-      and(
-        inArray(titularContratoCaixa.id, ids),
-        buildTitularesVisibilityFilter(perms),
-      ),
-    )
+    .where(where)
 
-  for (const row of rows) {
-    await enqueueQuitacao({
-      subjectType: 'titular',
-      subjectId: row.id,
-      cpf: row.cpf,
-      priority: RECONSULT_PRIORITY,
-    })
-  }
   if (rows.length > 0) {
+    await enqueueManyQuitacao(
+      rows.map((row) => ({
+        subjectType: 'titular' as const,
+        subjectId: row.id,
+        cpf: row.cpf,
+        priority: RECONSULT_PRIORITY,
+      })),
+    )
+    // Projeta exatamente as linhas enfileiradas (nao reavalia `where`): evita que uma
+    // linha que entre no filtro entre o SELECT e o UPDATE vire 'pending' sem job.
     await db
       .update(titularContratoCaixa)
       .set({ quitacaoStatus: 'pending', quitacaoMessage: null })
@@ -449,27 +481,11 @@ export async function bulkLinkTitularConjunto(input: {
     conjuntoNome = hc.name
   }
 
-  let where: SQL | undefined
-  if (input.ids) {
-    where = and(
-      inArray(titularContratoCaixa.id, input.ids),
-      buildTitularesVisibilityFilter(input.perms),
-    )
-  } else if (input.filter) {
-    where = buildTitularesWhere(input.filter, input.perms)
-  } else {
-    throw new ServiceError(400, 'Informe ids ou filter.')
-  }
-
-  // Trava de seguranca: `where` so e undefined no modo filter para admin/all-scope
-  // com filtro VAZIO -> seria um UPDATE sem WHERE (tabela inteira). Recusa: um
-  // vinculo em massa por filtro exige um recorte explicito.
-  if (!where) {
-    throw new ServiceError(
-      400,
-      'Vinculo em massa por filtro exige ao menos um filtro (evita alterar a base inteira).',
-    )
-  }
+  const where = resolveTitularesTargetWhere({
+    ids: input.ids,
+    filter: input.filter,
+    perms: input.perms,
+  })
 
   const updated = await db
     .update(titularContratoCaixa)
