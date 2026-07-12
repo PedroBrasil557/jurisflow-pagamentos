@@ -61,3 +61,69 @@ export async function enhanceScanPdf(
     return null
   }
 }
+
+// Chamada OBRIGATORIA ao microservico (contrario do enhanceScanPdf best-effort):
+// LANCA em qualquer falha. Os chamadores rodam isto ANTES de gravar/anexar,
+// entao a falha aborta limpo (fila re-executa; backfill pula o arquivo).
+async function callScanEnhanceRequired(
+  url: string,
+  pdfBytes: Uint8Array,
+): Promise<ScanEnhanceResult> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/pdf' },
+    body: pdfBytes.slice().buffer as ArrayBuffer,
+    signal: AbortSignal.timeout(ENHANCE_TIMEOUT_MS),
+  })
+  if (!response.ok) {
+    throw new Error(`scan-enhance ${url} respondeu ${response.status}`)
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  // Precisa continuar sendo um PDF nao-vazio.
+  if (bytes.length < 4 || bytes[0] !== 0x25) {
+    throw new Error('scan-enhance: corpo de resposta invalido')
+  }
+  let metrics: unknown = null
+  try {
+    const header = response.headers.get('x-enhance-metrics')
+    metrics = header ? JSON.parse(header) : null
+  } catch {
+    // metricas sao opcionais
+  }
+  return { bytes, metrics }
+}
+
+// Realce + encode-para-caber (<= maxBytes) por documento, para o anexo do
+// checklist (fluxo de scan NOVO). Servico desligado (SCAN_ENHANCE_URL ausente)
+// => null (o chamador anexa o original sem fit; dev/opt-out). Configurado mas
+// falha => LANCA (o chamador roda antes de anexar => a fila re-executa limpo).
+// E assim que "<= limite" vira invariante da ingestao em producao.
+export async function enhanceFitPdf(
+  pdfBytes: Uint8Array,
+  maxBytes: number,
+): Promise<ScanEnhanceResult | null> {
+  if (!env.scanEnhanceUrl) {
+    return null
+  }
+  return callScanEnhanceRequired(
+    `${env.scanEnhanceUrl}/enhance?max_bytes=${maxBytes}`,
+    pdfBytes,
+  )
+}
+
+// SO reduz-para-caber (<= maxBytes), SEM realce. Para o BACKFILL de arquivos ja
+// anexados: um scan legado ja foi realcado (re-realcar super-processaria) e um
+// PDF nato-digital nao deve ser realcado. Mesma semantica de erro do
+// enhanceFitPdf (null se desligado, LANCA em falha).
+export async function fitPdf(
+  pdfBytes: Uint8Array,
+  maxBytes: number,
+): Promise<ScanEnhanceResult | null> {
+  if (!env.scanEnhanceUrl) {
+    return null
+  }
+  return callScanEnhanceRequired(
+    `${env.scanEnhanceUrl}/fit?max_bytes=${maxBytes}`,
+    pdfBytes,
+  )
+}
