@@ -47,6 +47,14 @@ def _enhance_fit_pdf(pdf_bytes: bytes, max_bytes: int) -> tuple[bytes, object]:
     return encode_to_target(enhanced, max_bytes)
 
 
+def _fit_pdf(pdf_bytes: bytes, max_bytes: int) -> tuple[bytes, object]:
+    # SO reduz-para-caber por pagina, SEM realce. Para backfill de arquivos JA
+    # anexados: um scan legado ja foi realcado (re-realcar super-processaria) e um
+    # PDF nato-digital nao deve ser realcado. Rasteriza e encoda-para-caber.
+    pages = rasterize_pdf(pdf_bytes, MAX_PAGES)
+    return encode_to_target(pages, max_bytes)
+
+
 def _parse_max_bytes(raw: str | None) -> int | None:
     if raw is None:
         return None
@@ -57,8 +65,7 @@ def _parse_max_bytes(raw: str | None) -> int | None:
     return int(raw)
 
 
-@app.post("/enhance")
-async def enhance(request: Request) -> Response:
+async def _read_pdf_body(request: Request) -> bytes:
     # Rejeicao BARATA antes de materializar o corpo: um POST gigante nao deve
     # inflar a RAM so para receber 413. (Nao cobre chunked/sem Content-Length —
     # o check pos-leitura abaixo continua valendo.)
@@ -73,6 +80,20 @@ async def enhance(request: Request) -> Response:
         raise HTTPException(status_code=413, detail="PDF acima de 25 MB.")
     if not body.startswith(b"%PDF"):
         raise HTTPException(status_code=415, detail="Corpo nao e um PDF.")
+    return body
+
+
+def _metrics_response(pdf_out: bytes, metrics: object) -> Response:
+    return Response(
+        content=pdf_out,
+        media_type="application/pdf",
+        headers={"x-enhance-metrics": json.dumps(metrics, separators=(",", ":"))},
+    )
+
+
+@app.post("/enhance")
+async def enhance(request: Request) -> Response:
+    body = await _read_pdf_body(request)
 
     # max_bytes presente => realce + encode-para-caber (<= max_bytes) por pagina;
     # ausente => realce uniforme (comportamento original).
@@ -89,8 +110,21 @@ async def enhance(request: Request) -> Response:
     except PageLimitError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
-    return Response(
-        content=pdf_out,
-        media_type="application/pdf",
-        headers={"x-enhance-metrics": json.dumps(metrics, separators=(",", ":"))},
-    )
+    return _metrics_response(pdf_out, metrics)
+
+
+@app.post("/fit")
+async def fit(request: Request) -> Response:
+    # Reduz-para-caber SEM realce (backfill de arquivos ja anexados em prod).
+    # max_bytes e OBRIGATORIO aqui (nao ha modo "so realce" no /fit).
+    body = await _read_pdf_body(request)
+    max_bytes = _parse_max_bytes(request.query_params.get("max_bytes"))
+    if max_bytes is None:
+        raise HTTPException(status_code=400, detail="max_bytes e obrigatorio em /fit.")
+
+    try:
+        pdf_out, metrics = await to_thread.run_sync(_fit_pdf, body, max_bytes)
+    except PageLimitError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    return _metrics_response(pdf_out, metrics)
