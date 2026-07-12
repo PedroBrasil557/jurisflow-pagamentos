@@ -83,6 +83,10 @@ const envSchema = z.object({
     .refine((value) => value === undefined || /^https?:\/\/\S+$/.test(value), {
       message: 'SCAN_ENHANCE_URL deve ser uma URL http(s) completa.',
     }),
+  // Alvo de tamanho (bytes) por PDF de documento anexado no checklist (scans).
+  // Abaixo do teto real do portal (~1,9 MB) com folga p/ overhead de container
+  // do PDF. O microservico encoda-para-caber por pagina ate este alvo.
+  CHECKLIST_FILE_MAX_BYTES: z.coerce.number().int().positive().default(1_800_000),
   GEOIP_ENABLED: z
     .enum(['true', 'false'])
     .default('true')
@@ -121,6 +125,7 @@ const parsedEnv = envSchema.parse({
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
   ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL,
   SCAN_ENHANCE_URL: process.env.SCAN_ENHANCE_URL,
+  CHECKLIST_FILE_MAX_BYTES: process.env.CHECKLIST_FILE_MAX_BYTES,
   GEOIP_ENABLED: process.env.GEOIP_ENABLED,
   GEOIP_API_URL: process.env.GEOIP_API_URL,
   INTERNAL_API_TOKEN: process.env.INTERNAL_API_TOKEN,
@@ -154,6 +159,7 @@ export const env = {
     model: parsedEnv.ANTHROPIC_MODEL,
   },
   scanEnhanceUrl: parsedEnv.SCAN_ENHANCE_URL,
+  checklistFileMaxBytes: parsedEnv.CHECKLIST_FILE_MAX_BYTES,
   geoip: {
     enabled: parsedEnv.GEOIP_ENABLED,
     apiUrl: parsedEnv.GEOIP_API_URL,

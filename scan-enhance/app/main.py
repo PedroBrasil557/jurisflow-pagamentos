@@ -12,6 +12,7 @@ from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Request, Response
 
 from .enhance import enhance_page
+from .fit import encode_to_target
 from .pdf_io import PageLimitError, pages_to_pdf, rasterize_pdf
 
 # Mesmos tetos do app (cliente limita o PDF a 25 MB / 15 paginas; 50 aqui e
@@ -27,7 +28,7 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-def _enhance_pdf(pdf_bytes: bytes) -> tuple[bytes, list[dict]]:
+def _enhance_pdf(pdf_bytes: bytes) -> tuple[bytes, object]:
     pages = rasterize_pdf(pdf_bytes, MAX_PAGES)
     enhanced: list = []
     metrics: list[dict] = []
@@ -36,6 +37,24 @@ def _enhance_pdf(pdf_bytes: bytes) -> tuple[bytes, list[dict]]:
         enhanced.append(out)
         metrics.append({"page": index + 1, **page_metrics})
     return pages_to_pdf(enhanced), metrics
+
+
+def _enhance_fit_pdf(pdf_bytes: bytes, max_bytes: int) -> tuple[bytes, object]:
+    # Realca UMA vez e entao encoda-para-caber por pagina (encode_to_target).
+    # O lote ja vem desmembrado por documento (o chamador manda 1 parte por vez).
+    pages = rasterize_pdf(pdf_bytes, MAX_PAGES)
+    enhanced = [enhance_page(page)[0] for page in pages]
+    return encode_to_target(enhanced, max_bytes)
+
+
+def _parse_max_bytes(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    if not raw.isdigit() or int(raw) <= 0:
+        raise HTTPException(
+            status_code=400, detail="max_bytes deve ser um inteiro positivo."
+        )
+    return int(raw)
 
 
 @app.post("/enhance")
@@ -55,9 +74,18 @@ async def enhance(request: Request) -> Response:
     if not body.startswith(b"%PDF"):
         raise HTTPException(status_code=415, detail="Corpo nao e um PDF.")
 
+    # max_bytes presente => realce + encode-para-caber (<= max_bytes) por pagina;
+    # ausente => realce uniforme (comportamento original).
+    max_bytes = _parse_max_bytes(request.query_params.get("max_bytes"))
+
     try:
         # Threadpool: rasterizacao + OpenCV sao CPU-bound; nao bloqueia o loop.
-        pdf_out, metrics = await to_thread.run_sync(_enhance_pdf, body)
+        if max_bytes is not None:
+            pdf_out, metrics = await to_thread.run_sync(
+                _enhance_fit_pdf, body, max_bytes
+            )
+        else:
+            pdf_out, metrics = await to_thread.run_sync(_enhance_pdf, body)
     except PageLimitError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 

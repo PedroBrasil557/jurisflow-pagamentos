@@ -4,3 +4,6 @@ numpy~=2.2
 opencv-python-headless~=4.11
 pypdfium2~=4.30
 img2pdf~=0.6
+# Usado diretamente em pdf_io.encode_page_jpeg (embute o DPI no JFIF por pagina).
+# Ja vem transitivamente com img2pdf, mas declarado por ser import direto.
+pillow>=10.4,<12

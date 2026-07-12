@@ -1,6 +1,11 @@
 import { z } from 'zod'
+import { env } from '../../shared/config/env'
 import { ServiceError } from '../../shared/errors/service-error'
 import { logErrorEvent, logEvent } from '../../shared/observability/log'
+import {
+  enhanceFitPdf,
+  isScanEnhanceEnabled,
+} from '../../shared/scan-enhance/client'
 import type { AppBindings } from '../../shared/types/app'
 import type { ResolvedPermissions } from '../permissions/permissions.types'
 import {
@@ -32,6 +37,9 @@ function buildSplitFileName(documentTypeKey: string) {
 }
 
 // Desmembra o PDF empacotado e anexa cada parte ao item de checklist do tipo.
+// enhanceAndFit (scans): realca e encoda-para-caber cada parte no alvo de
+// tamanho (<= CHECKLIST_FILE_MAX_BYTES) ANTES de anexar. Imports nato-digitais
+// passam false (rasterizar degradaria) e sao anexados como saem do split.
 export async function importDocumentBundle(input: {
   processId: string
   file: File
@@ -39,9 +47,11 @@ export async function importDocumentBundle(input: {
   actor: ProcessActor
   perms: ResolvedPermissions
   requestId?: string
+  enhanceAndFit?: boolean
 }) {
   const { processId, file, documents, actor, perms } = input
   const requestId = input.requestId ?? '-'
+  const enhanceAndFit = input.enhanceAndFit ?? false
   const startedAt = performance.now()
 
   logEvent('import_bundle.start', {
@@ -86,6 +96,20 @@ export async function importDocumentBundle(input: {
   const attached: Array<{ documentTypeKey: string; pageCount: number }> = []
   const skipped: Array<{ documentTypeKey: string; reason: string }> = []
 
+  // Fase 1 (realce + encode-para-caber): produz os bytes finais de TODAS as
+  // partes ANTES de anexar qualquer uma. O fit e FATAL (nao best-effort): se o
+  // microservico estiver configurado e falhar, isto LANCA aqui — antes de
+  // qualquer anexo — e a fila duravel re-executa o job limpo (nada anexado,
+  // sem duplicar). E assim que "<= limite" vira invariante do artefato de scan.
+  // Microservico desligado (dev) => enhanceFitPdf retorna null e segue com o
+  // original (limite nao garantido, comportamento de opt-out).
+  const prepared: Array<{
+    documentTypeKey: string
+    processDocumentId: string
+    file: File
+    pageCount: number
+  }> = []
+
   for (const split of splits) {
     const processDocumentId = itemIdByKey.get(split.documentTypeKey)
 
@@ -104,38 +128,66 @@ export async function importDocumentBundle(input: {
       continue
     }
 
-    // Copia para um Uint8Array com ArrayBuffer proprio (BlobPart valido).
-    const splitFile = new File(
-      [new Uint8Array(split.bytes)],
-      buildSplitFileName(split.documentTypeKey),
-      { type: 'application/pdf' },
-    )
+    let bytes: Uint8Array = split.bytes
+    if (enhanceAndFit && isScanEnhanceEnabled()) {
+      const fitStartedAt = performance.now()
+      const fitted = await enhanceFitPdf(
+        split.bytes,
+        env.checklistFileMaxBytes,
+      )
+      if (fitted) {
+        bytes = fitted.bytes
+        logEvent('import_bundle.fit', {
+          requestId,
+          processId,
+          documentTypeKey: split.documentTypeKey,
+          bytesBefore: split.bytes.length,
+          bytesAfter: fitted.bytes.length,
+          ms: Math.round(performance.now() - fitStartedAt),
+          metrics: fitted.metrics,
+        })
+      }
+    }
 
-    // Falha de um anexo nao deve abortar os demais: registra em `skipped`.
+    // Copia para um Uint8Array com ArrayBuffer proprio (BlobPart valido).
+    prepared.push({
+      documentTypeKey: split.documentTypeKey,
+      processDocumentId,
+      file: new File(
+        [new Uint8Array(bytes)],
+        buildSplitFileName(split.documentTypeKey),
+        { type: 'application/pdf' },
+      ),
+      pageCount: split.pageCount,
+    })
+  }
+
+  // Fase 2 (anexo): falha de um anexo nao deve abortar os demais (`skipped`).
+  for (const item of prepared) {
     const uploadStartedAt = performance.now()
     try {
       await uploadProcessChecklistFile({
         processId,
-        processDocumentId,
-        file: splitFile,
+        processDocumentId: item.processDocumentId,
+        file: item.file,
         actor,
         perms,
       })
 
       attached.push({
-        documentTypeKey: split.documentTypeKey,
-        pageCount: split.pageCount,
+        documentTypeKey: item.documentTypeKey,
+        pageCount: item.pageCount,
       })
       logEvent('import_bundle.attach', {
         requestId,
         processId,
-        documentTypeKey: split.documentTypeKey,
+        documentTypeKey: item.documentTypeKey,
         ok: true,
         ms: Math.round(performance.now() - uploadStartedAt),
       })
     } catch (error) {
       skipped.push({
-        documentTypeKey: split.documentTypeKey,
+        documentTypeKey: item.documentTypeKey,
         reason:
           error instanceof ServiceError
             ? error.message
@@ -144,7 +196,7 @@ export async function importDocumentBundle(input: {
       logErrorEvent('import_bundle.attach_failed', {
         requestId,
         processId,
-        documentTypeKey: split.documentTypeKey,
+        documentTypeKey: item.documentTypeKey,
         ms: Math.round(performance.now() - uploadStartedAt),
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,

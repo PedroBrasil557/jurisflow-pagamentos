@@ -61,3 +61,42 @@ export async function enhanceScanPdf(
     return null
   }
 }
+
+// Realce + encode-para-caber (<= maxBytes) por documento, para o anexo do
+// checklist. Semantica DIFERENTE de enhanceScanPdf (best-effort):
+// - Servico NAO configurado (SCAN_ENHANCE_URL ausente) => retorna null. O
+//   chamador anexa o original sem fit (dev/opt-out; o limite nao e garantido).
+// - Servico configurado mas a chamada FALHA => LANCA. O chamador roda isto
+//   ANTES de anexar qualquer parte, entao a fila duravel re-executa o job
+//   limpo. E assim que "<= limite" vira invariante da ingestao em producao.
+export async function enhanceFitPdf(
+  pdfBytes: Uint8Array,
+  maxBytes: number,
+): Promise<ScanEnhanceResult | null> {
+  if (!env.scanEnhanceUrl) {
+    return null
+  }
+  const url = `${env.scanEnhanceUrl}/enhance?max_bytes=${maxBytes}`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/pdf' },
+    body: pdfBytes.slice().buffer as ArrayBuffer,
+    signal: AbortSignal.timeout(ENHANCE_TIMEOUT_MS),
+  })
+  if (!response.ok) {
+    throw new Error(`scan-enhance /enhance respondeu ${response.status}`)
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  // Precisa continuar sendo um PDF nao-vazio.
+  if (bytes.length < 4 || bytes[0] !== 0x25) {
+    throw new Error('scan-enhance: corpo de resposta invalido')
+  }
+  let metrics: unknown = null
+  try {
+    const header = response.headers.get('x-enhance-metrics')
+    metrics = header ? JSON.parse(header) : null
+  } catch {
+    // metricas sao opcionais
+  }
+  return { bytes, metrics }
+}

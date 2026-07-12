@@ -656,12 +656,22 @@ async function runIngestionWork(input: {
     fields,
   )
 
+  // O ARTEFATO anexado sai do PDF ORIGINAL (nao do lote realcado, que serviu so
+  // para classificar/extrair): cada parte-documento e realcada + encodada-para-
+  // caber por pagina no anexo. Os indices de pagina sao identicos entre original
+  // e realcado (o realce nao altera ordem/quantidade de paginas), entao cortar o
+  // original pelos intervalos classificados pela IA e valido. enhanceAndFit so
+  // para scans — import nato-digital seria degradado pela rasterizacao.
+  const originalFile = new File([new Uint8Array(bytes)], fileRecord.originalFileName, {
+    type: 'application/pdf',
+  })
   const result = await importDocumentBundle({
     processId: input.processId,
-    file,
+    file: originalFile,
     documents,
     actor: input.actor,
     perms: input.perms,
+    enhanceAndFit: fileRecord.source === 'scan',
   })
 
   // Auditoria (ai_analysis): registra a classificacao da IA + a decisao de anexo.
