@@ -1,12 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
-import { Download, Eye, FileUp, Loader2, Trash2 } from 'lucide-react'
+import { Download, Eye, FileUp, Trash2 } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Controller } from 'react-hook-form'
 import { Button } from '#/components/ui/button'
 import { AppDialog } from '@/shared/components/app-dialog'
 import { ScanButton } from '@/shared/components/document-scanner/scan-button'
-import { DocumentViewer } from '@/shared/components/document-viewer/document-viewer'
-import { QueryError } from '@/shared/components/query-error'
+import { DocumentPreviewDialog } from '@/shared/components/document-viewer/document-preview-dialog'
 import { FormTextArea, useZodForm } from '@/shared/components/ui/form'
 import { formatBytes } from '@/shared/lib/format'
 import {
@@ -453,32 +452,15 @@ function ChecklistFilePreviewDialog({
   )
 
   return (
-    <AppDialog
-      icon={Eye}
-      maxWidth="screen"
+    <DocumentPreviewDialog
+      isError={previewUrlQuery.isError}
+      isPending={previewUrlQuery.isPending}
+      mimeType={file.mimeType}
       onClose={onClose}
+      onRetry={() => void previewUrlQuery.refetch()}
       open
       title={file.name}
-      variant="info"
-    >
-      <div className="h-[80vh] overflow-hidden rounded-md border border-border">
-        {previewUrlQuery.isPending ? (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="size-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : previewUrlQuery.isError ? (
-          <QueryError
-            message="Nao foi possivel carregar o documento."
-            onRetry={() => void previewUrlQuery.refetch()}
-          />
-        ) : (
-          <DocumentViewer
-            fileName={file.name}
-            mimeType={file.mimeType}
-            url={previewUrlQuery.data}
-          />
-        )}
-      </div>
-    </AppDialog>
+      url={previewUrlQuery.data}
+    />
   )
 }

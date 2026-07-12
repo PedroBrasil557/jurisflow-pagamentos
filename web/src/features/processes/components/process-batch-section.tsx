@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   Download,
+  Eye,
   FileUp,
   Loader2,
   ScanSearch,
@@ -10,12 +11,43 @@ import {
 import { useId, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import { Checkbox } from '#/components/ui/checkbox'
+import { DocumentPreviewDialog } from '@/shared/components/document-viewer/document-preview-dialog'
 import { ScanButton } from '@/shared/components/document-scanner/scan-button'
 import { StatusBadge } from '@/shared/components/status-badge'
 import { formatBytes } from '@/shared/lib/format'
 import { documentExtractionListOptions } from '../services/document-extraction.queries'
+import { processBatchFilePreviewUrlOptions } from '../services/processes.queries'
 import type { ProcessBatchFile } from '../services/processes.service'
 import { DocumentClassificationDialog } from './document-classification-dialog'
+
+// Busca a URL pre-assinada do arquivo em lote e renderiza o viewer. Os bytes vem
+// DIRETO do storage (S3/MinIO) — pela API o gateway corta respostas acima de 10MB.
+function BatchFilePreviewDialog({
+  file,
+  onClose,
+  processId,
+}: {
+  file: ProcessBatchFile
+  onClose: () => void
+  processId: string
+}) {
+  const previewUrlQuery = useQuery(
+    processBatchFilePreviewUrlOptions({ processId, fileId: file.id }),
+  )
+
+  return (
+    <DocumentPreviewDialog
+      isError={previewUrlQuery.isError}
+      isPending={previewUrlQuery.isPending}
+      mimeType={file.mimeType}
+      onClose={onClose}
+      onRetry={() => void previewUrlQuery.refetch()}
+      open
+      title={file.originalFileName}
+      url={previewUrlQuery.data}
+    />
+  )
+}
 
 function BatchFileRow({
   canDelete,
@@ -41,7 +73,10 @@ function BatchFileRow({
   onToggleSelect: (fileId: string) => void
 }) {
   const isPdf = file.mimeType === 'application/pdf'
+  const isImage = file.mimeType.startsWith('image/')
+  const canPreview = isPdf || isImage
   const [showClassification, setShowClassification] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
 
   return (
     <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -91,6 +126,17 @@ function BatchFileRow({
             Desmembrar
           </Button>
         ) : null}
+        {canPreview ? (
+          <Button
+            onClick={() => setShowPreview(true)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <Eye className="size-3.5" />
+            Ver
+          </Button>
+        ) : null}
         <Button
           onClick={() => onDownload(file.id)}
           size="sm"
@@ -118,6 +164,14 @@ function BatchFileRow({
           analysisId={classificationAnalysisId}
           fileName={file.originalFileName}
           onClose={() => setShowClassification(false)}
+          processId={processId}
+        />
+      ) : null}
+
+      {showPreview ? (
+        <BatchFilePreviewDialog
+          file={file}
+          onClose={() => setShowPreview(false)}
           processId={processId}
         />
       ) : null}
