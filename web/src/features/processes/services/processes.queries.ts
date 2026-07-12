@@ -1,6 +1,7 @@
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 import type { ProcessListQuery } from './processes.service'
 import {
+  fetchBatchFilePreviewUrl,
   fetchBatchFiles,
   fetchProcess,
   fetchProcessChecklist,
@@ -33,6 +34,8 @@ export const processKeys = {
     ] as const,
   pdfModels: (id: string) => [...processKeys.all, 'pdf-models', id] as const,
   batch: (id: string) => [...processKeys.all, 'batch', id] as const,
+  batchFilePreviewUrl: (processId: string, fileId: string) =>
+    [...processKeys.all, 'batch-file-preview-url', processId, fileId] as const,
   history: (id: string) => [...processKeys.all, 'history', id] as const,
   userOptions: (search: string) => ['user-options', search] as const,
 }
@@ -97,6 +100,19 @@ export function processChecklistFilePreviewUrlOptions(input: {
       input.source,
     ),
     queryFn: () => fetchProcessChecklistFilePreviewUrl(input),
+    // URL pre-assinada expira (10 min) — nao reaproveitar entre aberturas.
+    staleTime: 0,
+    gcTime: 0,
+  })
+}
+
+export function processBatchFilePreviewUrlOptions(input: {
+  processId: string
+  fileId: string
+}) {
+  return queryOptions({
+    queryKey: processKeys.batchFilePreviewUrl(input.processId, input.fileId),
+    queryFn: () => fetchBatchFilePreviewUrl(input),
     // URL pre-assinada expira (10 min) — nao reaproveitar entre aberturas.
     staleTime: 0,
     gcTime: 0,

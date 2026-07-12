@@ -37,6 +37,7 @@ import {
   finalizeScanUpload,
   findScanCompletion,
   getBatchFileDownload,
+  getBatchFilePreviewUrl,
   listBatchFiles,
   presignDocumentUploads,
   presignScanUpload,
@@ -579,6 +580,28 @@ export const processRoutes = new Hono<AppBindings>()
       try {
         const { currentUser, perms } = await getCurrentUserWithPermissions(c)
         const result = await getBatchFileDownload({
+          processId: c.req.valid('param').processId,
+          fileId: c.req.valid('param').fileId,
+          userId: currentUser.id,
+          perms,
+        })
+
+        return c.json(result, 200)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  // URL pre-assinada INLINE para o viewer (PDF/imagem). O browser busca os bytes
+  // DIRETO do S3/MinIO — servir bytes pela API estoura o teto de 10MB de
+  // resposta do API Gateway em prod. Mesma checagem de acesso do download.
+  .get(
+    '/:processId/batch/:fileId/preview-url',
+    paramsValidator(processBatchFileParamsSchema),
+    async (c) => {
+      try {
+        const { currentUser, perms } = await getCurrentUserWithPermissions(c)
+        const result = await getBatchFilePreviewUrl({
           processId: c.req.valid('param').processId,
           fileId: c.req.valid('param').fileId,
           userId: currentUser.id,

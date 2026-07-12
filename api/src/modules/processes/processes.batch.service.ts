@@ -12,6 +12,7 @@ import {
   buildStorageObjectKey,
   copyStorageObject,
   createStorageObjectDownloadUrl,
+  createStorageObjectInlineUrl,
   createStorageObjectUploadUrl,
   deleteStorageObject,
   getStorageObjectBytes,
@@ -1393,6 +1394,50 @@ export async function getBatchFileDownload(input: {
     downloadUrl,
     expiresAt: new Date(Date.now() + expiresInSeconds * 1000),
   }
+}
+
+// URL pre-assinada INLINE de um arquivo em lote para o viewer (react-pdf /
+// <img>). O browser busca os bytes DIRETO do S3/MinIO — servir bytes pela API
+// estoura o teto de 10MB de resposta do API Gateway em prod (scans passam
+// disso). Mesma checagem de acesso do download.
+export async function getBatchFilePreviewUrl(input: {
+  processId: string
+  fileId: string
+  userId: string
+  perms: ResolvedPermissions
+}): Promise<{ url: string }> {
+  const { relationship } = await getProcessContextOrThrow({
+    processId: input.processId,
+    userId: input.userId,
+    perms: input.perms,
+  })
+  assertCanAccessBatch(input.perms, relationship)
+
+  const [fileRecord] = await db
+    .select({
+      bucketName: processBatchFile.bucketName,
+      objectKey: processBatchFile.objectKey,
+      mimeType: processBatchFile.mimeType,
+    })
+    .from(processBatchFile)
+    .where(
+      and(
+        eq(processBatchFile.processId, input.processId),
+        eq(processBatchFile.id, input.fileId),
+      ),
+    )
+    .limit(1)
+
+  if (!fileRecord) {
+    throw new ProcessServiceError(404, 'Arquivo em lote nao encontrado.')
+  }
+
+  const url = await createStorageObjectInlineUrl({
+    bucketName: fileRecord.bucketName,
+    objectKey: fileRecord.objectKey,
+    contentType: fileRecord.mimeType,
+  })
+  return { url }
 }
 
 export async function downloadAllBatchFiles(

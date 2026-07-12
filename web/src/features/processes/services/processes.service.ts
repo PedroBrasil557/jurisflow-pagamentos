@@ -27,6 +27,8 @@ const processChecklistFilePreviewUrlClientRoute =
 const processBatchClientRoute = processClientRoute.batch
 const processBatchFileClientRoute = processBatchClientRoute[':fileId']
 const processBatchFileSplitClientRoute = processBatchFileClientRoute.split
+const processBatchFilePreviewUrlClientRoute =
+  processBatchFileClientRoute['preview-url']
 const processHistoryClientRoute = processClientRoute.history
 const processCancelClientRoute = processClientRoute.cancel
 const processStartClientRoute = processClientRoute.start
@@ -909,6 +911,33 @@ export async function getBatchFileDownloadRequest(input: {
   }
 
   return (await response.json()) as GetBatchFileDownloadResponse
+}
+
+// URL pre-assinada INLINE de um arquivo em lote — consumida pelo DocumentViewer
+// (react-pdf / <img>), que busca os bytes DIRETO do S3/MinIO (servir bytes pela
+// API estoura o teto de 10MB do gateway em prod).
+export async function fetchBatchFilePreviewUrl(input: {
+  processId: string
+  fileId: string
+}): Promise<string> {
+  const response = await processBatchFilePreviewUrlClientRoute.$get({
+    param: {
+      processId: input.processId,
+      fileId: input.fileId,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      await getErrorMessage(
+        response,
+        'Nao foi possivel carregar o documento.',
+      ),
+    )
+  }
+
+  const body = (await response.json()) as { url: string }
+  return body.url
 }
 
 export async function downloadAllBatchFilesRequest(processId: string) {

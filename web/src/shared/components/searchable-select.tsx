@@ -1,5 +1,5 @@
 import { Check, ChevronsUpDown, Loader2, Search } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import {
   Popover,
@@ -25,6 +25,10 @@ type SearchableSelectProps = {
   value: string
   onChange: (value: string) => void
   options: readonly SearchableSelectOption[]
+  // Opcao ja resolvida para `value` (usada para exibir o rotulo mesmo quando o
+  // item nao esta na pagina atual de `options`, ex.: valor pre-carregado na
+  // edicao com busca server-side).
+  selectedOption?: SearchableSelectOption
   isLoading?: boolean
   hasNextPage?: boolean
   onLoadMore?: () => void
@@ -42,6 +46,7 @@ export function SearchableSelect({
   value,
   onChange,
   options,
+  selectedOption,
   isLoading,
   hasNextPage,
   onLoadMore,
@@ -52,7 +57,30 @@ export function SearchableSelect({
   const listRef = useRef<HTMLDivElement>(null)
   const sentinelRef = useRef<HTMLDivElement>(null)
 
-  const selectedOption = options.find((opt) => opt.value === value)
+  // Guarda o ultimo option que casou com `value`, para o botao continuar
+  // exibindo o rotulo mesmo depois da lista ser refeita/paginada (a busca
+  // server-side reseta para a primeira pagina ao fechar o popover).
+  const [cachedOption, setCachedOption] = useState<SearchableSelectOption | null>(
+    null,
+  )
+
+  useEffect(() => {
+    const match = options.find((opt) => opt.value === value)
+    if (match) {
+      setCachedOption(match)
+    }
+  }, [options, value])
+
+  const activeOption = useMemo(() => {
+    if (!value) {
+      return undefined
+    }
+    return (
+      options.find((opt) => opt.value === value) ??
+      (selectedOption?.value === value ? selectedOption : undefined) ??
+      (cachedOption?.value === value ? cachedOption : undefined)
+    )
+  }, [options, value, selectedOption, cachedOption])
 
   const handleSelect = useCallback(
     (optionValue: string) => {
@@ -122,7 +150,7 @@ export function SearchableSelect({
             aria-invalid={error ? true : undefined}
             className={cn(
               'h-9 w-full justify-between font-normal',
-              !selectedOption && 'text-muted-foreground',
+              !activeOption && 'text-muted-foreground',
               error && 'border-destructive',
             )}
             role="combobox"
@@ -130,7 +158,7 @@ export function SearchableSelect({
             variant="outline"
           >
             <span className="truncate">
-              {selectedOption?.label ?? placeholder}
+              {activeOption?.label ?? placeholder}
             </span>
             <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
           </Button>
