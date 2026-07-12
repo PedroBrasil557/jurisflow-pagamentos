@@ -21,6 +21,13 @@ import { Card, CardContent } from '#/components/ui/card'
 import { Checkbox } from '#/components/ui/checkbox'
 import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '#/components/ui/select'
 import { canManageConjuntos } from '@/features/admin/lib/cadastros-access'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { AppDialog, DialogFooter } from '@/shared/components/app-dialog'
@@ -109,6 +116,7 @@ type TitularesCaixaPageProps = {
   currentLogradouros: string[]
   currentQuitacaoStatuses: TitularQuitacaoStatus[]
   currentAverbacoes: TitularAverbacao[]
+  currentTerceiro?: 'com' | 'sem'
   currentAssinaturaFrom?: string
   currentAssinaturaTo?: string
 }
@@ -124,6 +132,7 @@ export function TitularesCaixaPage({
   currentLogradouros,
   currentQuitacaoStatuses,
   currentAverbacoes,
+  currentTerceiro,
   currentAssinaturaFrom,
   currentAssinaturaTo,
 }: TitularesCaixaPageProps) {
@@ -174,6 +183,7 @@ export function TitularesCaixaPage({
         ? currentQuitacaoStatuses
         : undefined,
       averbacoes: currentAverbacoes.length ? currentAverbacoes : undefined,
+      terceiro: currentTerceiro,
       assinaturaFrom: currentAssinaturaFrom,
       assinaturaTo: currentAssinaturaTo,
     }),
@@ -198,6 +208,7 @@ export function TitularesCaixaPage({
       ? { quitacaoStatuses: currentQuitacaoStatuses }
       : {}),
     ...(currentAverbacoes.length ? { averbacoes: currentAverbacoes } : {}),
+    ...(currentTerceiro ? { terceiro: currentTerceiro } : {}),
     ...(currentAssinaturaFrom ? { assinaturaFrom: currentAssinaturaFrom } : {}),
     ...(currentAssinaturaTo ? { assinaturaTo: currentAssinaturaTo } : {}),
   }
@@ -296,6 +307,7 @@ export function TitularesCaixaPage({
         ? { quitacaoStatuses: currentQuitacaoStatuses }
         : {}),
       ...(currentAverbacoes.length ? { averbacoes: currentAverbacoes } : {}),
+      ...(currentTerceiro ? { terceiro: currentTerceiro } : {}),
       ...(currentAssinaturaFrom
         ? { assinaturaFrom: currentAssinaturaFrom }
         : {}),
@@ -314,6 +326,7 @@ export function TitularesCaixaPage({
     if (merged.quitacaoStatuses?.length)
       next.quitacaoStatuses = merged.quitacaoStatuses
     if (merged.averbacoes?.length) next.averbacoes = merged.averbacoes
+    if (merged.terceiro) next.terceiro = merged.terceiro
     if (merged.assinaturaFrom) next.assinaturaFrom = merged.assinaturaFrom
     if (merged.assinaturaTo) next.assinaturaTo = merged.assinaturaTo
     return next
@@ -372,6 +385,7 @@ export function TitularesCaixaPage({
     currentLogradouros.length +
     currentQuitacaoStatuses.length +
     currentAverbacoes.length +
+    (currentTerceiro ? 1 : 0) +
     (currentAssinaturaFrom ? 1 : 0) +
     (currentAssinaturaTo ? 1 : 0)
 
@@ -770,6 +784,7 @@ export function TitularesCaixaPage({
           logradouros: currentLogradouros,
           quitacaoStatuses: currentQuitacaoStatuses,
           averbacoes: currentAverbacoes,
+          terceiro: currentTerceiro,
           assinaturaFrom: currentAssinaturaFrom,
           assinaturaTo: currentAssinaturaTo,
         }}
@@ -935,6 +950,7 @@ type FiltersValue = {
   logradouros: string[]
   quitacaoStatuses: TitularQuitacaoStatus[]
   averbacoes: TitularAverbacao[]
+  terceiro?: 'com' | 'sem'
   assinaturaFrom?: string
   assinaturaTo?: string
 }
@@ -954,6 +970,9 @@ function FiltersDialog({
 }: FiltersDialogProps) {
   const [uf, setUf] = useState(initial.uf[0] ?? '')
   const [municipio, setMunicipio] = useState(initial.municipio)
+  const [terceiro, setTerceiro] = useState<'todos' | 'com' | 'sem'>(
+    initial.terceiro ?? 'todos',
+  )
   const [modalidade, setModalidade] = useState(initial.modalidade[0] ?? '')
   const [empreendimento, setEmpreendimento] = useState<string[]>(
     initial.empreendimento,
@@ -1010,6 +1029,7 @@ function FiltersDialog({
       logradouros,
       quitacaoStatuses: statuses,
       averbacoes,
+      terceiro: terceiro === 'todos' ? undefined : terceiro,
       assinaturaFrom: assinaturaFrom || undefined,
       assinaturaTo: assinaturaTo || undefined,
     })
@@ -1062,6 +1082,24 @@ function FiltersDialog({
               placeholder="Ex.: FAR Empresas"
               value={modalidade}
             />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="filter-terceiro">Terceiro</Label>
+            <Select
+              onValueChange={(value) =>
+                setTerceiro(value as 'todos' | 'com' | 'sem')
+              }
+              value={terceiro}
+            >
+              <SelectTrigger id="filter-terceiro">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                <SelectItem value="com">Com terceiro</SelectItem>
+                <SelectItem value="sem">Sem terceiro</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 

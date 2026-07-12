@@ -46,6 +46,7 @@ export type TitularesListQuery = {
   logradouros?: string[]
   quitacaoStatuses?: TitularQuitacaoStatus[]
   averbacoes?: TitularAverbacao[]
+  terceiro?: 'com' | 'sem'
   assinaturaFrom?: string
   assinaturaTo?: string
 }
@@ -82,6 +83,7 @@ export async function fetchTitulares(
         ? { quitacaoStatuses: query.quitacaoStatuses }
         : {}),
       ...(query.averbacoes?.length ? { averbacoes: query.averbacoes } : {}),
+      ...(query.terceiro ? { terceiro: query.terceiro } : {}),
       ...(query.assinaturaFrom ? { assinaturaFrom: query.assinaturaFrom } : {}),
       ...(query.assinaturaTo ? { assinaturaTo: query.assinaturaTo } : {}),
     },
@@ -193,6 +195,7 @@ export function titularesExportUrl(
           ? { quitacaoStatuses: query.quitacaoStatuses }
           : {}),
         ...(query.averbacoes?.length ? { averbacoes: query.averbacoes } : {}),
+        ...(query.terceiro ? { terceiro: query.terceiro } : {}),
         ...(query.assinaturaFrom
           ? { assinaturaFrom: query.assinaturaFrom }
           : {}),

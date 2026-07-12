@@ -31,6 +31,7 @@ function TitularesRoute() {
       currentPage={search.page ?? 1}
       currentQuitacaoStatuses={search.quitacaoStatuses ?? []}
       currentSearch={search.search ?? ''}
+      currentTerceiro={search.terceiro}
       currentUf={search.uf ?? []}
     />
   )
