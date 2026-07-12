@@ -66,11 +66,20 @@ export const exportTitularesQuerySchema = z.object({
 
 export type ExportTitularesQuery = z.infer<typeof exportTitularesQuerySchema>
 
-export const reconsultarPayloadSchema = z.object({
-  // Vazio ou ausente = reconsultar TODOS os filtrados? Nao — exige ids explicitos
-  // para evitar reenfileirar 13k por engano. Max por lote.
-  ids: z.array(z.string().min(1)).min(1).max(1000),
-})
+// Reconsulta em massa. Alvo = exatamente UM de: `ids` (selecao explicita, max 1000)
+// OU `filter` (todos os titulares que casam o filtro atual — mesmos campos da
+// listagem/export). O modo filter e protegido no servico pela trava de filtro-vazio
+// (recusa reenfileirar a base inteira ~13k sem um recorte explicito).
+export const reconsultarPayloadSchema = z
+  .object({
+    ids: z.array(z.string().min(1)).min(1).max(1000).optional(),
+    filter: exportTitularesQuerySchema.optional(),
+  })
+  .refine((v) => (v.ids === undefined) !== (v.filter === undefined), {
+    message: 'Informe exatamente um alvo: ids OU filter.',
+  })
+
+export type ReconsultarPayload = z.infer<typeof reconsultarPayloadSchema>
 
 export const titularIdParamsSchema = z.object({
   id: z.string().min(1),
