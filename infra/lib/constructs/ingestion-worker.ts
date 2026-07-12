@@ -1,8 +1,10 @@
 import { Duration } from 'aws-cdk-lib';
 import { Schedule } from 'aws-cdk-lib/aws-applicationautoscaling';
 import { SecurityGroup, SubnetType, Vpc } from 'aws-cdk-lib/aws-ec2';
+import { Platform } from 'aws-cdk-lib/aws-ecr-assets';
 import {
   Cluster,
+  ContainerDependencyCondition,
   ContainerImage,
   FargateService,
   FargateTaskDefinition,
@@ -62,17 +64,59 @@ export class IngestionWorker extends Construct {
     // vazios fazem o SDK usar as credenciais da task), igual a API em producao.
     documentsBucket.grantReadWrite(taskDefinition.taskRole);
 
+    // scan-enhance como SIDECAR (2o container do MESMO task): o worker o alcanca
+    // em http://localhost:8000 (no awsvpc os containers do task compartilham a
+    // interface de rede). Escolha do sidecar vs servico separado: SO o worker
+    // consome, volume baixo e payloads de ate 25 MB — o loopback evita rede/
+    // cross-AZ e mantem o contrato HTTP-bytes intacto. Compartilha o envelope do
+    // task (1 vCPU / 2 GB) => sem custo Fargate extra. RISCO ASSUMIDO: um lote
+    // grande (raster 300 DPI de muitas paginas) pode apertar os 2 GB; se
+    // aparecer OOM no CloudWatch, subir memoryLimitMiB do task.
+    const scanEnhance = taskDefinition.addContainer('ScanEnhance', {
+      containerName: getEnvName('jurisflow-scan-enhance'),
+      image: ContainerImage.fromAsset(
+        path.join(__dirname, '../../../scan-enhance'),
+        { platform: Platform.LINUX_AMD64 },
+      ),
+      // essential: se o sidecar morre, o ECS reinicia o TASK inteiro (worker+
+      // sidecar) — recuperacao limpa. essential:false deixaria o worker vivo com
+      // o sidecar morto (o ECS nao reinicia container nao-essencial no task) e
+      // todo fit passaria a falhar -> dead-letter. Entao mantemos true.
+      essential: true,
+      portMappings: [{ containerPort: 8000 }],
+      healthCheck: {
+        command: [
+          'CMD-SHELL',
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\" || exit 1",
+        ],
+        interval: Duration.seconds(15),
+        timeout: Duration.seconds(5),
+        retries: 5,
+        startPeriod: Duration.seconds(30),
+      },
+      logging: LogDriver.awsLogs({
+        streamPrefix: getEnvName('jurisflow-scan-enhance'),
+        logRetention: RetentionDays.TWO_WEEKS,
+      }),
+    });
+
     // Mesma imagem da API: o codigo do worker ja esta nela (`bun run worker`).
     const imagePath = path.join(__dirname, '../../../api');
     const image = ContainerImage.fromAsset(imagePath);
 
-    taskDefinition.addContainer('IngestionContainer', {
+    const ingestionContainer = taskDefinition.addContainer('IngestionContainer', {
       containerName: getEnvName('jurisflow-ingestion-container'),
       image,
       command: ['bun', 'run', 'worker'],
       environment: {
         ENVIRONMENT: env.envName,
         DATABASE_URL: databaseUrl,
+        // Realce/encode-para-caber do scan roda no sidecar (localhost). Sem esta
+        // URL o fit e desligado (isScanEnhanceEnabled=false) e o limite de
+        // tamanho do checklist NAO e aplicado. CHECKLIST_FILE_MAX_BYTES = alvo
+        // por PDF de documento (abaixo de ~1,9 MB, com folga de container).
+        SCAN_ENHANCE_URL: 'http://localhost:8000',
+        CHECKLIST_FILE_MAX_BYTES: '1800000',
         // Pool baixo por replica: MAX_CAPACITY * DB_POOL_MAX + API nao pode
         // estourar o max_connections do RDS ao escalar (ver nota no stack).
         DB_POOL_MAX: '5',
@@ -101,6 +145,13 @@ export class IngestionWorker extends Construct {
         streamPrefix: getEnvName('jurisflow-ingestion'),
         logRetention: RetentionDays.TWO_WEEKS,
       }),
+    });
+
+    // O worker so inicia depois do sidecar estar HEALTHY: evita que os primeiros
+    // jobs falhem o fit (e batam retry a toa) enquanto o scan-enhance sobe.
+    ingestionContainer.addContainerDependencies({
+      container: scanEnhance,
+      condition: ContainerDependencyCondition.HEALTHY,
     });
 
     const service = new FargateService(this, 'IngestionService', {
