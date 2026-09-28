@@ -45,6 +45,17 @@ export type ProfilePermissions = {
     conjuntos: boolean
     permissoes: boolean
   }
+  /** Modulo Pagamentos: negado por padrao (inclusive admin comum). */
+  financeiro: {
+    view: boolean
+    lancar: boolean
+    conferir: boolean
+    fechar: boolean
+    baixar: boolean
+    regras: boolean
+    reservas: boolean
+    exportar: boolean
+  }
 }
 
 export type TitularMunicipio = { uf: string; municipio: string }

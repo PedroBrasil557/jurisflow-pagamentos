@@ -19,6 +19,7 @@ import {
 } from '../../shared/storage/s3'
 import type { AppBindings } from '../../shared/types/app'
 import { user } from '../auth/auth.schema'
+import { processHasFinanceRecords } from '../finance/finance.guards'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import {
   assertCan,
@@ -791,6 +792,15 @@ export async function createDraftProcess(
 // remove historico/checklist/lote, mas nao os arquivos no S3). Usado no rollback
 // do fluxo digitalizacao quando a ingestao nao pode ser iniciada.
 export async function deleteProcess(processId: string) {
+  // Processo com lancamento financeiro nunca e apagado (a FK RESTRICT tambem
+  // barra no banco); checa ANTES de remover objetos do storage.
+  if (await processHasFinanceRecords(processId)) {
+    throw new ProcessServiceError(
+      409,
+      'Processo possui lancamentos financeiros e nao pode ser excluido.',
+    )
+  }
+
   // Limpa TODOS os objetos do processo por PREFIXO (`processes/<id>/`), nao so os
   // que tem linha em processBatchFile. Isso pega orfaos sem linha — ex.: a janela
   // entre copyStorageObject e o insert em finalizeScanUpload (um crash ali deixa

@@ -61,6 +61,7 @@ export async function resolveUserPermissions(
       )
       adminPermissions.titularCaixa = profilePermissions.titularCaixa
       adminPermissions.cadastros = profilePermissions.cadastros
+      adminPermissions.financeiro = profilePermissions.financeiro
       profileId = assignment?.profileId ?? null
       profileName = assignment?.profileName ?? null
     }
@@ -193,6 +194,17 @@ function buildAdminPermissions(): ProfilePermissions {
       usuarios: true,
       conjuntos: true,
       permissoes: true,
+    },
+    // So chega a admin comum sobrescrito pelo perfil (acima); MASTER mantem tudo.
+    financeiro: {
+      view: true,
+      lancar: true,
+      conferir: true,
+      fechar: true,
+      baixar: true,
+      regras: true,
+      reservas: true,
+      exportar: true,
     },
   }
 }

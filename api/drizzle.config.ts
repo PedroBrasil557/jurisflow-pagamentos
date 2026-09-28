@@ -8,6 +8,7 @@ export default defineConfig({
     './src/modules/ai-analysis/ai-analysis.schema.ts',
     './src/modules/auth/auth.schema.ts',
     './src/modules/auth-audit/auth-audit.schema.ts',
+    './src/modules/finance/finance.schema.ts',
     './src/modules/housing-complexes/housing-complexes.schema.ts',
     './src/modules/processes/processes.schema.ts',
     './src/modules/permissions/permissions.schema.ts',

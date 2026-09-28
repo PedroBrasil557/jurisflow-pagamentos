@@ -5,6 +5,7 @@ import {
   Files,
   FileText,
   Gavel,
+  Landmark,
   Layers,
   UserCog,
   XCircle,
@@ -13,13 +14,16 @@ import { Checkbox } from '#/components/ui/checkbox'
 import { Label } from '#/components/ui/label'
 import type { ProfilePermissions } from '../services/permissions.service'
 
+type PermissionSection = keyof ProfilePermissions
+
 type PermissionItem = {
   key:
     | keyof ProfilePermissions['process']
     | keyof ProfilePermissions['sections']
     | keyof ProfilePermissions['titularCaixa']
     | keyof ProfilePermissions['cadastros']
-  section: 'process' | 'sections' | 'titularCaixa' | 'cadastros'
+    | keyof ProfilePermissions['financeiro']
+  section: PermissionSection
   label: string
   description?: string
 }
@@ -178,6 +182,57 @@ const permissionGroups: PermissionGroup[] = [
     ],
   },
   {
+    label: 'Pagamentos (financeiro)',
+    icon: Landmark,
+    items: [
+      {
+        key: 'view',
+        section: 'financeiro',
+        label: 'Ver valores financeiros',
+        description:
+          'Recebimentos, previas, fechamentos e extratos do escopo do perfil',
+      },
+      {
+        key: 'lancar',
+        section: 'financeiro',
+        label: 'Lancar recebimentos',
+        description: 'Registrar recebimentos e anexar comprovantes',
+      },
+      {
+        key: 'conferir',
+        section: 'financeiro',
+        label: 'Conferir recebimentos',
+      },
+      {
+        key: 'fechar',
+        section: 'financeiro',
+        label: 'Fechar e estornar lotes',
+        description: 'Exige escopo de todos os processos',
+      },
+      {
+        key: 'baixar',
+        section: 'financeiro',
+        label: 'Registrar baixas de pagamento',
+        description: 'Pagamentos feitos fora da plataforma',
+      },
+      {
+        key: 'regras',
+        section: 'financeiro',
+        label: 'Gerenciar destinatarios e regras',
+      },
+      {
+        key: 'reservas',
+        section: 'financeiro',
+        label: 'Movimentar reservas e provisoes',
+      },
+      {
+        key: 'exportar',
+        section: 'financeiro',
+        label: 'Exportar extratos',
+      },
+    ],
+  },
+  {
     label: 'Secoes visiveis',
     icon: Eye,
     items: [
@@ -220,11 +275,7 @@ export function ProfilePermissionsEditor({
   onChange,
   disabled = false,
 }: ProfilePermissionsEditorProps) {
-  function toggle(
-    section: 'process' | 'sections' | 'titularCaixa' | 'cadastros',
-    key: string,
-    checked: boolean,
-  ) {
+  function toggle(section: PermissionSection, key: string, checked: boolean) {
     onChange({
       ...value,
       [section]: {
@@ -251,22 +302,9 @@ export function ProfilePermissionsEditor({
             </div>
             <div className="grid gap-2">
               {group.items.map((item) => {
-                const checked =
-                  item.section === 'process'
-                    ? value.process[
-                        item.key as keyof ProfilePermissions['process']
-                      ]
-                    : item.section === 'sections'
-                      ? value.sections[
-                          item.key as keyof ProfilePermissions['sections']
-                        ]
-                      : item.section === 'titularCaixa'
-                        ? value.titularCaixa[
-                            item.key as keyof ProfilePermissions['titularCaixa']
-                          ]
-                        : value.cadastros[
-                            item.key as keyof ProfilePermissions['cadastros']
-                          ]
+                const checked = (
+                  value[item.section] as Record<string, boolean>
+                )[item.key]
 
                 const id = `perm-${item.section}-${item.key}`
 

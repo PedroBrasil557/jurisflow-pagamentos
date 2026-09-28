@@ -1,6 +1,7 @@
 export * from '../../modules/ai-analysis/ai-analysis.schema'
 export * from '../../modules/auth/auth.schema'
 export * from '../../modules/auth-audit/auth-audit.schema'
+export * from '../../modules/finance/finance.schema'
 export * from '../../modules/housing-complexes/housing-complexes.schema'
 export * from '../../modules/permissions/permissions.schema'
 export * from '../../modules/processes/processes.schema'

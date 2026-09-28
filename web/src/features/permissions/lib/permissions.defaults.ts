@@ -38,6 +38,16 @@ export const DEFAULT_USER_PERMISSIONS: ProfilePermissions = {
     conjuntos: false,
     permissoes: false,
   },
+  financeiro: {
+    view: false,
+    lancar: false,
+    conferir: false,
+    fechar: false,
+    baixar: false,
+    regras: false,
+    reservas: false,
+    exportar: false,
+  },
 }
 
 export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
@@ -77,5 +87,15 @@ export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
     usuarios: false,
     conjuntos: false,
     permissoes: false,
+  },
+  financeiro: {
+    view: false,
+    lancar: false,
+    conferir: false,
+    fechar: false,
+    baixar: false,
+    regras: false,
+    reservas: false,
+    exportar: false,
   },
 }

@@ -40,6 +40,28 @@ const profilePermissionsSchema = z.object({
     conjuntos: z.boolean(),
     permissoes: z.boolean(),
   }),
+  // Default tudo-false: clientes sem o grupo continuam validos e NEGADOS.
+  financeiro: z
+    .object({
+      view: z.boolean(),
+      lancar: z.boolean(),
+      conferir: z.boolean(),
+      fechar: z.boolean(),
+      baixar: z.boolean(),
+      regras: z.boolean(),
+      reservas: z.boolean(),
+      exportar: z.boolean(),
+    })
+    .default({
+      view: false,
+      lancar: false,
+      conferir: false,
+      fechar: false,
+      baixar: false,
+      regras: false,
+      reservas: false,
+      exportar: false,
+    }),
 })
 
 export const createProfilePayloadSchema = z.object({

@@ -260,6 +260,13 @@
       "when": 1781500800000,
       "tag": "0036_titular_terceiro",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1781500900000,
+      "tag": "0037_finance_payments",
+      "breakpoints": true
     }
   ]
 }

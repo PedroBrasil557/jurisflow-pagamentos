@@ -67,6 +67,28 @@ export type ProfilePermissions = {
     /** Aba Permissões: perfis de permissão e atribuição a usuários */
     permissoes: boolean
   }
+  /**
+   * Módulo Pagamentos. NEGADO por padrão a todos, inclusive admin comum (vem do
+   * perfil); somente MASTER tem tudo. Leitura respeita o escopo de processos.
+   */
+  financeiro: {
+    /** Ver valores, recebimentos, prévias, fechamentos e extratos (no escopo) */
+    view: boolean
+    /** Registrar/editar recebimentos e anexar comprovantes */
+    lancar: boolean
+    /** Conferir recebimentos (apto a fechamento) */
+    conferir: boolean
+    /** Fechar em lote e estornar fechamentos (exige escopo total) */
+    fechar: boolean
+    /** Registrar/estornar baixas de pagamentos feitos fora (exige escopo total) */
+    baixar: boolean
+    /** Destinatários e regras de participação (exige escopo total) */
+    regras: boolean
+    /** Movimentar reservas e provisões (exige escopo total) */
+    reservas: boolean
+    /** Exportar extratos e demonstrativos */
+    exportar: boolean
+  }
 }
 
 export type ResolvedPermissions = {
