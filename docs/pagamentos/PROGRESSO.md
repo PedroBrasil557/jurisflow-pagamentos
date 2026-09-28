@@ -1,7 +1,11 @@
 # Módulo Pagamentos — checkpoint de progresso
 
-Branch local `feat/pagamentos-local` (base `bac53ab`, origin/main). Entrega LOCAL: sem
-push/PR/merge. Contrato técnico: [CONTRATO.md](CONTRATO.md).
+Branch local `feat/pagamentos-local` (base `bac53ab`, origin/main), espelhada no
+repositório **privado** `PedroBrasil557/jurisflow-pagamentos` após autorização
+empresarial informada pelo responsável. A entrega funcional continua LOCAL; não houve
+PR, merge ou deploy na ICSF. Contrato técnico: [CONTRATO.md](CONTRATO.md).
+Refinamento: [REFINAMENTO_2026-09-28.md](REFINAMENTO_2026-09-28.md).
+Etapa 2: [ETAPA_2_2026-09-29.md](ETAPA_2_2026-09-29.md).
 
 ## Estado em 28/09 (segunda) — etapa concluída
 
@@ -64,4 +68,15 @@ Banco `app` (seed) **não** recebeu a migration 0037 ainda.
    conflito), recebimentos (idempotência, estados, auditoria), prévia.
 3. Storage S3 local (alternativa ao MinIO do compose) e comprovantes privados.
 4. Aplicar 0037 ao banco `app` e seed fictício de destinatários/regras demonstrativas.
-5. Início das telas (`/pagamentos`).
+5. Encerrar a etapa 2 após prova do backend com dados fictícios; iniciar telas na etapa 3,
+   conforme escopo e critérios do documento vinculado acima.
+
+## Espelho privado criado em 28/09
+
+- `main`: `bac53ab4b05362751ccb7270f09ef0aaaf703552`.
+- Primeiro commit de Pagamentos: `9ce77b8f0d708b478f39822697743fe016f47924`.
+- Documentos desta revisão foram adicionados à branch pessoal depois do primeiro push.
+  No Windows, antes de continuar com o Claude: `git pull --ff-only entrega feat/pagamentos-local`,
+  depois `git status --short --branch` e `git rev-parse HEAD`.
+- O `origin` do Windows permanece ICSF; publicar somente no remoto `entrega` até
+  o mantenedor definir a integração. Nenhum ambiente real foi migrado.
