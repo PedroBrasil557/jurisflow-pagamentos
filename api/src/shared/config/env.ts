@@ -107,13 +107,18 @@ const envSchema = z.object({
     ),
 })
 
+// O preview usa seu próprio domínio de deployment para cookies na mesma origem.
+const vercelOrigin = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : undefined
+
 const parsedEnv = envSchema.parse({
   HOST: process.env.HOST,
   PORT: process.env.PORT,
   DATABASE_URL: process.env.DATABASE_URL,
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
-  BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
-  WEB_URL: process.env.WEB_URL,
+  BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? vercelOrigin,
+  WEB_URL: process.env.WEB_URL ?? vercelOrigin,
   TRUSTED_ORIGINS: process.env.TRUSTED_ORIGINS,
   S3_ENDPOINT: process.env.S3_ENDPOINT,
   S3_PUBLIC_URL: process.env.S3_PUBLIC_URL,
