@@ -151,6 +151,33 @@ bootstrapApp.get('/api/system/bootstrap-check', async (c) => {
   )
 })
 
+bootstrapApp.get('/api/system/auth-origin-check', async (c) => {
+  const { env } = await import('./src/shared/config/env')
+
+  return c.json(
+    {
+      ok: true,
+      request: {
+        origin: c.req.header('origin') ?? null,
+        host: c.req.header('host') ?? null,
+        forwardedHost: c.req.header('x-forwarded-host') ?? null,
+        forwardedProto: c.req.header('x-forwarded-proto') ?? null,
+      },
+      auth: {
+        betterAuthUrl: env.betterAuthUrl,
+        webUrl: env.webUrl,
+        trustedOrigins: env.trustedOrigins,
+      },
+      vercel: {
+        environment: process.env.VERCEL_ENV ?? null,
+        deploymentUrl: process.env.VERCEL_URL ?? null,
+        productionUrl: process.env.VERCEL_PROJECT_PRODUCTION_URL ?? null,
+      },
+    },
+    200,
+  )
+})
+
 bootstrapApp.get('/api/system/module-check', async (c) => {
   const loaded: string[] = []
 
