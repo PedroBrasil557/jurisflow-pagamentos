@@ -20,6 +20,7 @@ export type AuthenticatedNavigationItem = {
     | '/'
     | '/processos'
     | '/titulares-caixa'
+    | '/pagamentos'
     | '/cadastros'
     | '/seguranca'
     | '/configuracoes'

@@ -683,3 +683,43 @@ export async function getReceiptDetail(
     processReceipts,
   }
 }
+
+/** Busca de processos visiveis para o formulario de recebimento (P01). */
+export async function searchProcesses(access: FinanceAccess, search: string) {
+  assertFinance(access, 'lancar')
+  const term = `%${search.trim()}%`
+  const filters: SQL[] = []
+  if (access.processFilter) filters.push(access.processFilter)
+  if (search.trim()) {
+    filters.push(
+      or(ilike(process.code, term), ilike(process.fullName, term)) as SQL,
+    )
+  }
+  const rows = await db
+    .select({
+      id: process.id,
+      code: process.code,
+      clientName: process.fullName,
+      status: process.status,
+      housingComplexId: process.housingComplexId,
+      housingComplexName: housingComplex.name,
+      createdAt: process.createdAt,
+    })
+    .from(process)
+    .leftJoin(housingComplex, eq(process.housingComplexId, housingComplex.id))
+    .where(filters.length ? and(...filters) : undefined)
+    .orderBy(asc(process.code))
+    .limit(20)
+  return rows.map(({ createdAt, ...row }) => ({
+    ...row,
+    clientRegistrationDate: toSaoPauloDate(createdAt),
+  }))
+}
+
+export async function listHousingComplexOptions(access: FinanceAccess) {
+  assertFinance(access, 'view')
+  return db
+    .select({ id: housingComplex.id, name: housingComplex.name })
+    .from(housingComplex)
+    .orderBy(asc(housingComplex.name))
+}

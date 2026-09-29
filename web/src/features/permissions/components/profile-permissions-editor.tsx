@@ -196,7 +196,8 @@ const permissionGroups: PermissionGroup[] = [
         key: 'lancar',
         section: 'financeiro',
         label: 'Lancar recebimentos',
-        description: 'Registrar, editar rascunhos, calcular e anexar comprovantes',
+        description:
+          'Registrar, editar rascunhos, calcular e anexar comprovantes',
       },
       {
         key: 'conferir',

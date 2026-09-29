@@ -15,13 +15,25 @@ import { Route as ProtectedIndexRouteImport } from './routes/_protected/index'
 import { Route as ProtectedSegurancaRouteImport } from './routes/_protected/seguranca'
 import { Route as ProtectedProcessosRouteImport } from './routes/_protected/processos'
 import { Route as ProtectedPrimeiroAcessoRouteImport } from './routes/_protected/primeiro-acesso'
+import { Route as ProtectedPagamentosRouteImport } from './routes/_protected/pagamentos'
 import { Route as ProtectedConfiguracoesRouteImport } from './routes/_protected/configuracoes'
 import { Route as ProtectedCadastrosRouteImport } from './routes/_protected/cadastros'
 import { Route as ProtectedTitularesCaixaIndexRouteImport } from './routes/_protected/titulares-caixa.index'
 import { Route as ProtectedProcessosIndexRouteImport } from './routes/_protected/processos.index'
+import { Route as ProtectedPagamentosIndexRouteImport } from './routes/_protected/pagamentos.index'
 import { Route as ProtectedProcessosNovoRouteImport } from './routes/_protected/processos.novo'
+import { Route as ProtectedPagamentosReservasRouteImport } from './routes/_protected/pagamentos.reservas'
+import { Route as ProtectedPagamentosExtratosRouteImport } from './routes/_protected/pagamentos.extratos'
+import { Route as ProtectedPagamentosRecebimentosIndexRouteImport } from './routes/_protected/pagamentos.recebimentos.index'
+import { Route as ProtectedPagamentosFechamentosIndexRouteImport } from './routes/_protected/pagamentos.fechamentos.index'
+import { Route as ProtectedPagamentosConfiguracaoIndexRouteImport } from './routes/_protected/pagamentos.configuracao.index'
 import { Route as ProtectedProcessosProcessIdEditarRouteImport } from './routes/_protected/processos.$processId.editar'
 import { Route as ProtectedProcessosProcessIdChecklistRouteImport } from './routes/_protected/processos.$processId.checklist'
+import { Route as ProtectedPagamentosRecebimentosNovoRouteImport } from './routes/_protected/pagamentos.recebimentos.novo'
+import { Route as ProtectedPagamentosRecebimentosReceiptIdRouteImport } from './routes/_protected/pagamentos.recebimentos.$receiptId'
+import { Route as ProtectedPagamentosFechamentosClosingIdRouteImport } from './routes/_protected/pagamentos.fechamentos.$closingId'
+import { Route as ProtectedPagamentosConfiguracaoNovoRouteImport } from './routes/_protected/pagamentos.configuracao.novo'
+import { Route as ProtectedPagamentosConfiguracaoImportarRouteImport } from './routes/_protected/pagamentos.configuracao.importar'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -52,6 +64,11 @@ const ProtectedPrimeiroAcessoRoute = ProtectedPrimeiroAcessoRouteImport.update({
   path: '/primeiro-acesso',
   getParentRoute: () => ProtectedRoute,
 } as any)
+const ProtectedPagamentosRoute = ProtectedPagamentosRouteImport.update({
+  id: '/pagamentos',
+  path: '/pagamentos',
+  getParentRoute: () => ProtectedRoute,
+} as any)
 const ProtectedConfiguracoesRoute = ProtectedConfiguracoesRouteImport.update({
   id: '/configuracoes',
   path: '/configuracoes',
@@ -73,11 +90,47 @@ const ProtectedProcessosIndexRoute = ProtectedProcessosIndexRouteImport.update({
   path: '/',
   getParentRoute: () => ProtectedProcessosRoute,
 } as any)
+const ProtectedPagamentosIndexRoute =
+  ProtectedPagamentosIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
 const ProtectedProcessosNovoRoute = ProtectedProcessosNovoRouteImport.update({
   id: '/novo',
   path: '/novo',
   getParentRoute: () => ProtectedProcessosRoute,
 } as any)
+const ProtectedPagamentosReservasRoute =
+  ProtectedPagamentosReservasRouteImport.update({
+    id: '/reservas',
+    path: '/reservas',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
+const ProtectedPagamentosExtratosRoute =
+  ProtectedPagamentosExtratosRouteImport.update({
+    id: '/extratos',
+    path: '/extratos',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
+const ProtectedPagamentosRecebimentosIndexRoute =
+  ProtectedPagamentosRecebimentosIndexRouteImport.update({
+    id: '/recebimentos/',
+    path: '/recebimentos/',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
+const ProtectedPagamentosFechamentosIndexRoute =
+  ProtectedPagamentosFechamentosIndexRouteImport.update({
+    id: '/fechamentos/',
+    path: '/fechamentos/',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
+const ProtectedPagamentosConfiguracaoIndexRoute =
+  ProtectedPagamentosConfiguracaoIndexRouteImport.update({
+    id: '/configuracao/',
+    path: '/configuracao/',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
 const ProtectedProcessosProcessIdEditarRoute =
   ProtectedProcessosProcessIdEditarRouteImport.update({
     id: '/$processId/editar',
@@ -90,20 +143,62 @@ const ProtectedProcessosProcessIdChecklistRoute =
     path: '/$processId/checklist',
     getParentRoute: () => ProtectedProcessosRoute,
   } as any)
+const ProtectedPagamentosRecebimentosNovoRoute =
+  ProtectedPagamentosRecebimentosNovoRouteImport.update({
+    id: '/recebimentos/novo',
+    path: '/recebimentos/novo',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
+const ProtectedPagamentosRecebimentosReceiptIdRoute =
+  ProtectedPagamentosRecebimentosReceiptIdRouteImport.update({
+    id: '/recebimentos/$receiptId',
+    path: '/recebimentos/$receiptId',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
+const ProtectedPagamentosFechamentosClosingIdRoute =
+  ProtectedPagamentosFechamentosClosingIdRouteImport.update({
+    id: '/fechamentos/$closingId',
+    path: '/fechamentos/$closingId',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
+const ProtectedPagamentosConfiguracaoNovoRoute =
+  ProtectedPagamentosConfiguracaoNovoRouteImport.update({
+    id: '/configuracao/novo',
+    path: '/configuracao/novo',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
+const ProtectedPagamentosConfiguracaoImportarRoute =
+  ProtectedPagamentosConfiguracaoImportarRouteImport.update({
+    id: '/configuracao/importar',
+    path: '/configuracao/importar',
+    getParentRoute: () => ProtectedPagamentosRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof ProtectedIndexRoute
   '/login': typeof LoginRoute
   '/cadastros': typeof ProtectedCadastrosRoute
   '/configuracoes': typeof ProtectedConfiguracoesRoute
+  '/pagamentos': typeof ProtectedPagamentosRouteWithChildren
   '/primeiro-acesso': typeof ProtectedPrimeiroAcessoRoute
   '/processos': typeof ProtectedProcessosRouteWithChildren
   '/seguranca': typeof ProtectedSegurancaRoute
+  '/pagamentos/extratos': typeof ProtectedPagamentosExtratosRoute
+  '/pagamentos/reservas': typeof ProtectedPagamentosReservasRoute
   '/processos/novo': typeof ProtectedProcessosNovoRoute
+  '/pagamentos/': typeof ProtectedPagamentosIndexRoute
   '/processos/': typeof ProtectedProcessosIndexRoute
   '/titulares-caixa/': typeof ProtectedTitularesCaixaIndexRoute
+  '/pagamentos/configuracao/importar': typeof ProtectedPagamentosConfiguracaoImportarRoute
+  '/pagamentos/configuracao/novo': typeof ProtectedPagamentosConfiguracaoNovoRoute
+  '/pagamentos/fechamentos/$closingId': typeof ProtectedPagamentosFechamentosClosingIdRoute
+  '/pagamentos/recebimentos/$receiptId': typeof ProtectedPagamentosRecebimentosReceiptIdRoute
+  '/pagamentos/recebimentos/novo': typeof ProtectedPagamentosRecebimentosNovoRoute
   '/processos/$processId/checklist': typeof ProtectedProcessosProcessIdChecklistRoute
   '/processos/$processId/editar': typeof ProtectedProcessosProcessIdEditarRoute
+  '/pagamentos/configuracao/': typeof ProtectedPagamentosConfiguracaoIndexRoute
+  '/pagamentos/fechamentos/': typeof ProtectedPagamentosFechamentosIndexRoute
+  '/pagamentos/recebimentos/': typeof ProtectedPagamentosRecebimentosIndexRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
@@ -112,11 +207,22 @@ export interface FileRoutesByTo {
   '/primeiro-acesso': typeof ProtectedPrimeiroAcessoRoute
   '/seguranca': typeof ProtectedSegurancaRoute
   '/': typeof ProtectedIndexRoute
+  '/pagamentos/extratos': typeof ProtectedPagamentosExtratosRoute
+  '/pagamentos/reservas': typeof ProtectedPagamentosReservasRoute
   '/processos/novo': typeof ProtectedProcessosNovoRoute
+  '/pagamentos': typeof ProtectedPagamentosIndexRoute
   '/processos': typeof ProtectedProcessosIndexRoute
   '/titulares-caixa': typeof ProtectedTitularesCaixaIndexRoute
+  '/pagamentos/configuracao/importar': typeof ProtectedPagamentosConfiguracaoImportarRoute
+  '/pagamentos/configuracao/novo': typeof ProtectedPagamentosConfiguracaoNovoRoute
+  '/pagamentos/fechamentos/$closingId': typeof ProtectedPagamentosFechamentosClosingIdRoute
+  '/pagamentos/recebimentos/$receiptId': typeof ProtectedPagamentosRecebimentosReceiptIdRoute
+  '/pagamentos/recebimentos/novo': typeof ProtectedPagamentosRecebimentosNovoRoute
   '/processos/$processId/checklist': typeof ProtectedProcessosProcessIdChecklistRoute
   '/processos/$processId/editar': typeof ProtectedProcessosProcessIdEditarRoute
+  '/pagamentos/configuracao': typeof ProtectedPagamentosConfiguracaoIndexRoute
+  '/pagamentos/fechamentos': typeof ProtectedPagamentosFechamentosIndexRoute
+  '/pagamentos/recebimentos': typeof ProtectedPagamentosRecebimentosIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -124,15 +230,27 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_protected/cadastros': typeof ProtectedCadastrosRoute
   '/_protected/configuracoes': typeof ProtectedConfiguracoesRoute
+  '/_protected/pagamentos': typeof ProtectedPagamentosRouteWithChildren
   '/_protected/primeiro-acesso': typeof ProtectedPrimeiroAcessoRoute
   '/_protected/processos': typeof ProtectedProcessosRouteWithChildren
   '/_protected/seguranca': typeof ProtectedSegurancaRoute
   '/_protected/': typeof ProtectedIndexRoute
+  '/_protected/pagamentos/extratos': typeof ProtectedPagamentosExtratosRoute
+  '/_protected/pagamentos/reservas': typeof ProtectedPagamentosReservasRoute
   '/_protected/processos/novo': typeof ProtectedProcessosNovoRoute
+  '/_protected/pagamentos/': typeof ProtectedPagamentosIndexRoute
   '/_protected/processos/': typeof ProtectedProcessosIndexRoute
   '/_protected/titulares-caixa/': typeof ProtectedTitularesCaixaIndexRoute
+  '/_protected/pagamentos/configuracao/importar': typeof ProtectedPagamentosConfiguracaoImportarRoute
+  '/_protected/pagamentos/configuracao/novo': typeof ProtectedPagamentosConfiguracaoNovoRoute
+  '/_protected/pagamentos/fechamentos/$closingId': typeof ProtectedPagamentosFechamentosClosingIdRoute
+  '/_protected/pagamentos/recebimentos/$receiptId': typeof ProtectedPagamentosRecebimentosReceiptIdRoute
+  '/_protected/pagamentos/recebimentos/novo': typeof ProtectedPagamentosRecebimentosNovoRoute
   '/_protected/processos/$processId/checklist': typeof ProtectedProcessosProcessIdChecklistRoute
   '/_protected/processos/$processId/editar': typeof ProtectedProcessosProcessIdEditarRoute
+  '/_protected/pagamentos/configuracao/': typeof ProtectedPagamentosConfiguracaoIndexRoute
+  '/_protected/pagamentos/fechamentos/': typeof ProtectedPagamentosFechamentosIndexRoute
+  '/_protected/pagamentos/recebimentos/': typeof ProtectedPagamentosRecebimentosIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -141,14 +259,26 @@ export interface FileRouteTypes {
     | '/login'
     | '/cadastros'
     | '/configuracoes'
+    | '/pagamentos'
     | '/primeiro-acesso'
     | '/processos'
     | '/seguranca'
+    | '/pagamentos/extratos'
+    | '/pagamentos/reservas'
     | '/processos/novo'
+    | '/pagamentos/'
     | '/processos/'
     | '/titulares-caixa/'
+    | '/pagamentos/configuracao/importar'
+    | '/pagamentos/configuracao/novo'
+    | '/pagamentos/fechamentos/$closingId'
+    | '/pagamentos/recebimentos/$receiptId'
+    | '/pagamentos/recebimentos/novo'
     | '/processos/$processId/checklist'
     | '/processos/$processId/editar'
+    | '/pagamentos/configuracao/'
+    | '/pagamentos/fechamentos/'
+    | '/pagamentos/recebimentos/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
@@ -157,26 +287,49 @@ export interface FileRouteTypes {
     | '/primeiro-acesso'
     | '/seguranca'
     | '/'
+    | '/pagamentos/extratos'
+    | '/pagamentos/reservas'
     | '/processos/novo'
+    | '/pagamentos'
     | '/processos'
     | '/titulares-caixa'
+    | '/pagamentos/configuracao/importar'
+    | '/pagamentos/configuracao/novo'
+    | '/pagamentos/fechamentos/$closingId'
+    | '/pagamentos/recebimentos/$receiptId'
+    | '/pagamentos/recebimentos/novo'
     | '/processos/$processId/checklist'
     | '/processos/$processId/editar'
+    | '/pagamentos/configuracao'
+    | '/pagamentos/fechamentos'
+    | '/pagamentos/recebimentos'
   id:
     | '__root__'
     | '/_protected'
     | '/login'
     | '/_protected/cadastros'
     | '/_protected/configuracoes'
+    | '/_protected/pagamentos'
     | '/_protected/primeiro-acesso'
     | '/_protected/processos'
     | '/_protected/seguranca'
     | '/_protected/'
+    | '/_protected/pagamentos/extratos'
+    | '/_protected/pagamentos/reservas'
     | '/_protected/processos/novo'
+    | '/_protected/pagamentos/'
     | '/_protected/processos/'
     | '/_protected/titulares-caixa/'
+    | '/_protected/pagamentos/configuracao/importar'
+    | '/_protected/pagamentos/configuracao/novo'
+    | '/_protected/pagamentos/fechamentos/$closingId'
+    | '/_protected/pagamentos/recebimentos/$receiptId'
+    | '/_protected/pagamentos/recebimentos/novo'
     | '/_protected/processos/$processId/checklist'
     | '/_protected/processos/$processId/editar'
+    | '/_protected/pagamentos/configuracao/'
+    | '/_protected/pagamentos/fechamentos/'
+    | '/_protected/pagamentos/recebimentos/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -228,6 +381,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedPrimeiroAcessoRouteImport
       parentRoute: typeof ProtectedRoute
     }
+    '/_protected/pagamentos': {
+      id: '/_protected/pagamentos'
+      path: '/pagamentos'
+      fullPath: '/pagamentos'
+      preLoaderRoute: typeof ProtectedPagamentosRouteImport
+      parentRoute: typeof ProtectedRoute
+    }
     '/_protected/configuracoes': {
       id: '/_protected/configuracoes'
       path: '/configuracoes'
@@ -256,12 +416,54 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedProcessosIndexRouteImport
       parentRoute: typeof ProtectedProcessosRoute
     }
+    '/_protected/pagamentos/': {
+      id: '/_protected/pagamentos/'
+      path: '/'
+      fullPath: '/pagamentos/'
+      preLoaderRoute: typeof ProtectedPagamentosIndexRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
     '/_protected/processos/novo': {
       id: '/_protected/processos/novo'
       path: '/novo'
       fullPath: '/processos/novo'
       preLoaderRoute: typeof ProtectedProcessosNovoRouteImport
       parentRoute: typeof ProtectedProcessosRoute
+    }
+    '/_protected/pagamentos/reservas': {
+      id: '/_protected/pagamentos/reservas'
+      path: '/reservas'
+      fullPath: '/pagamentos/reservas'
+      preLoaderRoute: typeof ProtectedPagamentosReservasRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
+    '/_protected/pagamentos/extratos': {
+      id: '/_protected/pagamentos/extratos'
+      path: '/extratos'
+      fullPath: '/pagamentos/extratos'
+      preLoaderRoute: typeof ProtectedPagamentosExtratosRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
+    '/_protected/pagamentos/recebimentos/': {
+      id: '/_protected/pagamentos/recebimentos/'
+      path: '/recebimentos'
+      fullPath: '/pagamentos/recebimentos/'
+      preLoaderRoute: typeof ProtectedPagamentosRecebimentosIndexRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
+    '/_protected/pagamentos/fechamentos/': {
+      id: '/_protected/pagamentos/fechamentos/'
+      path: '/fechamentos'
+      fullPath: '/pagamentos/fechamentos/'
+      preLoaderRoute: typeof ProtectedPagamentosFechamentosIndexRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
+    '/_protected/pagamentos/configuracao/': {
+      id: '/_protected/pagamentos/configuracao/'
+      path: '/configuracao'
+      fullPath: '/pagamentos/configuracao/'
+      preLoaderRoute: typeof ProtectedPagamentosConfiguracaoIndexRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
     }
     '/_protected/processos/$processId/editar': {
       id: '/_protected/processos/$processId/editar'
@@ -277,8 +479,82 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedProcessosProcessIdChecklistRouteImport
       parentRoute: typeof ProtectedProcessosRoute
     }
+    '/_protected/pagamentos/recebimentos/novo': {
+      id: '/_protected/pagamentos/recebimentos/novo'
+      path: '/recebimentos/novo'
+      fullPath: '/pagamentos/recebimentos/novo'
+      preLoaderRoute: typeof ProtectedPagamentosRecebimentosNovoRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
+    '/_protected/pagamentos/recebimentos/$receiptId': {
+      id: '/_protected/pagamentos/recebimentos/$receiptId'
+      path: '/recebimentos/$receiptId'
+      fullPath: '/pagamentos/recebimentos/$receiptId'
+      preLoaderRoute: typeof ProtectedPagamentosRecebimentosReceiptIdRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
+    '/_protected/pagamentos/fechamentos/$closingId': {
+      id: '/_protected/pagamentos/fechamentos/$closingId'
+      path: '/fechamentos/$closingId'
+      fullPath: '/pagamentos/fechamentos/$closingId'
+      preLoaderRoute: typeof ProtectedPagamentosFechamentosClosingIdRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
+    '/_protected/pagamentos/configuracao/novo': {
+      id: '/_protected/pagamentos/configuracao/novo'
+      path: '/configuracao/novo'
+      fullPath: '/pagamentos/configuracao/novo'
+      preLoaderRoute: typeof ProtectedPagamentosConfiguracaoNovoRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
+    '/_protected/pagamentos/configuracao/importar': {
+      id: '/_protected/pagamentos/configuracao/importar'
+      path: '/configuracao/importar'
+      fullPath: '/pagamentos/configuracao/importar'
+      preLoaderRoute: typeof ProtectedPagamentosConfiguracaoImportarRouteImport
+      parentRoute: typeof ProtectedPagamentosRoute
+    }
   }
 }
+
+interface ProtectedPagamentosRouteChildren {
+  ProtectedPagamentosExtratosRoute: typeof ProtectedPagamentosExtratosRoute
+  ProtectedPagamentosReservasRoute: typeof ProtectedPagamentosReservasRoute
+  ProtectedPagamentosIndexRoute: typeof ProtectedPagamentosIndexRoute
+  ProtectedPagamentosConfiguracaoImportarRoute: typeof ProtectedPagamentosConfiguracaoImportarRoute
+  ProtectedPagamentosConfiguracaoNovoRoute: typeof ProtectedPagamentosConfiguracaoNovoRoute
+  ProtectedPagamentosFechamentosClosingIdRoute: typeof ProtectedPagamentosFechamentosClosingIdRoute
+  ProtectedPagamentosRecebimentosReceiptIdRoute: typeof ProtectedPagamentosRecebimentosReceiptIdRoute
+  ProtectedPagamentosRecebimentosNovoRoute: typeof ProtectedPagamentosRecebimentosNovoRoute
+  ProtectedPagamentosConfiguracaoIndexRoute: typeof ProtectedPagamentosConfiguracaoIndexRoute
+  ProtectedPagamentosFechamentosIndexRoute: typeof ProtectedPagamentosFechamentosIndexRoute
+  ProtectedPagamentosRecebimentosIndexRoute: typeof ProtectedPagamentosRecebimentosIndexRoute
+}
+
+const ProtectedPagamentosRouteChildren: ProtectedPagamentosRouteChildren = {
+  ProtectedPagamentosExtratosRoute: ProtectedPagamentosExtratosRoute,
+  ProtectedPagamentosReservasRoute: ProtectedPagamentosReservasRoute,
+  ProtectedPagamentosIndexRoute: ProtectedPagamentosIndexRoute,
+  ProtectedPagamentosConfiguracaoImportarRoute:
+    ProtectedPagamentosConfiguracaoImportarRoute,
+  ProtectedPagamentosConfiguracaoNovoRoute:
+    ProtectedPagamentosConfiguracaoNovoRoute,
+  ProtectedPagamentosFechamentosClosingIdRoute:
+    ProtectedPagamentosFechamentosClosingIdRoute,
+  ProtectedPagamentosRecebimentosReceiptIdRoute:
+    ProtectedPagamentosRecebimentosReceiptIdRoute,
+  ProtectedPagamentosRecebimentosNovoRoute:
+    ProtectedPagamentosRecebimentosNovoRoute,
+  ProtectedPagamentosConfiguracaoIndexRoute:
+    ProtectedPagamentosConfiguracaoIndexRoute,
+  ProtectedPagamentosFechamentosIndexRoute:
+    ProtectedPagamentosFechamentosIndexRoute,
+  ProtectedPagamentosRecebimentosIndexRoute:
+    ProtectedPagamentosRecebimentosIndexRoute,
+}
+
+const ProtectedPagamentosRouteWithChildren =
+  ProtectedPagamentosRoute._addFileChildren(ProtectedPagamentosRouteChildren)
 
 interface ProtectedProcessosRouteChildren {
   ProtectedProcessosNovoRoute: typeof ProtectedProcessosNovoRoute
@@ -302,6 +578,7 @@ const ProtectedProcessosRouteWithChildren =
 interface ProtectedRouteChildren {
   ProtectedCadastrosRoute: typeof ProtectedCadastrosRoute
   ProtectedConfiguracoesRoute: typeof ProtectedConfiguracoesRoute
+  ProtectedPagamentosRoute: typeof ProtectedPagamentosRouteWithChildren
   ProtectedPrimeiroAcessoRoute: typeof ProtectedPrimeiroAcessoRoute
   ProtectedProcessosRoute: typeof ProtectedProcessosRouteWithChildren
   ProtectedSegurancaRoute: typeof ProtectedSegurancaRoute
@@ -312,6 +589,7 @@ interface ProtectedRouteChildren {
 const ProtectedRouteChildren: ProtectedRouteChildren = {
   ProtectedCadastrosRoute: ProtectedCadastrosRoute,
   ProtectedConfiguracoesRoute: ProtectedConfiguracoesRoute,
+  ProtectedPagamentosRoute: ProtectedPagamentosRouteWithChildren,
   ProtectedPrimeiroAcessoRoute: ProtectedPrimeiroAcessoRoute,
   ProtectedProcessosRoute: ProtectedProcessosRouteWithChildren,
   ProtectedSegurancaRoute: ProtectedSegurancaRoute,

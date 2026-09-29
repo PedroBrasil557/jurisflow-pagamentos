@@ -1,0 +1,225 @@
+import { useQuery } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
+import { Download } from 'lucide-react'
+import { useState } from 'react'
+import { toast } from 'sonner'
+import { Button } from '#/components/ui/button'
+import { Input } from '#/components/ui/input'
+import { Label } from '#/components/ui/label'
+import { NativeSelect, NativeSelectOption } from '#/components/ui/native-select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '#/components/ui/table'
+import { useSession } from '@/features/auth/hooks/use-session'
+import { PageHeader } from '@/shared/components/page-header'
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  Money,
+  StatPill,
+} from '../components/finance-ui'
+import { formatCivilDate } from '../lib/finance-money'
+import { financeAccess, statementKindLabels } from '../lib/finance-labels'
+import {
+  complexOptionsQuery,
+  recipientsQuery,
+  statementQuery,
+} from '../services/finance.queries'
+import {
+  downloadAuthenticated,
+  statementCsvUrl,
+} from '../services/finance.service'
+
+/** P08: créditos, baixas, ajustes e estornos com saldo e rastreio até a origem. */
+export function StatementPage() {
+  const { permissions } = useSession()
+  const recipients = useQuery(recipientsQuery())
+  const complexes = useQuery(complexOptionsQuery())
+  const [recipientId, setRecipientId] = useState('')
+  const [housingComplexId, setHousingComplexId] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const filters = {
+    recipientId: recipientId || undefined,
+    housingComplexId: housingComplexId || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+  }
+  const query = useQuery(statementQuery(filters))
+
+  return (
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        description="Quanto cada pessoa ganhou, recebeu e ainda tem a receber. Para ver o que foi pago em um dia, use o mesmo dia no início e no fim."
+        eyebrow="Pagamentos"
+        title="Extratos"
+      >
+        {financeAccess.exportar(permissions) ? (
+          <Button
+            onClick={() =>
+              downloadAuthenticated(
+                statementCsvUrl(filters),
+                'extrato-pagamentos.csv',
+              ).catch((error: Error) => toast.error(error.message))
+            }
+            variant="outline"
+          >
+            <Download className="size-4" />
+            Exportar CSV
+          </Button>
+        ) : null}
+      </PageHeader>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-1.5">
+          <Label htmlFor="st-recipient">Recebedor</Label>
+          <NativeSelect
+            id="st-recipient"
+            onChange={(e) => setRecipientId(e.target.value)}
+            value={recipientId}
+          >
+            <NativeSelectOption value="">Todos</NativeSelectOption>
+            {(recipients.data ?? []).map((r) => (
+              <NativeSelectOption key={r.id} value={r.id}>
+                {r.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="st-complex">Condomínio</Label>
+          <NativeSelect
+            id="st-complex"
+            onChange={(e) => setHousingComplexId(e.target.value)}
+            value={housingComplexId}
+          >
+            <NativeSelectOption value="">Todos</NativeSelectOption>
+            {(complexes.data ?? []).map((c) => (
+              <NativeSelectOption key={c.id} value={c.id}>
+                {c.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="st-from">De</Label>
+          <Input
+            id="st-from"
+            onChange={(e) => setDateFrom(e.target.value)}
+            type="date"
+            value={dateFrom}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="st-to">Até</Label>
+          <Input
+            id="st-to"
+            onChange={(e) => setDateTo(e.target.value)}
+            type="date"
+            value={dateTo}
+          />
+        </div>
+      </div>
+
+      {query.isPending ? <LoadingState /> : null}
+      {query.isError ? (
+        <ErrorState error={query.error} onRetry={() => query.refetch()} />
+      ) : null}
+      {query.data ? (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatPill
+              cents={query.data.totals.openingCents}
+              label="Saldo anterior"
+            />
+            <StatPill
+              cents={query.data.totals.creditsCents}
+              label="Créditos e ajustes no período"
+            />
+            <StatPill
+              cents={query.data.totals.paidCents}
+              label="Pago no período"
+            />
+            <StatPill
+              cents={query.data.totals.closingBalanceCents}
+              label="Saldo a receber"
+            />
+          </div>
+          {query.data.entries.length === 0 ? (
+            <EmptyState
+              description="Nenhum crédito ou baixa para os filtros."
+              title="Extrato vazio"
+            />
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Data</TableHead>
+                    <TableHead>Movimento</TableHead>
+                    <TableHead>Recebedor</TableHead>
+                    <TableHead>Origem</TableHead>
+                    <TableHead className="text-right">Valor</TableHead>
+                    <TableHead className="text-right">Saldo</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {query.data.entries.map((entry) => (
+                    <TableRow
+                      key={`${entry.kind}-${entry.creditId}-${entry.payoutId ?? entry.adjustmentId ?? ''}`}
+                    >
+                      <TableCell className="whitespace-nowrap text-sm">
+                        {formatCivilDate(entry.date)}
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {statementKindLabels[entry.kind]}
+                        <span className="block text-xs text-muted-foreground">
+                          {entry.description}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-sm">
+                        {entry.recipientName}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        <Link
+                          className="text-primary"
+                          params={{ closingId: entry.closingId }}
+                          preload={false}
+                          to="/pagamentos/fechamentos/$closingId"
+                        >
+                          {entry.closingCode}
+                        </Link>{' '}
+                        · etapa {entry.stepCode} · regra v{entry.ruleVersion} ·{' '}
+                        <Link
+                          className="text-primary"
+                          params={{ receiptId: entry.receiptId }}
+                          preload={false}
+                          to="/pagamentos/recebimentos/$receiptId"
+                        >
+                          {entry.processCode}
+                        </Link>{' '}
+                        · {entry.housingComplexName ?? '—'}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Money cents={entry.amountCents} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Money cents={entry.balanceCents} strong />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </>
+      ) : null}
+    </div>
+  )
+}

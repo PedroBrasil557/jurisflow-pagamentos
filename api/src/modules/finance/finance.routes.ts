@@ -48,7 +48,9 @@ import {
   cancelReceipt,
   createReceipt,
   getReceiptDetail,
+  listHousingComplexOptions,
   listReceipts,
+  searchProcesses,
   updateReceipt,
 } from './finance.receipts.service'
 import {
@@ -244,6 +246,22 @@ export const financeRoutes = new Hono<AppBindings>()
       }
       const result = await confirmImport(await access(c), file, mapping)
       return c.json(result, result.replayed ? 200 : 201)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  // ---- apoio aos formularios
+  .get('/processes', async (c) => {
+    try {
+      const search = (c.req.query('search') ?? '').slice(0, 120)
+      return c.json({ items: await searchProcesses(await access(c), search) }, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get('/housing-complexes', async (c) => {
+    try {
+      return c.json({ items: await listHousingComplexOptions(await access(c)) }, 200)
     } catch (error) {
       return handleServiceError(c, error)
     }

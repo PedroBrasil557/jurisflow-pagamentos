@@ -1,12 +1,14 @@
 import {
   ClipboardCheck,
   FileSpreadsheet,
+  Landmark,
   LayoutDashboard,
   Settings,
   ShieldCheck,
   UserPlus,
 } from 'lucide-react'
 import { canAccessCadastros } from '@/features/admin/lib/cadastros-access'
+import { financeAccess } from '@/features/finance/lib/finance-labels'
 import { canAccessDashboard } from '@/features/processes/lib/process-access'
 import { canViewTitularesCaixa } from '@/features/titulares-caixa/lib/titulares-access'
 import type { AuthenticatedNavigationItem } from './authenticated-layout.types'
@@ -31,6 +33,13 @@ export const authenticatedNavigationItems = [
     to: '/titulares-caixa',
     icon: FileSpreadsheet,
     isVisible: ({ permissions }) => canViewTitularesCaixa(permissions),
+  },
+  {
+    label: 'Pagamentos',
+    description: 'Recebimentos e repasses',
+    to: '/pagamentos',
+    icon: Landmark,
+    isVisible: ({ permissions }) => financeAccess.view(permissions),
   },
   {
     label: 'Cadastros',
