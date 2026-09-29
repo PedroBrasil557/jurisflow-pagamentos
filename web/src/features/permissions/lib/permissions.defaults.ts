@@ -45,7 +45,9 @@ export const DEFAULT_USER_PERMISSIONS: ProfilePermissions = {
     fechar: false,
     baixar: false,
     regras: false,
+    importar: false,
     reservas: false,
+    estornar: false,
     exportar: false,
   },
 }
@@ -95,7 +97,9 @@ export const ATTORNEY_PERMISSIONS: ProfilePermissions = {
     fechar: false,
     baixar: false,
     regras: false,
+    importar: false,
     reservas: false,
+    estornar: false,
     exportar: false,
   },
 }

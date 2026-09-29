@@ -9,6 +9,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -17,55 +18,83 @@ import { user } from '../auth/auth.schema'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import { process } from '../processes/processes.schema'
 import {
-  financeLineRubrics,
+  financeConfigOrigins,
+  financeCreditStatuses,
   financeReserveMovementKinds,
-  financeReservePools,
-  financeRuleRoles,
+  financeRuleNatures,
+  financeRuleStages,
+  financeUniquenessPolicies,
+  financeValueTypes,
 } from './finance.engine'
 
-// Modulo Pagamentos. Contrato: docs/pagamentos/CONTRATO.md.
-// Dinheiro em CENTAVOS (bigint), percentuais em PONTOS BASE, datas civis em `date`,
-// auditoria em timestamptz (UTC). FKs SEM cascade destrutivo: registro financeiro
-// nunca some junto com o processo/usuario. Imutabilidade de snapshots e do log de
-// auditoria garantida por triggers na migration 0037.
+// Modulo Pagamentos V3 (migrations 0037 + 0038). Contrato: docs/pagamentos/CONTRATO.md.
+// Dinheiro em CENTAVOS (bigint), percentuais em PONTOS BASE (0 permitido; NULL =
+// nao configurado), datas civis em `date`, auditoria em timestamptz (UTC).
+// FKs sem cascade destrutivo. Imutabilidade, saldos e estados de credito sao
+// garantidos tambem por triggers (0038), nao apenas pelo servico.
 
 export const financeRecipientKinds = [
   'PESSOA_FISICA',
   'PESSOA_JURIDICA',
 ] as const
-export const financeRuleStatuses = [
-  'RASCUNHO',
-  'PUBLICADA',
-  'REVOGADA',
-] as const
+export const financeRuleStatuses = ['ATIVA', 'REVOGADA'] as const
 export const financeReceiptKinds = [
   'HONORARIOS_CONTRATUAIS',
   'SUCUMBENCIA',
   'MULTA',
 ] as const
 export const financeReceiptStatuses = [
-  'PREVISTO',
-  'LIBERADO',
-  'CONFERIDO',
+  'RASCUNHO',
+  'EM_PREVIA',
+  'BLOQUEADO',
+  'APTO',
   'FECHADO',
   'CANCELADO',
 ] as const
-export const financeReferenceDateSources = [
-  'CADASTRO_PROCESSO',
-  'INFORMADA',
-] as const
 export const financeClosingStatuses = ['ATIVO', 'ESTORNADO'] as const
 export const financeRecordStatuses = ['ATIVO', 'ESTORNADO'] as const
+export const financeStepKinds = [
+  'RECEITA_TOTAL',
+  'PROVISAO_RECEITA',
+  'TOTAL_PROVISOES',
+  'RECEITA_LIQUIDA',
+  'DEDUCAO_LIQUIDA',
+  'RESERVA',
+  'TOTAL_DEDUCOES',
+  'RESULTADO_1',
+  'PARTICIPACAO_RESULTADO',
+  'RESULTADO_2',
+  'DISTRIBUICAO_FINAL',
+  'SALDO_FINAL',
+] as const
 
 export type FinanceReceiptStatus = (typeof financeReceiptStatuses)[number]
 export type FinanceReceiptKind = (typeof financeReceiptKinds)[number]
-export type FinanceRuleStatus = (typeof financeRuleStatuses)[number]
 
 export const financeRecipientKindEnum = pgEnum(
   'finance_recipient_kind',
   financeRecipientKinds,
 )
-export const financeRuleRoleEnum = pgEnum('finance_rule_role', financeRuleRoles)
+export const financeConfigOriginEnum = pgEnum(
+  'finance_config_origin',
+  financeConfigOrigins,
+)
+export const financeRuleStageEnum = pgEnum(
+  'finance_rule_stage',
+  financeRuleStages,
+)
+export const financeRuleNatureEnum = pgEnum(
+  'finance_rule_nature',
+  financeRuleNatures,
+)
+export const financeValueTypeEnum = pgEnum(
+  'finance_value_type',
+  financeValueTypes,
+)
+export const financeUniquenessEnum = pgEnum(
+  'finance_uniqueness',
+  financeUniquenessPolicies,
+)
 export const financeRuleStatusEnum = pgEnum(
   'finance_rule_status',
   financeRuleStatuses,
@@ -78,10 +107,6 @@ export const financeReceiptStatusEnum = pgEnum(
   'finance_receipt_status',
   financeReceiptStatuses,
 )
-export const financeReferenceDateSourceEnum = pgEnum(
-  'finance_reference_date_source',
-  financeReferenceDateSources,
-)
 export const financeClosingStatusEnum = pgEnum(
   'finance_closing_status',
   financeClosingStatuses,
@@ -90,13 +115,10 @@ export const financeRecordStatusEnum = pgEnum(
   'finance_record_status',
   financeRecordStatuses,
 )
-export const financeLineRubricEnum = pgEnum(
-  'finance_line_rubric',
-  financeLineRubrics,
-)
-export const financeReservePoolEnum = pgEnum(
-  'finance_reserve_pool',
-  financeReservePools,
+export const financeStepKindEnum = pgEnum('finance_step_kind', financeStepKinds)
+export const financeCreditStatusEnum = pgEnum(
+  'finance_credit_status',
+  financeCreditStatuses,
 )
 export const financeReserveMovementKindEnum = pgEnum(
   'finance_reserve_movement_kind',
@@ -106,20 +128,47 @@ export const financeReserveMovementKindEnum = pgEnum(
 const cents = (name: string) => bigint(name, { mode: 'number' })
 const utc = (name: string) => timestamp(name, { withTimezone: true })
 
-// Destinatario financeiro: identidade ESTAVEL (id), separada da conta de login.
-// Nomes nao sao unicos nem usados para unir pessoas.
+// Lote de importacao de configuracao (P04C): gravado SO na confirmacao. As regras
+// importadas vivem na mesma estrutura do cadastro manual (INV-10).
+export const financeImportBatch = pgTable(
+  'finance_import_batch',
+  {
+    id: text('id').primaryKey(),
+    fileName: text('file_name').notNull(),
+    fileSha256: text('file_sha256').notNull(),
+    mapping: jsonb('mapping').notNull(),
+    summary: jsonb('summary').notNull(),
+    rows: jsonb('rows').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    createdAt: utc('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('finance_import_batch_idempotency_idx').on(
+      table.idempotencyKey,
+    ),
+  ],
+)
+
+// Recebedor/colaborador: identidade ESTAVEL (id), separada da conta de login.
 export const financeRecipient = pgTable(
   'finance_recipient',
   {
     id: text('id').primaryKey(),
     name: text('name').notNull(),
     kind: financeRecipientKindEnum('kind').notNull(),
-    // CPF/CNPJ so digitos; '' quando nao informado.
     document: text('document').default('').notNull(),
     paymentNote: text('payment_note').default('').notNull(),
     notes: text('notes').default('').notNull(),
     userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
     isActive: boolean('is_active').default(true).notNull(),
+    origin: financeConfigOriginEnum('origin').default('MANUAL').notNull(),
+    importBatchId: text('import_batch_id').references(
+      () => financeImportBatch.id,
+      { onDelete: 'restrict' },
+    ),
     createdByUserId: text('created_by_user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
@@ -138,40 +187,42 @@ export const financeRecipient = pgTable(
   ],
 )
 
-// Regra versionada de participacao/distribuicao. Publicada = imutavel (exceto
-// revogacao). Alteracao = nova regra com supersedes_rule_id + revision+1.
+// Cada linha e uma VERSAO de regra (lineage_id = identidade estavel). Versao ativa
+// e imutavel, exceto encerramento da vigencia (valid_to) e revogacao.
 export const financeRule = pgTable(
   'finance_rule',
   {
     id: text('id').primaryKey(),
-    recipientId: text('recipient_id')
-      .notNull()
-      .references(() => financeRecipient.id, { onDelete: 'restrict' }),
-    role: financeRuleRoleEnum('role').notNull(),
-    housingComplexId: text('housing_complex_id').references(
-      () => housingComplex.id,
-      { onDelete: 'restrict' },
-    ),
+    lineageId: text('lineage_id').notNull(),
+    version: integer('version').notNull(),
+    stage: financeRuleStageEnum('stage').notNull(),
+    nature: financeRuleNatureEnum('nature').notNull(),
+    recipientId: text('recipient_id').references(() => financeRecipient.id, {
+      onDelete: 'restrict',
+    }),
+    poolKey: text('pool_key'),
+    poolLabel: text('pool_label'),
+    workType: text('work_type').default('').notNull(),
+    valueType: financeValueTypeEnum('value_type').notNull(),
+    basisPoints: integer('basis_points'),
+    fixedCents: cents('fixed_cents'),
+    sortOrder: integer('sort_order').default(0).notNull(),
+    uniqueness: financeUniquenessEnum('uniqueness')
+      .default('NENHUMA')
+      .notNull(),
     validFrom: date('valid_from').notNull(),
     validTo: date('valid_to'),
-    basisPoints: integer('basis_points'),
-    cascadeOrder: integer('cascade_order'),
-    status: financeRuleStatusEnum('status').default('RASCUNHO').notNull(),
-    revision: integer('revision').default(1).notNull(),
-    supersedesRuleId: text('supersedes_rule_id'),
+    origin: financeConfigOriginEnum('origin').default('MANUAL').notNull(),
+    importBatchId: text('import_batch_id').references(
+      () => financeImportBatch.id,
+      { onDelete: 'restrict' },
+    ),
+    status: financeRuleStatusEnum('status').default('ATIVA').notNull(),
     notes: text('notes').default('').notNull(),
     createdByUserId: text('created_by_user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
     createdAt: utc('created_at').defaultNow().notNull(),
-    updatedAt: utc('updated_at')
-      .defaultNow()
-      .$onUpdate(() => new Date())
-      .notNull(),
-    publishedAt: utc('published_at'),
-    publishedByUserId: text('published_by_user_id').references(() => user.id, {
-      onDelete: 'restrict',
-    }),
     revokedAt: utc('revoked_at'),
     revokedByUserId: text('revoked_by_user_id').references(() => user.id, {
       onDelete: 'restrict',
@@ -179,29 +230,59 @@ export const financeRule = pgTable(
     revokeReason: text('revoke_reason'),
   },
   (table) => [
+    uniqueIndex('finance_rule_lineage_version_idx').on(
+      table.lineageId,
+      table.version,
+    ),
     index('finance_rule_recipient_idx').on(table.recipientId),
     index('finance_rule_status_idx').on(table.status),
-    index('finance_rule_housing_complex_idx').on(table.housingComplexId),
     check(
       'finance_rule_validity_chk',
       sql`${table.validTo} IS NULL OR ${table.validTo} >= ${table.validFrom}`,
     ),
     check(
-      'finance_rule_bps_chk',
-      sql`(${table.role} = 'DISTRIBUICAO_SALDO' AND ${table.basisPoints} IS NULL) OR (${table.role} <> 'DISTRIBUICAO_SALDO' AND ${table.basisPoints} BETWEEN 1 AND 10000)`,
+      'finance_rule_value_chk',
+      sql`(${table.valueType} = 'PERCENTUAL' AND ${table.fixedCents} IS NULL AND (${table.basisPoints} IS NULL OR ${table.basisPoints} BETWEEN 0 AND 10000)) OR (${table.valueType} = 'VALOR_FIXO' AND ${table.basisPoints} IS NULL AND (${table.fixedCents} IS NULL OR ${table.fixedCents} >= 0))`,
     ),
     check(
-      'finance_rule_order_chk',
-      sql`(${table.role} = 'DISTRIBUICAO' AND ${table.cascadeOrder} >= 1) OR (${table.role} <> 'DISTRIBUICAO' AND ${table.cascadeOrder} IS NULL)`,
+      'finance_rule_nature_chk',
+      sql`(${table.nature} = 'CREDITO' AND ${table.recipientId} IS NOT NULL AND ${table.poolKey} IS NULL) OR (${table.nature} <> 'CREDITO' AND ${table.recipientId} IS NULL AND btrim(coalesce(${table.poolKey}, '')) <> '' AND btrim(coalesce(${table.poolLabel}, '')) <> '')`,
     ),
     check(
-      'finance_rule_published_chk',
-      sql`${table.status} = 'RASCUNHO' OR ${table.publishedAt} IS NOT NULL`,
+      'finance_rule_stage_nature_chk',
+      sql`(${table.stage} = 'PROVISAO_RECEITA' AND ${table.nature} = 'PROVISAO') OR (${table.stage} = 'DEDUCAO_LIQUIDA' AND ${table.nature} IN ('CREDITO', 'PROVISAO')) OR (${table.stage} = 'RESERVA' AND ${table.nature} = 'RESERVA') OR (${table.stage} IN ('PARTICIPACAO_RESULTADO', 'DISTRIBUICAO_FINAL') AND ${table.nature} = 'CREDITO')`,
     ),
+    check(
+      'finance_rule_final_percent_chk',
+      sql`${table.stage} <> 'DISTRIBUICAO_FINAL' OR ${table.valueType} = 'PERCENTUAL'`,
+    ),
+    check(
+      'finance_rule_uniqueness_chk',
+      sql`${table.uniqueness} = 'NENHUMA' OR ${table.stage} = 'RESERVA'`,
+    ),
+    check('finance_rule_order_chk', sql`${table.sortOrder} >= 0`),
+    check('finance_rule_version_chk', sql`${table.version} >= 1`),
     check(
       'finance_rule_revoked_chk',
-      sql`${table.status} <> 'REVOGADA' OR (${table.revokedAt} IS NOT NULL AND btrim(coalesce(${table.revokeReason}, '')) <> '')`,
+      sql`${table.status} = 'ATIVA' OR (${table.revokedAt} IS NOT NULL AND btrim(coalesce(${table.revokeReason}, '')) <> '')`,
     ),
+  ],
+)
+
+// Condominios de cada VERSAO (INV-03). Imutavel (trigger).
+export const financeRuleHousingComplex = pgTable(
+  'finance_rule_housing_complex',
+  {
+    ruleId: text('rule_id')
+      .notNull()
+      .references(() => financeRule.id, { onDelete: 'restrict' }),
+    housingComplexId: text('housing_complex_id')
+      .notNull()
+      .references(() => housingComplex.id, { onDelete: 'restrict' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ruleId, table.housingComplexId] }),
+    index('finance_rule_hc_complex_idx').on(table.housingComplexId),
   ],
 )
 
@@ -214,20 +295,20 @@ export const financeReceipt = pgTable(
       .references(() => process.id, { onDelete: 'restrict' }),
     kind: financeReceiptKindEnum('kind').notNull(),
     amountCents: cents('amount_cents').notNull(),
-    status: financeReceiptStatusEnum('status').default('PREVISTO').notNull(),
-    // Data civil em que o valor foi liberado na conta indicada.
+    status: financeReceiptStatusEnum('status').default('RASCUNHO').notNull(),
     releaseDate: date('release_date'),
     reference: text('reference').default('').notNull(),
+    originDescription: text('origin_description').default('').notNull(),
     description: text('description').default('').notNull(),
-    // Data de cadastro de referencia usada nas participacoes (preservada).
-    referenceDate: date('reference_date').notNull(),
-    referenceDateSource: financeReferenceDateSourceEnum(
-      'reference_date_source',
-    ).notNull(),
-    referenceDateAmbiguous: boolean('reference_date_ambiguous')
-      .default(false)
-      .notNull(),
+    // Data de cadastro do cliente (civil, America/Sao_Paulo) preservada: seleciona
+    // a vigencia das regras (INV-02).
+    clientRegistrationDate: date('client_registration_date'),
+    lastCalculation: jsonb('last_calculation'),
+    lastCalculationHash: text('last_calculation_hash'),
+    lastCalculatedAt: utc('last_calculated_at'),
+    approvedCalculationHash: text('approved_calculation_hash'),
     idempotencyKey: text('idempotency_key').notNull(),
+    requestHash: text('request_hash').notNull(),
     version: integer('version').default(1).notNull(),
     createdByUserId: text('created_by_user_id')
       .notNull()
@@ -237,10 +318,10 @@ export const financeReceipt = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date())
       .notNull(),
-    verifiedByUserId: text('verified_by_user_id').references(() => user.id, {
+    approvedByUserId: text('approved_by_user_id').references(() => user.id, {
       onDelete: 'restrict',
     }),
-    verifiedAt: utc('verified_at'),
+    approvedAt: utc('approved_at'),
     cancelledByUserId: text('cancelled_by_user_id').references(() => user.id, {
       onDelete: 'restrict',
     }),
@@ -255,11 +336,15 @@ export const financeReceipt = pgTable(
     check('finance_receipt_amount_chk', sql`${table.amountCents} > 0`),
     check(
       'finance_receipt_release_chk',
-      sql`${table.status} IN ('PREVISTO', 'CANCELADO') OR ${table.releaseDate} IS NOT NULL`,
+      sql`${table.status} NOT IN ('EM_PREVIA', 'APTO', 'FECHADO') OR ${table.releaseDate} IS NOT NULL`,
     ),
     check(
-      'finance_receipt_verified_chk',
-      sql`${table.status} NOT IN ('CONFERIDO', 'FECHADO') OR ${table.verifiedAt} IS NOT NULL`,
+      'finance_receipt_calculated_chk',
+      sql`${table.status} NOT IN ('EM_PREVIA', 'BLOQUEADO', 'APTO', 'FECHADO') OR ${table.lastCalculation} IS NOT NULL`,
+    ),
+    check(
+      'finance_receipt_approved_chk',
+      sql`${table.status} NOT IN ('APTO', 'FECHADO') OR (${table.approvedAt} IS NOT NULL AND ${table.approvedCalculationHash} IS NOT NULL)`,
     ),
     check(
       'finance_receipt_cancel_chk',
@@ -268,7 +353,7 @@ export const financeReceipt = pgTable(
   ],
 )
 
-// Fechamento em lote: snapshot imutavel (trigger) das entradas, regras e linhas.
+// Fechamento em lote: snapshot imutavel (trigger) das entradas, versoes e memoria.
 export const financeClosing = pgTable(
   'finance_closing',
   {
@@ -284,11 +369,11 @@ export const financeClosing = pgTable(
     algorithmVersion: text('algorithm_version').notNull(),
     inputHash: text('input_hash').notNull(),
     rulesSnapshot: jsonb('rules_snapshot').notNull(),
-    configSnapshot: jsonb('config_snapshot').notNull(),
     totals: jsonb('totals').notNull(),
     receiptCount: integer('receipt_count').notNull(),
     grossCents: cents('gross_cents').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
+    requestHash: text('request_hash').notNull(),
     notes: text('notes').default('').notNull(),
     createdByUserId: text('created_by_user_id')
       .notNull()
@@ -326,10 +411,10 @@ export const financeClosingItem = pgTable(
     receiptId: text('receipt_id')
       .notNull()
       .references(() => financeReceipt.id, { onDelete: 'restrict' }),
-    // false quando o fechamento e estornado (unica mudanca permitida pelo trigger).
     isActive: boolean('is_active').default(true).notNull(),
     receiptSnapshot: jsonb('receipt_snapshot').notNull(),
     calculation: jsonb('calculation').notNull(),
+    calculationHash: text('calculation_hash').notNull(),
     createdAt: utc('created_at').defaultNow().notNull(),
   },
   (table) => [
@@ -344,6 +429,7 @@ export const financeClosingItem = pgTable(
   ],
 )
 
+// Passos da memoria congelados no fechamento (um por etapa A..P). Imutavel.
 export const financeClosingLine = pgTable(
   'finance_closing_line',
   {
@@ -365,29 +451,91 @@ export const financeClosingLine = pgTable(
       { onDelete: 'restrict' },
     ),
     releaseDate: date('release_date').notNull(),
-    sequence: integer('sequence').notNull(),
-    rubric: financeLineRubricEnum('rubric').notNull(),
-    recipientId: text('recipient_id').references(() => financeRecipient.id, {
-      onDelete: 'restrict',
-    }),
+    stepOrder: integer('step_order').notNull(),
+    code: text('code').notNull(),
+    kind: financeStepKindEnum('kind').notNull(),
+    description: text('description').notNull(),
+    baseKey: text('base_key'),
+    baseCents: cents('base_cents'),
     ruleId: text('rule_id').references(() => financeRule.id, {
       onDelete: 'restrict',
     }),
-    ruleRevision: integer('rule_revision'),
+    ruleLineageId: text('rule_lineage_id'),
+    ruleVersion: integer('rule_version'),
+    valueType: financeValueTypeEnum('value_type'),
     basisPoints: integer('basis_points'),
-    basisCents: cents('basis_cents').notNull(),
+    fixedCents: cents('fixed_cents'),
+    formula: text('formula').notNull(),
+    exactCents: text('exact_cents'),
+    rounding: text('rounding').notNull(),
     amountCents: cents('amount_cents').notNull(),
-    description: text('description').notNull(),
+    nature: financeRuleNatureEnum('nature'),
+    recipientId: text('recipient_id').references(() => financeRecipient.id, {
+      onDelete: 'restrict',
+    }),
+    poolKey: text('pool_key'),
+    poolLabel: text('pool_label'),
+    workType: text('work_type'),
+    isAllocation: boolean('is_allocation').notNull(),
+    note: text('note'),
   },
   (table) => [
-    uniqueIndex('finance_closing_line_item_seq_idx').on(
+    uniqueIndex('finance_closing_line_item_order_idx').on(
       table.closingItemId,
-      table.sequence,
+      table.stepOrder,
     ),
     index('finance_closing_line_closing_idx').on(table.closingId),
     index('finance_closing_line_recipient_idx').on(table.recipientId),
     index('finance_closing_line_process_idx').on(table.processId),
-    check('finance_closing_line_amount_chk', sql`${table.amountCents} >= 0`),
+  ],
+)
+
+// Credito = valor que alguem TEM A RECEBER (nao e pagamento). paid/adjusted/status
+// sao mantidos por trigger a partir das baixas e ajustes (fonte de verdade).
+export const financeCredit = pgTable(
+  'finance_credit',
+  {
+    id: text('id').primaryKey(),
+    closingId: text('closing_id')
+      .notNull()
+      .references(() => financeClosing.id, { onDelete: 'restrict' }),
+    closingLineId: text('closing_line_id')
+      .notNull()
+      .references(() => financeClosingLine.id, { onDelete: 'restrict' }),
+    receiptId: text('receipt_id')
+      .notNull()
+      .references(() => financeReceipt.id, { onDelete: 'restrict' }),
+    processId: text('process_id')
+      .notNull()
+      .references(() => process.id, { onDelete: 'restrict' }),
+    housingComplexId: text('housing_complex_id').references(
+      () => housingComplex.id,
+      { onDelete: 'restrict' },
+    ),
+    recipientId: text('recipient_id')
+      .notNull()
+      .references(() => financeRecipient.id, { onDelete: 'restrict' }),
+    amountCents: cents('amount_cents').notNull(),
+    adjustedCents: cents('adjusted_cents').default(0).notNull(),
+    paidCents: cents('paid_cents').default(0).notNull(),
+    status: financeCreditStatusEnum('status').default('ABERTO').notNull(),
+    createdAt: utc('created_at').defaultNow().notNull(),
+    updatedAt: utc('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('finance_credit_line_idx').on(table.closingLineId),
+    index('finance_credit_recipient_idx').on(table.recipientId),
+    index('finance_credit_closing_idx').on(table.closingId),
+    index('finance_credit_process_idx').on(table.processId),
+    check('finance_credit_amount_chk', sql`${table.amountCents} > 0`),
+    check(
+      'finance_credit_paid_chk',
+      sql`${table.paidCents} >= 0 AND ${table.paidCents} <= ${table.amountCents} + ${table.adjustedCents}`,
+    ),
+    check(
+      'finance_credit_due_chk',
+      sql`${table.amountCents} + ${table.adjustedCents} >= 0`,
+    ),
   ],
 )
 
@@ -396,6 +544,9 @@ export const financePayout = pgTable(
   'finance_payout',
   {
     id: text('id').primaryKey(),
+    creditId: text('credit_id')
+      .notNull()
+      .references(() => financeCredit.id, { onDelete: 'restrict' }),
     recipientId: text('recipient_id')
       .notNull()
       .references(() => financeRecipient.id, { onDelete: 'restrict' }),
@@ -403,8 +554,11 @@ export const financePayout = pgTable(
     paidOn: date('paid_on').notNull(),
     reference: text('reference').notNull(),
     notes: text('notes').default('').notNull(),
+    // saldo do credito apos esta baixa (preenchido pelo trigger)
+    balanceAfterCents: cents('balance_after_cents').notNull(),
     status: financeRecordStatusEnum('status').default('ATIVO').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
+    requestHash: text('request_hash').notNull(),
     createdByUserId: text('created_by_user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
@@ -417,7 +571,9 @@ export const financePayout = pgTable(
   },
   (table) => [
     uniqueIndex('finance_payout_idempotency_idx').on(table.idempotencyKey),
+    index('finance_payout_credit_idx').on(table.creditId),
     index('finance_payout_recipient_idx').on(table.recipientId),
+    index('finance_payout_paid_on_idx').on(table.paidOn),
     check('finance_payout_amount_chk', sql`${table.amountCents} > 0`),
     check('finance_payout_reference_chk', sql`btrim(${table.reference}) <> ''`),
     check(
@@ -427,40 +583,43 @@ export const financePayout = pgTable(
   ],
 )
 
-export const financePayoutAllocation = pgTable(
-  'finance_payout_allocation',
+// Ajuste = evento corretivo no valor devido de um credito (positivo ou negativo).
+// Imutavel; corrigido por outro ajuste.
+export const financeAdjustment = pgTable(
+  'finance_adjustment',
   {
     id: text('id').primaryKey(),
-    payoutId: text('payout_id')
+    creditId: text('credit_id')
       .notNull()
-      .references(() => financePayout.id, { onDelete: 'restrict' }),
-    closingLineId: text('closing_line_id')
-      .notNull()
-      .references(() => financeClosingLine.id, { onDelete: 'restrict' }),
+      .references(() => financeCredit.id, { onDelete: 'restrict' }),
     amountCents: cents('amount_cents').notNull(),
-    isActive: boolean('is_active').default(true).notNull(),
+    reason: text('reason').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    requestHash: text('request_hash').notNull(),
+    createdByUserId: text('created_by_user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'restrict' }),
+    createdAt: utc('created_at').defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex('finance_payout_allocation_payout_line_idx').on(
-      table.payoutId,
-      table.closingLineId,
-    ),
-    index('finance_payout_allocation_line_idx').on(table.closingLineId),
-    check(
-      'finance_payout_allocation_amount_chk',
-      sql`${table.amountCents} > 0`,
-    ),
+    uniqueIndex('finance_adjustment_idempotency_idx').on(table.idempotencyKey),
+    index('finance_adjustment_credit_idx').on(table.creditId),
+    check('finance_adjustment_amount_chk', sql`${table.amountCents} <> 0`),
+    check('finance_adjustment_reason_chk', sql`btrim(${table.reason}) <> ''`),
   ],
 )
 
-// Livro de reservas/provisoes (certidao por processo, tributo por fechamento,
-// apoio global). Saldo nunca negativo (servico com trava + trigger).
+// Livro de reservas/provisoes. A reserva (pool) vem da regra; saldo global e por
+// processo nunca negativo (trigger). Reserva unica: indice unico parcial.
 export const financeReserveMovement = pgTable(
   'finance_reserve_movement',
   {
     id: text('id').primaryKey(),
-    pool: financeReservePoolEnum('pool').notNull(),
+    poolKey: text('pool_key').notNull(),
+    poolLabel: text('pool_label').notNull(),
+    nature: financeRuleNatureEnum('nature').notNull(),
     kind: financeReserveMovementKindEnum('kind').notNull(),
+    uniquePerProcess: boolean('unique_per_process').default(false).notNull(),
     amountCents: cents('amount_cents').notNull(),
     processId: text('process_id').references(() => process.id, {
       onDelete: 'restrict',
@@ -471,12 +630,17 @@ export const financeReserveMovement = pgTable(
     receiptId: text('receipt_id').references(() => financeReceipt.id, {
       onDelete: 'restrict',
     }),
+    closingLineId: text('closing_line_id').references(
+      () => financeClosingLine.id,
+      { onDelete: 'restrict' },
+    ),
     movementDate: date('movement_date').notNull(),
     reference: text('reference').default('').notNull(),
     description: text('description').default('').notNull(),
     destination: text('destination').default('').notNull(),
     status: financeRecordStatusEnum('status').default('ATIVO').notNull(),
     idempotencyKey: text('idempotency_key').notNull(),
+    requestHash: text('request_hash').notNull(),
     createdByUserId: text('created_by_user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'restrict' }),
@@ -491,23 +655,30 @@ export const financeReserveMovement = pgTable(
     uniqueIndex('finance_reserve_movement_idempotency_idx').on(
       table.idempotencyKey,
     ),
-    // Reserva de certidao: no maximo UMA constituicao ativa por processo.
-    uniqueIndex('finance_reserve_certidao_once_idx')
-      .on(table.processId)
+    uniqueIndex('finance_reserve_unique_constitution_idx')
+      .on(table.poolKey, table.processId)
       .where(
-        sql`${table.pool} = 'CERTIDAO' AND ${table.kind} = 'CONSTITUICAO' AND ${table.status} = 'ATIVO'`,
+        sql`${table.kind} = 'CONSTITUICAO' AND ${table.status} = 'ATIVO' AND ${table.uniquePerProcess}`,
       ),
-    index('finance_reserve_movement_pool_idx').on(table.pool),
+    index('finance_reserve_movement_pool_idx').on(table.poolKey),
     index('finance_reserve_movement_process_idx').on(table.processId),
     index('finance_reserve_movement_closing_idx').on(table.closingId),
     check('finance_reserve_movement_amount_chk', sql`${table.amountCents} > 0`),
     check(
-      'finance_reserve_movement_scope_chk',
-      sql`(${table.pool} <> 'CERTIDAO' OR ${table.processId} IS NOT NULL) AND (${table.pool} <> 'TRIBUTO' OR ${table.closingId} IS NOT NULL)`,
+      'finance_reserve_movement_nature_chk',
+      sql`${table.nature} IN ('PROVISAO', 'RESERVA')`,
     ),
     check(
       'finance_reserve_movement_constitution_chk',
-      sql`${table.kind} <> 'CONSTITUICAO' OR (${table.closingId} IS NOT NULL AND ${table.receiptId} IS NOT NULL)`,
+      sql`${table.kind} <> 'CONSTITUICAO' OR (${table.closingId} IS NOT NULL AND ${table.receiptId} IS NOT NULL AND ${table.processId} IS NOT NULL AND ${table.closingLineId} IS NOT NULL)`,
+    ),
+    check(
+      'finance_reserve_movement_origin_chk',
+      sql`${table.kind} = 'CONSTITUICAO' OR btrim(${table.description}) <> ''`,
+    ),
+    check(
+      'finance_reserve_movement_unique_chk',
+      sql`NOT ${table.uniquePerProcess} OR ${table.processId} IS NOT NULL`,
     ),
     check(
       'finance_reserve_movement_reversal_chk',
@@ -516,8 +687,7 @@ export const financeReserveMovement = pgTable(
   ],
 )
 
-// Comprovantes privados (bucket sem acesso publico; download so via API
-// autorizada). Exatamente um dono. Remocao logica.
+// Comprovantes privados (sem URL publica; download so pela API autorizada).
 export const financeAttachment = pgTable(
   'finance_attachment',
   {
@@ -563,7 +733,7 @@ export const financeAttachment = pgTable(
   ],
 )
 
-// Log de auditoria append-only (trigger bloqueia UPDATE/DELETE).
+// Log de auditoria append-only (trigger bloqueia UPDATE/DELETE). Mantido da 0037.
 export const financeAuditLog = pgTable(
   'finance_audit_log',
   {

@@ -53,7 +53,9 @@ export type ProfilePermissions = {
     fechar: boolean
     baixar: boolean
     regras: boolean
+    importar: boolean
     reservas: boolean
+    estornar: boolean
     exportar: boolean
   }
 }

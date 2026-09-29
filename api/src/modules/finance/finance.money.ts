@@ -34,6 +34,47 @@ export function percentOfCents(
   return Number(result)
 }
 
+export type ExactPercent = {
+  /** parte inteira de amount x bps / 10000 (truncada) */
+  floorCents: number
+  /** resto da divisao por 10000 (0..9999) — fracao de centavo em 1/10000 */
+  remainder: number
+  /** arredondamento meio-para-cima */
+  roundedCents: number
+  /** valor exato em centavos com 4 casas, ex. "127.5000" (para a memoria) */
+  exact: string
+}
+
+/** amount x bps / 10000 exato, com resto — base das politicas de arredondamento. */
+export function exactPercentOfCents(
+  amountCents: number,
+  basisPoints: number,
+): ExactPercent {
+  const rounded = percentOfCents(amountCents, basisPoints)
+  const scaled = BigInt(amountCents) * BigInt(basisPoints)
+  const scale = BigInt(BASIS_POINTS_SCALE)
+  const floorCents = Number(scaled / scale)
+  const remainder = Number(scaled % scale)
+  return {
+    floorCents,
+    remainder,
+    roundedCents: rounded,
+    exact: `${floorCents}.${String(remainder).padStart(4, '0')}`,
+  }
+}
+
+/**
+ * Percentual pt-BR/planilha -> pontos base. "2,5" | "2.5" | "2,50%" | "0" -> 250 | 0.
+ * Maximo 2 casas decimais (0,01% = 1 pb). Retorna null se invalido ou fora de 0..100.
+ */
+export function parsePercentToBasisPoints(input: string): number | null {
+  const cleaned = input.replace(/%|\s/g, '').replace(',', '.')
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(cleaned)) return null
+  const [whole = '0', fraction = ''] = cleaned.split('.')
+  const bps = Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
+  return bps <= BASIS_POINTS_SCALE ? bps : null
+}
+
 /** 1234567 -> "R$ 12.345,67" (determinístico, sem depender de ICU). */
 export function formatCentsBRL(cents: number): string {
   assertCents(cents)

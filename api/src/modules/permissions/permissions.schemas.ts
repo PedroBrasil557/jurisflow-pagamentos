@@ -49,7 +49,9 @@ const profilePermissionsSchema = z.object({
       fechar: z.boolean(),
       baixar: z.boolean(),
       regras: z.boolean(),
+      importar: z.boolean(),
       reservas: z.boolean(),
+      estornar: z.boolean(),
       exportar: z.boolean(),
     })
     .default({
@@ -59,7 +61,9 @@ const profilePermissionsSchema = z.object({
       fechar: false,
       baixar: false,
       regras: false,
+      importar: false,
       reservas: false,
+      estornar: false,
       exportar: false,
     }),
 })

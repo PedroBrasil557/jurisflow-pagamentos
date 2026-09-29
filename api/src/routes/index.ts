@@ -5,6 +5,7 @@ import { auth } from '../modules/auth/auth.service'
 import { authAuditRoutes } from '../modules/auth-audit/auth-audit.routes'
 import { caixaQuitacaoInternalRoutes } from '../modules/caixa-quitacao/caixa-quitacao.routes'
 import { dashboardRoutes } from '../modules/dashboard/dashboard.routes'
+import { financeRoutes } from '../modules/finance/finance.routes'
 import {
   housingComplexAdminRoutes,
   housingComplexOptionsRoutes,
@@ -55,6 +56,7 @@ export function createAppRouter(options: CreateAppRouterOptions) {
     .route('/api/housing-complexes', housingComplexOptionsRoutes)
     .route('/api/dashboard', dashboardRoutes)
     .route('/api/processes', processRoutes)
+    .route('/api/finance', financeRoutes)
     .route('/api/titulares-caixa', titularesCaixaRoutes)
     .route('/api/internal/caixa-quitacao', caixaQuitacaoInternalRoutes)
     .route('/api/internal/quitacao', quitacaoQueueInternalRoutes)

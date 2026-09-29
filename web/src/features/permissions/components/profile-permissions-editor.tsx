@@ -196,12 +196,13 @@ const permissionGroups: PermissionGroup[] = [
         key: 'lancar',
         section: 'financeiro',
         label: 'Lancar recebimentos',
-        description: 'Registrar recebimentos e anexar comprovantes',
+        description: 'Registrar, editar rascunhos, calcular e anexar comprovantes',
       },
       {
         key: 'conferir',
         section: 'financeiro',
-        label: 'Conferir recebimentos',
+        label: 'Aprovar previas',
+        description: 'Libera o recebimento (APTO) para fechamento',
       },
       {
         key: 'fechar',
@@ -218,7 +219,18 @@ const permissionGroups: PermissionGroup[] = [
       {
         key: 'regras',
         section: 'financeiro',
-        label: 'Gerenciar destinatarios e regras',
+        label: 'Gerenciar recebedores e regras',
+      },
+      {
+        key: 'importar',
+        section: 'financeiro',
+        label: 'Importar configuracao por planilha',
+      },
+      {
+        key: 'estornar',
+        section: 'financeiro',
+        label: 'Ajustar creditos e estornar',
+        description: 'Baixas e fechamentos; exige escopo de todos os processos',
       },
       {
         key: 'reservas',

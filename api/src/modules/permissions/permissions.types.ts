@@ -82,10 +82,14 @@ export type ProfilePermissions = {
     fechar: boolean
     /** Registrar/estornar baixas de pagamentos feitos fora (exige escopo total) */
     baixar: boolean
-    /** Destinatários e regras de participação (exige escopo total) */
+    /** Recebedores e regras de participação (exige escopo total) */
     regras: boolean
+    /** Importar configuração por planilha (exige escopo total) */
+    importar: boolean
     /** Movimentar reservas e provisões (exige escopo total) */
     reservas: boolean
+    /** Ajustar créditos e estornar baixas/fechamentos (exige escopo total) */
+    estornar: boolean
     /** Exportar extratos e demonstrativos */
     exportar: boolean
   }

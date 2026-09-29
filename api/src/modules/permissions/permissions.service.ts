@@ -203,7 +203,9 @@ function buildAdminPermissions(): ProfilePermissions {
       fechar: true,
       baixar: true,
       regras: true,
+      importar: true,
       reservas: true,
+      estornar: true,
       exportar: true,
     },
   }
