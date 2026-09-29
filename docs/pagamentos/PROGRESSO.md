@@ -7,7 +7,28 @@ PR, merge ou deploy na ICSF. Contrato técnico: [CONTRATO.md](CONTRATO.md).
 Refinamento: [REFINAMENTO_2026-09-28.md](REFINAMENTO_2026-09-28.md).
 Etapa 2: [ETAPA_2_2026-09-29.md](ETAPA_2_2026-09-29.md).
 
-## Estado em 28/09 (segunda) — etapa concluída
+## Estado em 29/09 (terça) — V3 implementada
+
+Branch `feat/pagamentos-v3` a partir de `entrega/main` (`382831f`), publicada só no
+remote pessoal `entrega`. Motor V3 parametrizado (sem defaults de negócio), migration
+0038, API completa, telas em `/pagamentos`, CT-01..CT-18 aprovados. Detalhes e
+evidências: [IMPLEMENTACAO_V3_RESULTADO.md](IMPLEMENTACAO_V3_RESULTADO.md); infra:
+[ESTADO_ATUAL_INFRA_2026-09-29.md](ESTADO_ATUAL_INFRA_2026-09-29.md); gap:
+[IMPLEMENTACAO_V3_GAP.md](IMPLEMENTACAO_V3_GAP.md). O conteúdo abaixo sobre o Stage 1
+(cascata fixa, 20%/4%/R$ 500) foi **substituído** pela V3.
+
+Comandos (PowerShell, em `api/`): `bun run db:check`, `bun test`,
+`bun run test:integration:finance` (recria `app_pagamentos_test`),
+`bun run scripts/verify-0038-guard.ts`, `bun run lint`, `bun run typecheck`.
+Em `web/`: `bun run lint`, `bun run typecheck`, `bun run test`, `bun run build`.
+
+Banco `app` local: 39 migrations; perfil "Financeiro — demo local" atribuído ao admin
+fictício do seed apenas neste banco local, para testes no navegador.
+
+Próxima ação: dono do projeto Vercel configurar variáveis no escopo Preview (ou
+promover após revisão), aplicar 0038 no banco demo e configurar S3 privado.
+
+## Estado em 28/09 (segunda) — etapa concluída (Stage 1, superado pela V3)
 
 - Motor puro de cálculo `api/src/modules/finance/finance.engine.ts` (+ `finance.money.ts`):
   centavos inteiros, pontos base, arredondamento meio-para-cima por rubrica, resíduo no
