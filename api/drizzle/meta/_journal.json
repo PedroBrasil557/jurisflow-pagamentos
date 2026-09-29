@@ -2,278 +2,45 @@
   "version": "7",
   "dialect": "postgresql",
   "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1774131466260,
-      "tag": "0000_whole_colleen_wing",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1774111737277,
-      "tag": "0001_superb_leopardon",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1775503234292,
-      "tag": "0002_rare_stark_industries",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1776170045977,
-      "tag": "0003_long_the_order",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1780777603198,
-      "tag": "0004_curly_mole_man",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1780794830079,
-      "tag": "0005_sticky_eternals",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1780862331921,
-      "tag": "0006_sleepy_mimic",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1780952541201,
-      "tag": "0007_yielding_centennial",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1780973314939,
-      "tag": "0008_third_namor",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1780974342382,
-      "tag": "0009_dizzy_thunderball",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1780975170810,
-      "tag": "0010_wise_trish_tilby",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1781018292099,
-      "tag": "0011_amusing_mordo",
-      "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "7",
-      "when": 1781024760648,
-      "tag": "0012_graceful_doctor_spectrum",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1781095575473,
-      "tag": "0013_pale_brother_voodoo",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1781096949648,
-      "tag": "0014_outstanding_bromley",
-      "breakpoints": true
-    },
-    {
-      "idx": 15,
-      "version": "7",
-      "when": 1781097723755,
-      "tag": "0015_slippery_hitman",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "7",
-      "when": 1781108393999,
-      "tag": "0016_dry_invisible_woman",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "7",
-      "when": 1781108400000,
-      "tag": "0017_ai_analysis_no_truncate",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "7",
-      "when": 1781118077664,
-      "tag": "0018_fantastic_dragon_lord",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "7",
-      "when": 1781146441398,
-      "tag": "0019_typical_karen_page",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "7",
-      "when": 1781146726949,
-      "tag": "0020_low_xorn",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "7",
-      "when": 1781147002578,
-      "tag": "0021_tiny_shockwave",
-      "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1781212150899,
-      "tag": "0022_groovy_baron_strucker",
-      "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "7",
-      "when": 1781226387823,
-      "tag": "0023_bored_riptide",
-      "breakpoints": true
-    },
-    {
-      "idx": 24,
-      "version": "7",
-      "when": 1781295433776,
-      "tag": "0024_purple_hex",
-      "breakpoints": true
-    },
-    {
-      "idx": 25,
-      "version": "7",
-      "when": 1781462636155,
-      "tag": "0025_lonely_namora",
-      "breakpoints": true
-    },
-    {
-      "idx": 26,
-      "version": "7",
-      "when": 1781489682179,
-      "tag": "0026_quitacao_subject_cpfs",
-      "breakpoints": true
-    },
-    {
-      "idx": 27,
-      "version": "7",
-      "when": 1781493247992,
-      "tag": "0027_quitacao_consultas",
-      "breakpoints": true
-    },
-    {
-      "idx": 28,
-      "version": "7",
-      "when": 1781500000000,
-      "tag": "0028_titulares_caixa",
-      "breakpoints": true
-    },
-    {
-      "idx": 29,
-      "version": "7",
-      "when": 1781500100000,
-      "tag": "0029_titular_averbacao",
-      "breakpoints": true
-    },
-    {
-      "idx": 30,
-      "version": "7",
-      "when": 1781500200000,
-      "tag": "0030_scan_upload",
-      "breakpoints": true
-    },
-    {
-      "idx": 31,
-      "version": "7",
-      "when": 1781500300000,
-      "tag": "0031_quitacao_claim_token",
-      "breakpoints": true
-    },
-    {
-      "idx": 32,
-      "version": "7",
-      "when": 1781500400000,
-      "tag": "0032_batch_file_source",
-      "breakpoints": true
-    },
-    {
-      "idx": 33,
-      "version": "7",
-      "when": 1781500500000,
-      "tag": "0033_titular_housing_complex",
-      "breakpoints": true
-    },
-    {
-      "idx": 34,
-      "version": "7",
-      "when": 1781500600000,
-      "tag": "0034_scanner_tuning_version",
-      "breakpoints": true
-    },
-    {
-      "idx": 35,
-      "version": "7",
-      "when": 1781500700000,
-      "tag": "0035_titular_geo_grants",
-      "breakpoints": true
-    },
-    {
-      "idx": 36,
-      "version": "7",
-      "when": 1781500800000,
-      "tag": "0036_titular_terceiro",
-      "breakpoints": true
-    },
-    {
-      "idx": 37,
-      "version": "7",
-      "when": 1781500900000,
-      "tag": "0037_finance_payments",
-      "breakpoints": true
-    },
-    {
-      "idx": 38,
-      "version": "7",
-      "when": 1781501000000,
-      "tag": "0038_finance_v3_engine",
-      "breakpoints": true
-    }
+    {"idx":0,"version":"7","when":1774131466260,"tag":"0000_whole_colleen_wing","breakpoints":true},
+    {"idx":1,"version":"7","when":1774111737277,"tag":"0001_superb_leopardon","breakpoints":true},
+    {"idx":2,"version":"7","when":1775503234292,"tag":"0002_rare_stark_industries","breakpoints":true},
+    {"idx":3,"version":"7","when":1776170045977,"tag":"0003_long_the_order","breakpoints":true},
+    {"idx":4,"version":"7","when":1780777603198,"tag":"0004_curly_mole_man","breakpoints":true},
+    {"idx":5,"version":"7","when":1780794830079,"tag":"0005_sticky_eternals","breakpoints":true},
+    {"idx":6,"version":"7","when":1780862331921,"tag":"0006_sleepy_mimic","breakpoints":true},
+    {"idx":7,"version":"7","when":1780952541201,"tag":"0007_yielding_centennial","breakpoints":true},
+    {"idx":8,"version":"7","when":1780973314939,"tag":"0008_third_namor","breakpoints":true},
+    {"idx":9,"version":"7","when":1780974342382,"tag":"0009_dizzy_thunderball","breakpoints":true},
+    {"idx":10,"version":"7","when":1780975170810,"tag":"0010_wise_trish_tilby","breakpoints":true},
+    {"idx":11,"version":"7","when":1781018292099,"tag":"0011_amusing_mordo","breakpoints":true},
+    {"idx":12,"version":"7","when":1781024760648,"tag":"0012_graceful_doctor_spectrum","breakpoints":true},
+    {"idx":13,"version":"7","when":1781095575473,"tag":"0013_pale_brother_voodoo","breakpoints":true},
+    {"idx":14,"version":"7","when":1781096949648,"tag":"0014_outstanding_bromley","breakpoints":true},
+    {"idx":15,"version":"7","when":1781097723755,"tag":"0015_slippery_hitman","breakpoints":true},
+    {"idx":16,"version":"7","when":1781108393999,"tag":"0016_dry_invisible_woman","breakpoints":true},
+    {"idx":17,"version":"7","when":1781108400000,"tag":"0017_ai_analysis_no_truncate","breakpoints":true},
+    {"idx":18,"version":"7","when":1781118077664,"tag":"0018_fantastic_dragon_lord","breakpoints":true},
+    {"idx":19,"version":"7","when":1781146441398,"tag":"0019_typical_karen_page","breakpoints":true},
+    {"idx":20,"version":"7","when":1781146726949,"tag":"0020_low_xorn","breakpoints":true},
+    {"idx":21,"version":"7","when":1781147002578,"tag":"0021_tiny_shockwave","breakpoints":true},
+    {"idx":22,"version":"7","when":1781212150899,"tag":"0022_groovy_baron_strucker","breakpoints":true},
+    {"idx":23,"version":"7","when":1781226387823,"tag":"0023_bored_riptide","breakpoints":true},
+    {"idx":24,"version":"7","when":1781295433776,"tag":"0024_purple_hex","breakpoints":true},
+    {"idx":25,"version":"7","when":1781462636155,"tag":"0025_lonely_namora","breakpoints":true},
+    {"idx":26,"version":"7","when":1781489682179,"tag":"0026_quitacao_subject_cpfs","breakpoints":true},
+    {"idx":27,"version":"7","when":1781493247992,"tag":"0027_quitacao_consultas","breakpoints":true},
+    {"idx":28,"version":"7","when":1781500000000,"tag":"0028_titulares_caixa","breakpoints":true},
+    {"idx":29,"version":"7","when":1781500100000,"tag":"0029_titular_averbacao","breakpoints":true},
+    {"idx":30,"version":"7","when":1781500200000,"tag":"0030_scan_upload","breakpoints":true},
+    {"idx":31,"version":"7","when":1781500300000,"tag":"0031_quitacao_claim_token","breakpoints":true},
+    {"idx":32,"version":"7","when":1781500400000,"tag":"0032_batch_file_source","breakpoints":true},
+    {"idx":33,"version":"7","when":1781500500000,"tag":"0033_titular_housing_complex","breakpoints":true},
+    {"idx":34,"version":"7","when":1781500600000,"tag":"0034_scanner_tuning_version","breakpoints":true},
+    {"idx":35,"version":"7","when":1781500700000,"tag":"0035_titular_geo_grants","breakpoints":true},
+    {"idx":36,"version":"7","when":1781500800000,"tag":"0036_titular_terceiro","breakpoints":true},
+    {"idx":37,"version":"7","when":1781500900000,"tag":"0037_finance_payments","breakpoints":true},
+    {"idx":38,"version":"7","when":1781501000000,"tag":"0038_finance_v3_engine","breakpoints":true},
+    {"idx":39,"version":"7","when":1781501100000,"tag":"0039_finance_function_search_path","breakpoints":true}
   ]
 }
