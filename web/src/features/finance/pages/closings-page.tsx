@@ -36,7 +36,7 @@ import {
   previewClosingRequest,
 } from '../services/finance.service'
 
-/** P06: agrupa itens APTO, revalida e congela; gera créditos por recebedor. */
+/** Finaliza rateios aprovados e transforma as parcelas em valores a pagar. */
 export function ClosingsPage() {
   const { permissions } = useSession()
   const navigate = useNavigate()
@@ -52,8 +52,8 @@ export function ClosingsPage() {
   const [preview, setPreview] = useState<ClosingPreview | null>(null)
   const [checking, setChecking] = useState(false)
   const create = useCreateClosing()
-  // Chave por intenção: renovada quando seleção/período mudam; reenvio igual não duplica.
   const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey)
+
   function resetIntent() {
     setPreview(null)
     setIdempotencyKey(newIdempotencyKey())
@@ -79,20 +79,20 @@ export function ClosingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Fechamento congela memória, versões e valores e gera créditos (valor a receber). Fechamento não é pagamento: as baixas são registradas depois."
+        description="Primeiro finalize o rateio conferido. Depois, dentro de cada rateio finalizado, registre os pagamentos realmente feitos para cada recebedor."
         eyebrow="Pagamentos"
-        title="Fechamentos e baixas"
+        title="Rateios e pagamentos"
       />
 
       {canClose ? (
         <FinanceSection
-          description="Somente recebimentos APTO (prévia aprovada)."
-          title="Novo fechamento em lote"
+          description="Só aparecem entradas cuja prévia já foi conferida e aprovada."
+          title="1. Finalizar rateio"
         >
           {ready.isPending ? <LoadingState rows={2} /> : null}
           {ready.data?.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Nenhum recebimento apto no momento.
+              Nenhuma entrada está pronta para finalizar o rateio.
             </p>
           ) : null}
           {ready.data && ready.data.length > 0 ? (
@@ -121,7 +121,7 @@ export function ClosingsPage() {
                         <span className="flex-1">
                           {receipt.processCode} · {receipt.clientName}
                           <span className="block text-xs text-muted-foreground">
-                            {receipt.housingComplexName ?? '—'} · liberação{' '}
+                            {receipt.housingComplexName ?? '—'} · entrada em{' '}
                             {formatCivilDate(receipt.releaseDate)}
                           </span>
                         </span>
@@ -131,6 +131,7 @@ export function ClosingsPage() {
                   )
                 })}
               </ul>
+
               <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
                 <div className="grid gap-1.5">
                   <Label htmlFor="period-start">Período — início</Label>
@@ -166,24 +167,25 @@ export function ClosingsPage() {
                   onClick={check}
                   variant="outline"
                 >
-                  {checking ? 'Validando…' : 'Validar itens'}
+                  {checking ? 'Conferindo…' : 'Conferir rateio'}
                 </Button>
               </div>
+
               {preview ? (
                 preview.canClose ? (
                   <Alert>
                     <Lock className="size-4" />
-                    <AlertTitle>Pronto para fechar</AlertTitle>
+                    <AlertTitle>Rateio conferido e pronto para finalizar</AlertTitle>
                     <AlertDescription>
-                      {preview.items.length} item(ns), receita total{' '}
-                      <Money cents={preview.grossCents} strong />. Após
-                      confirmar, valores e versões ficam imutáveis; correções só
-                      por ajuste ou estorno.
+                      {preview.items.length} entrada(s), total recebido{' '}
+                      <Money cents={preview.grossCents} strong />. Ao finalizar,
+                      os valores ficam congelados e viram obrigações de
+                      pagamento para cada recebedor.
                     </AlertDescription>
                   </Alert>
                 ) : (
                   <Alert variant="destructive">
-                    <AlertTitle>Itens com impedimento</AlertTitle>
+                    <AlertTitle>O rateio ainda tem impedimentos</AlertTitle>
                     <AlertDescription>
                       <ul className="mt-1 grid gap-1">
                         {preview.items
@@ -198,6 +200,7 @@ export function ClosingsPage() {
                   </Alert>
                 )
               ) : null}
+
               <div className="flex justify-end">
                 <Button
                   disabled={!preview?.canClose || create.isPending}
@@ -211,9 +214,7 @@ export function ClosingsPage() {
                       },
                       {
                         onSuccess: ({ closing }) => {
-                          toast.success(
-                            `Fechamento ${closing.code} confirmado.`,
-                          )
+                          toast.success(`Rateio ${closing.code} finalizado.`)
                           navigate({
                             to: '/pagamentos/fechamentos/$closingId',
                             params: { closingId: closing.id },
@@ -224,7 +225,7 @@ export function ClosingsPage() {
                   }
                 >
                   <Lock className="size-4" />
-                  {create.isPending ? 'Fechando…' : 'Confirmar fechamento'}
+                  {create.isPending ? 'Finalizando…' : 'Finalizar rateio'}
                 </Button>
               </div>
             </div>
@@ -232,7 +233,10 @@ export function ClosingsPage() {
         </FinanceSection>
       ) : null}
 
-      <FinanceSection title="Fechamentos">
+      <FinanceSection
+        description="Abra um rateio para ver quem tem a receber, quanto já foi pago e qual saldo continua aberto."
+        title="2. Rateios finalizados e pagamentos"
+      >
         {closings.isPending ? <LoadingState /> : null}
         {closings.isError ? (
           <ErrorState
@@ -241,19 +245,19 @@ export function ClosingsPage() {
           />
         ) : null}
         {closings.data?.length === 0 ? (
-          <EmptyState title="Nenhum fechamento ainda" />
+          <EmptyState title="Nenhum rateio finalizado ainda" />
         ) : null}
         {closings.data && closings.data.length > 0 ? (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Lote</TableHead>
+                  <TableHead>Rateio</TableHead>
                   <TableHead>Período</TableHead>
-                  <TableHead>Itens</TableHead>
-                  <TableHead className="text-right">Receita total</TableHead>
+                  <TableHead>Entradas</TableHead>
+                  <TableHead className="text-right">Total recebido</TableHead>
                   <TableHead>Situação</TableHead>
-                  <TableHead>Data</TableHead>
+                  <TableHead>Finalizado em</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -281,7 +285,7 @@ export function ClosingsPage() {
                       <StatusBadge
                         tone={closing.status === 'ATIVO' ? 'success' : 'ghost'}
                       >
-                        {closing.status === 'ATIVO' ? 'Fechado' : 'Estornado'}
+                        {closing.status === 'ATIVO' ? 'Ativo' : 'Estornado'}
                       </StatusBadge>
                     </TableCell>
                     <TableCell className="text-sm">

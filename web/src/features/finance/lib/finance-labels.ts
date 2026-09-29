@@ -7,17 +7,17 @@ export const receiptStatusLabels: Record<
   { label: string; tone: Tone }
 > = {
   RASCUNHO: { label: 'Rascunho', tone: 'ghost' },
-  EM_PREVIA: { label: 'Em prévia', tone: 'info' },
+  EM_PREVIA: { label: 'Em conferência', tone: 'info' },
   BLOQUEADO: { label: 'Bloqueado', tone: 'error' },
-  APTO: { label: 'Apto', tone: 'success' },
-  FECHADO: { label: 'Fechado', tone: 'success' },
+  APTO: { label: 'Pronto para finalizar rateio', tone: 'success' },
+  FECHADO: { label: 'Rateio finalizado', tone: 'success' },
   CANCELADO: { label: 'Cancelado', tone: 'ghost' },
 }
 
 export const creditStatusLabels: Record<string, { label: string; tone: Tone }> =
   {
     ABERTO: { label: 'A pagar', tone: 'warning' },
-    PARCIALMENTE_PAGO: { label: 'Parcialmente pago', tone: 'info' },
+    PARCIALMENTE_PAGO: { label: 'Pago parcialmente', tone: 'info' },
     PAGO: { label: 'Pago', tone: 'success' },
     ESTORNADO: { label: 'Estornado', tone: 'ghost' },
   }
@@ -28,23 +28,38 @@ export const receiptKindLabels: Record<string, string> = {
   MULTA: 'Multa',
 }
 
-export const stageLabels: Record<string, { label: string; base: string }> = {
+/**
+ * Labels operacionais. Os códigos/letras do motor continuam existindo na memória
+ * técnica, mas não são a linguagem principal da operação diária.
+ */
+export const stageLabels: Record<
+  string,
+  { label: string; base: string; help: string }
+> = {
   PROVISAO_RECEITA: {
-    label: 'Provisões sobre a receita (B)',
-    base: 'A · receita total',
+    label: 'Provisão sobre o valor recebido',
+    base: 'valor bruto recebido',
+    help: 'Separa uma parte do valor que entrou antes dos demais rateios.',
   },
   DEDUCAO_LIQUIDA: {
-    label: 'Deduções e participações (E–H)',
-    base: 'C · receita líquida',
+    label: 'Pagamento ou provisão sobre a receita líquida',
+    base: 'receita líquida após as provisões iniciais',
+    help: 'Destina percentual ou valor para pessoas, empresas ou provisões calculadas sobre a receita líquida.',
   },
-  RESERVA: { label: 'Reservas (I)', base: 'valor fixo ou % de C' },
+  RESERVA: {
+    label: 'Reserva para uma finalidade',
+    base: 'valor fixo ou percentual da receita líquida',
+    help: 'Separa dinheiro para uma finalidade específica, com saldo e movimentos próprios.',
+  },
   PARTICIPACAO_RESULTADO: {
-    label: 'Participações sobre o resultado 1 (L)',
-    base: 'J · resultado 1',
+    label: 'Participação sobre o resultado intermediário',
+    base: 'resultado depois das deduções e reservas',
+    help: 'Calcula a participação de um recebedor depois das deduções anteriores.',
   },
   DISTRIBUICAO_FINAL: {
-    label: 'Distribuição final (N)',
-    base: 'M · resultado 2',
+    label: 'Distribuição do saldo final',
+    base: 'saldo disponível para a distribuição final',
+    help: 'Define quem recebe o saldo restante depois das etapas anteriores.',
   },
 }
 
@@ -57,7 +72,7 @@ export const stageOrder = [
 ] as const
 
 export const natureLabels: Record<string, string> = {
-  CREDITO: 'Crédito a recebedor',
+  CREDITO: 'Pagamento para pessoa/empresa',
   PROVISAO: 'Provisão',
   RESERVA: 'Reserva',
 }
@@ -71,11 +86,11 @@ export const stageNatures: Record<string, string[]> = {
 }
 
 export const statementKindLabels: Record<string, string> = {
-  CREDITO: 'Crédito',
+  CREDITO: 'Valor devido',
   AJUSTE: 'Ajuste',
-  BAIXA: 'Baixa',
-  ESTORNO_BAIXA: 'Estorno de baixa',
-  ESTORNO_CREDITO: 'Estorno de crédito',
+  BAIXA: 'Pagamento registrado',
+  ESTORNO_BAIXA: 'Estorno de pagamento',
+  ESTORNO_CREDITO: 'Estorno de valor devido',
 }
 
 // Espelha a autorizacao da API (que e a fonte de verdade): esconde o que o

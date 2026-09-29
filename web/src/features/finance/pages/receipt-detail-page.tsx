@@ -38,12 +38,12 @@ import {
 import { receiptQuery } from '../services/finance.queries'
 
 const auditLabels: Record<string, string> = {
-  CRIADO: 'Registrado',
-  ALTERADO: 'Alterado',
-  PREVIA_CALCULADA: 'Prévia calculada',
-  BLOQUEADO: 'Bloqueado',
-  APROVADO: 'Aprovado para fechamento',
-  CANCELADO: 'Cancelado',
+  CRIADO: 'Entrada registrada',
+  ALTERADO: 'Entrada alterada',
+  PREVIA_CALCULADA: 'Rateio calculado',
+  BLOQUEADO: 'Cálculo bloqueado',
+  APROVADO: 'Rateio aprovado para finalização',
+  CANCELADO: 'Entrada cancelada',
 }
 
 export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
@@ -56,6 +56,7 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
   if (query.isPending) return <LoadingState rows={8} />
   if (query.isError)
     return <ErrorState error={query.error} onRetry={() => query.refetch()} />
+
   const {
     receipt,
     process,
@@ -69,14 +70,14 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
   const open = ['RASCUNHO', 'EM_PREVIA', 'BLOQUEADO', 'APTO'].includes(
     receipt.status,
   )
-  const others = processReceipts.filter((r) => r.id !== receipt.id)
+  const others = processReceipts.filter((item) => item.id !== receipt.id)
 
   return (
     <div className="flex flex-col gap-6">
-      <BackLink label="Recebimentos" to="/pagamentos/recebimentos" />
+      <BackLink label="Entradas" to="/pagamentos/recebimentos" />
       <PageHeader
         description={`${process.code} · ${process.clientName}`}
-        eyebrow="Pagamentos · recebimento"
+        eyebrow="Pagamentos · entrada"
         title={receiptKindLabels[receipt.kind] ?? receipt.kind}
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -86,13 +87,15 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
               disabled={calculate.isPending}
               onClick={() =>
                 calculate.mutate(receipt.id, {
-                  onSuccess: () => toast.success('Prévia recalculada.'),
+                  onSuccess: () => toast.success('Rateio recalculado.'),
                 })
               }
               variant="outline"
             >
               <Calculator className="size-4" />
-              {receipt.status === 'RASCUNHO' ? 'Calcular prévia' : 'Recalcular'}
+              {receipt.status === 'RASCUNHO'
+                ? 'Calcular rateio'
+                : 'Recalcular rateio'}
             </Button>
           ) : null}
           {receipt.status === 'EM_PREVIA' &&
@@ -102,31 +105,31 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
               onClick={() =>
                 approve.mutate(receipt.id, {
                   onSuccess: () =>
-                    toast.success('Aprovado: apto para fechamento.'),
+                    toast.success('Rateio aprovado e pronto para finalizar.'),
                 })
               }
             >
               <CheckCircle2 className="size-4" />
-              Aprovar prévia
+              Aprovar rateio
             </Button>
           ) : null}
           {open && financeAccess.lancar(permissions) ? (
             <Button onClick={() => setCancelOpen(true)} variant="ghost">
               <Ban className="size-4" />
-              Cancelar
+              Cancelar entrada
             </Button>
           ) : null}
         </div>
       </PageHeader>
 
-      <FinanceSection title="Contexto">
+      <FinanceSection title="Entrada registrada">
         <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <Item
-            label="Valor bruto"
+            label="Valor que entrou"
             value={<Money cents={receipt.amountCents} strong />}
           />
           <Item
-            label="Data de liberação"
+            label="Data da entrada/liberação"
             value={formatCivilDate(receipt.releaseDate)}
           />
           <Item
@@ -134,12 +137,12 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
             value={process.housingComplexName ?? 'Sem condomínio'}
           />
           <Item
-            label="Data de cadastro do cliente (seleciona a vigência)"
+            label="Data de cadastro do cliente (define a vigência)"
             value={formatCivilDate(receipt.clientRegistrationDate)}
           />
           <Item label="Referência" value={receipt.reference || '—'} />
           <Item
-            label="Origem do valor"
+            label="Origem do dinheiro"
             value={receipt.originDescription || '—'}
           />
           <Item
@@ -159,15 +162,15 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
       <FinanceSection
         description={
           calculation
-            ? `Calculado em ${formatInstant(receipt.lastCalculatedAt)} · a memória é congelada no fechamento.`
-            : 'Ainda não calculado.'
+            ? `Calculado em ${formatInstant(receipt.lastCalculatedAt)}. Primeiro confira para onde cada centavo foi; os detalhes técnicos ficam recolhidos abaixo.`
+            : 'O rateio ainda não foi calculado.'
         }
-        title="Memória de cálculo"
+        title="Rateio do valor"
       >
         {!calculation ? (
           <p className="text-sm text-muted-foreground">
-            Clique em “Calcular prévia” para localizar as regras e gerar a
-            memória.
+            Clique em “Calcular rateio”. O sistema localizará as regras válidas e
+            mostrará quanto vai para cada pessoa, empresa, provisão e reserva.
           </p>
         ) : calculation.blocked ? (
           <BlocksPanel blocks={calculation.blocks} />
@@ -177,7 +180,10 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
       </FinanceSection>
 
       {credits.length > 0 ? (
-        <FinanceSection title="Créditos gerados">
+        <FinanceSection
+          description="Estes valores nasceram quando o rateio foi finalizado. Pago e saldo são atualizados pelos pagamentos registrados."
+          title="Valores a pagar gerados"
+        >
           <ul className="grid gap-1.5 text-sm">
             {credits.map((credit) => (
               <li
@@ -200,7 +206,7 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
               preload={false}
               to="/pagamentos/fechamentos/$closingId"
             >
-              Fechamento {closing.code}
+              Abrir rateio {closing.code}
               {closing.isActive ? '' : ' (estornado)'}
             </Link>
           ))}
@@ -208,7 +214,7 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <FinanceSection title="Comprovante do recebimento">
+        <FinanceSection title="Comprovante da entrada">
           <AttachmentsPanel
             canUpload={
               financeAccess.lancar(permissions) &&
@@ -219,12 +225,12 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
           />
         </FinanceSection>
         <FinanceSection
-          description="Cada recebimento tem memória própria; reserva única não é duplicada."
-          title="Outros recebimentos do processo"
+          description="Cada entrada do processo tem seu próprio rateio; uma reserva configurada como única por processo não é criada duas vezes."
+          title="Outras entradas do processo"
         >
           {others.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Primeiro recebimento deste processo.
+              Esta é a primeira entrada deste processo.
             </p>
           ) : (
             <ul className="grid gap-1.5 text-sm">
@@ -303,7 +309,7 @@ function CancelDialog({
               { id: receiptId, reason },
               {
                 onSuccess: () => {
-                  toast.success('Recebimento cancelado.')
+                  toast.success('Entrada cancelada.')
                   onClose()
                 },
               },
@@ -311,14 +317,14 @@ function CancelDialog({
           }
           variant="destructive"
         >
-          Cancelar recebimento
+          Cancelar entrada
         </Button>
       }
       icon={Ban}
       maxWidth="md"
       onClose={onClose}
       open
-      title="Cancelar recebimento"
+      title="Cancelar entrada"
       variant="destructive"
     >
       <div className="grid gap-1.5">

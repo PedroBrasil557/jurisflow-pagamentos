@@ -36,7 +36,7 @@ import {
   statementCsvUrl,
 } from '../services/finance.service'
 
-/** P08: créditos, baixas, ajustes e estornos com saldo e rastreio até a origem. */
+/** Extrato operacional: o que foi devido, pago, ajustado e o saldo atual. */
 export function StatementPage() {
   const { permissions } = useSession()
   const recipients = useQuery(recipientsQuery())
@@ -56,9 +56,9 @@ export function StatementPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Quanto cada pessoa ganhou, recebeu e ainda tem a receber. Para ver o que foi pago em um dia, use o mesmo dia no início e no fim."
+        description="Veja quanto cada recebedor passou a ter direito, quanto foi pago e quanto ainda falta. Cada movimento continua ligado ao rateio e ao processo de origem."
         eyebrow="Pagamentos"
-        title="Extratos"
+        title="Extrato"
       >
         {financeAccess.exportar(permissions) ? (
           <Button
@@ -85,9 +85,9 @@ export function StatementPage() {
             value={recipientId}
           >
             <NativeSelectOption value="">Todos</NativeSelectOption>
-            {(recipients.data ?? []).map((r) => (
-              <NativeSelectOption key={r.id} value={r.id}>
-                {r.name}
+            {(recipients.data ?? []).map((recipient) => (
+              <NativeSelectOption key={recipient.id} value={recipient.id}>
+                {recipient.name}
               </NativeSelectOption>
             ))}
           </NativeSelect>
@@ -100,9 +100,9 @@ export function StatementPage() {
             value={housingComplexId}
           >
             <NativeSelectOption value="">Todos</NativeSelectOption>
-            {(complexes.data ?? []).map((c) => (
-              <NativeSelectOption key={c.id} value={c.id}>
-                {c.name}
+            {(complexes.data ?? []).map((complex) => (
+              <NativeSelectOption key={complex.id} value={complex.id}>
+                {complex.name}
               </NativeSelectOption>
             ))}
           </NativeSelect>
@@ -136,11 +136,11 @@ export function StatementPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatPill
               cents={query.data.totals.openingCents}
-              label="Saldo anterior"
+              label="Já devia antes do período"
             />
             <StatPill
               cents={query.data.totals.creditsCents}
-              label="Créditos e ajustes no período"
+              label="Novos valores devidos"
             />
             <StatPill
               cents={query.data.totals.paidCents}
@@ -148,12 +148,12 @@ export function StatementPage() {
             />
             <StatPill
               cents={query.data.totals.closingBalanceCents}
-              label="Saldo a receber"
+              label="Ainda falta pagar"
             />
           </div>
           {query.data.entries.length === 0 ? (
             <EmptyState
-              description="Nenhum crédito ou baixa para os filtros."
+              description="Nenhum valor devido, pagamento ou ajuste para os filtros selecionados."
               title="Extrato vazio"
             />
           ) : (
@@ -162,11 +162,11 @@ export function StatementPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Data</TableHead>
-                    <TableHead>Movimento</TableHead>
+                    <TableHead>O que aconteceu</TableHead>
                     <TableHead>Recebedor</TableHead>
                     <TableHead>Origem</TableHead>
-                    <TableHead className="text-right">Valor</TableHead>
-                    <TableHead className="text-right">Saldo</TableHead>
+                    <TableHead className="text-right">Movimento</TableHead>
+                    <TableHead className="text-right">Saldo a receber</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -189,22 +189,24 @@ export function StatementPage() {
                       <TableCell className="text-xs text-muted-foreground">
                         <Link
                           className="text-primary"
-                          params={{ closingId: entry.closingId }}
-                          preload={false}
-                          to="/pagamentos/fechamentos/$closingId"
-                        >
-                          {entry.closingCode}
-                        </Link>{' '}
-                        · etapa {entry.stepCode} · regra v{entry.ruleVersion} ·{' '}
-                        <Link
-                          className="text-primary"
                           params={{ receiptId: entry.receiptId }}
                           preload={false}
                           to="/pagamentos/recebimentos/$receiptId"
                         >
                           {entry.processCode}
                         </Link>{' '}
-                        · {entry.housingComplexName ?? '—'}
+                        · {entry.clientName} · {entry.housingComplexName ?? '—'}
+                        <span className="block">
+                          Rateio{' '}
+                          <Link
+                            className="text-primary"
+                            params={{ closingId: entry.closingId }}
+                            preload={false}
+                            to="/pagamentos/fechamentos/$closingId"
+                          >
+                            {entry.closingCode}
+                          </Link>
+                        </span>
                       </TableCell>
                       <TableCell className="text-right">
                         <Money cents={entry.amountCents} />
