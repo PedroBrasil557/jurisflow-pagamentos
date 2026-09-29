@@ -1115,6 +1115,65 @@ suite(
       ).toBe(true)
     })
 
+    test('comprovantes privados: upload validado, download íntegro e escopo', async () => {
+      const { uploadAttachment, listAttachments, downloadAttachment } =
+        await import('./finance.attachments.service')
+      const pdf = new TextEncoder().encode('%PDF-1.4\n% comprovante ficticio\n')
+      let attachment: { id: string } | undefined
+      try {
+        attachment = await uploadAttachment(
+          admin,
+          { kind: 'receipt', id: firstReceiptId },
+          {
+            bytes: pdf,
+            name: 'comprovante-teste.pdf',
+            type: 'application/pdf',
+          },
+        )
+      } catch (error) {
+        if ((error as ServiceError).statusCode === 503) {
+          console.warn('S3 local indisponível: teste de comprovantes pulado.')
+          return
+        }
+        throw error
+      }
+      const list = await listAttachments(admin, {
+        kind: 'receipt',
+        id: firstReceiptId,
+      })
+      expect(list.map((a) => a.id)).toContain(attachment?.id as string)
+      const file = await downloadAttachment(admin, attachment?.id as string)
+      expect(new TextDecoder().decode(file.bytes)).toBe(
+        new TextDecoder().decode(pdf),
+      )
+      // conteudo que nao e PDF declarado como PDF: recusado pela assinatura
+      await expectFinanceError(
+        uploadAttachment(
+          admin,
+          { kind: 'receipt', id: firstReceiptId },
+          {
+            bytes: new TextEncoder().encode('<script>'),
+            name: 'x.pdf',
+            type: 'application/pdf',
+          },
+        ),
+        415,
+      )
+      // fora do escopo (condominio 1): nem lista nem baixa
+      await expectFinanceError(
+        downloadAttachment(viewer, attachment?.id as string),
+        404,
+      )
+      await expectFinanceError(
+        listAttachments(viewer, { kind: 'receipt', id: firstReceiptId }),
+        404,
+      )
+      await expectFinanceError(
+        downloadAttachment(noAccess, attachment?.id as string),
+        403,
+      )
+    })
+
     test('exclusão de processo: bloqueada com financeiro, preservada sem', async () => {
       const { deleteProcess } = await import('../processes/processes.service')
       await expectFinanceError(
