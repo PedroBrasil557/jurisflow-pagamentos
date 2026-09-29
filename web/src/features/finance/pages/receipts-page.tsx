@@ -44,9 +44,9 @@ export function ReceiptsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Entradas financeiras vinculadas a processo. Recebimento não significa pagamento aos colaboradores."
+        description="Toda entrada de dinheiro começa aqui. Depois ela é calculada, conferida e transformada em destinos visíveis para cada centavo."
         eyebrow="Pagamentos"
-        title="Recebimentos"
+        title="Entradas"
       >
         {financeAccess.lancar(permissions) ? (
           <Button asChild>
@@ -56,7 +56,7 @@ export function ReceiptsPage() {
               to="/pagamentos/recebimentos/novo"
             >
               <Plus className="size-4" />
-              Novo recebimento
+              Registrar entrada
             </Link>
           </Button>
         ) : null}
@@ -64,7 +64,7 @@ export function ReceiptsPage() {
       <div className="flex flex-col gap-2 sm:flex-row">
         <div className="flex-1">
           <SearchInput
-            aria-label="Buscar recebimentos"
+            aria-label="Buscar entradas"
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar por processo, cliente ou referência"
             value={search}
@@ -72,7 +72,7 @@ export function ReceiptsPage() {
         </div>
         <NativeSelect
           aria-label="Filtrar por situação"
-          className="sm:w-56"
+          className="sm:w-64"
           onChange={(e) => setStatus(e.target.value as ReceiptStatus | '')}
           value={status}
         >
@@ -92,10 +92,10 @@ export function ReceiptsPage() {
         <EmptyState
           description={
             search || status
-              ? 'Nenhum resultado para o filtro.'
-              : 'Nenhum recebimento registrado.'
+              ? 'Nenhuma entrada encontrada para o filtro.'
+              : 'Nenhuma entrada de dinheiro foi registrada ainda.'
           }
-          title="Sem recebimentos"
+          title="Sem entradas"
         />
       ) : null}
       {query.data && query.data.length > 0 ? (
@@ -105,10 +105,10 @@ export function ReceiptsPage() {
               <TableRow>
                 <TableHead>Processo / cliente</TableHead>
                 <TableHead>Condomínio</TableHead>
-                <TableHead>Tipo</TableHead>
-                <TableHead>Liberação</TableHead>
-                <TableHead className="text-right">Valor bruto</TableHead>
-                <TableHead>Situação</TableHead>
+                <TableHead>Origem</TableHead>
+                <TableHead>Data da entrada</TableHead>
+                <TableHead className="text-right">Valor que entrou</TableHead>
+                <TableHead>Etapa atual</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
