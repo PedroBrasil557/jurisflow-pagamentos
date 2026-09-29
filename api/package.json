@@ -1,5 +1,6 @@
 {
   "name": "jurisflow-api",
+  "type": "module",
   "scripts": {
     "create:admin": "bun run src/scripts/create-admin.ts",
     "dev": "bun run --hot src/index.ts",
