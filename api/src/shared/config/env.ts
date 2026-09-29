@@ -107,19 +107,39 @@ const envSchema = z.object({
     ),
 })
 
-// O preview usa seu próprio domínio de deployment para cookies na mesma origem.
-const vercelOrigin = process.env.VERCEL_URL
+// Em producao, VERCEL_URL pode apontar para o deployment imutavel enquanto o
+// navegador usa o dominio estavel do projeto. Better Auth valida o header Origin,
+// portanto a URL base de producao deve preferir VERCEL_PROJECT_PRODUCTION_URL.
+// Em previews, continuamos usando a URL especifica daquele deployment.
+const vercelDeploymentOrigin = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
   : undefined
+const vercelProductionOrigin = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : undefined
+const vercelRuntimeOrigin =
+  process.env.VERCEL_ENV === 'production'
+    ? (vercelProductionOrigin ?? vercelDeploymentOrigin)
+    : (vercelDeploymentOrigin ?? vercelProductionOrigin)
+
+// Mantemos confiaveis somente as origens explicitas do projeto/deployment,
+// alem de TRUSTED_ORIGINS configuradas manualmente. Nao usamos wildcard.
+const vercelTrustedOrigins = [
+  process.env.TRUSTED_ORIGINS,
+  vercelProductionOrigin,
+  vercelDeploymentOrigin,
+]
+  .filter((value): value is string => Boolean(value))
+  .join(',')
 
 const parsedEnv = envSchema.parse({
   HOST: process.env.HOST,
   PORT: process.env.PORT,
   DATABASE_URL: process.env.DATABASE_URL,
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
-  BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? vercelOrigin,
-  WEB_URL: process.env.WEB_URL ?? vercelOrigin,
-  TRUSTED_ORIGINS: process.env.TRUSTED_ORIGINS,
+  BETTER_AUTH_URL: process.env.BETTER_AUTH_URL ?? vercelRuntimeOrigin,
+  WEB_URL: process.env.WEB_URL ?? vercelRuntimeOrigin,
+  TRUSTED_ORIGINS: vercelTrustedOrigins || undefined,
   S3_ENDPOINT: process.env.S3_ENDPOINT,
   S3_PUBLIC_URL: process.env.S3_PUBLIC_URL,
   S3_ACCESS_KEY: process.env.S3_ACCESS_KEY,
