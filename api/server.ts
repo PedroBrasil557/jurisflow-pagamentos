@@ -152,7 +152,12 @@ bootstrapApp.get('/api/system/bootstrap-check', async (c) => {
 })
 
 bootstrapApp.get('/api/system/auth-origin-check', async (c) => {
-  const { env } = await import('./src/shared/config/env')
+  const [{ env }, { auth }] = await Promise.all([
+    import('./src/shared/config/env'),
+    import('./src/modules/auth/auth.service'),
+  ])
+  const authContext = await auth.$context
+  const probeOrigin = env.webUrl
 
   return c.json(
     {
@@ -167,6 +172,14 @@ bootstrapApp.get('/api/system/auth-origin-check', async (c) => {
         betterAuthUrl: env.betterAuthUrl,
         webUrl: env.webUrl,
         trustedOrigins: env.trustedOrigins,
+      },
+      authContext: {
+        baseURL: authContext.baseURL,
+        trustedOrigins: authContext.trustedOrigins,
+        probeOrigin,
+        probeIsTrusted: authContext.isTrustedOrigin(probeOrigin, {
+          allowRelativePaths: false,
+        }),
       },
       vercel: {
         environment: process.env.VERCEL_ENV ?? null,
