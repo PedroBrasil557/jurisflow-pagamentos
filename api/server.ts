@@ -8,6 +8,79 @@ type RuntimeApp = {
   fetch: (request: Request) => Response | Promise<Response>
 }
 
+type ModuleProbe = {
+  name: string
+  load: () => Promise<unknown>
+}
+
+const routeModuleProbes: ModuleProbe[] = [
+  { name: 'admin.routes', load: () => import('./src/modules/admin/admin.routes') },
+  { name: 'auth.routes', load: () => import('./src/modules/auth/auth.routes') },
+  { name: 'auth.service', load: () => import('./src/modules/auth/auth.service') },
+  {
+    name: 'auth-audit.routes',
+    load: () => import('./src/modules/auth-audit/auth-audit.routes'),
+  },
+  {
+    name: 'caixa-quitacao.routes',
+    load: () => import('./src/modules/caixa-quitacao/caixa-quitacao.routes'),
+  },
+  {
+    name: 'dashboard.routes',
+    load: () => import('./src/modules/dashboard/dashboard.routes'),
+  },
+  {
+    name: 'housing-complexes.routes',
+    load: () => import('./src/modules/housing-complexes/housing-complexes.routes'),
+  },
+  {
+    name: 'permissions.admin.routes',
+    load: () => import('./src/modules/permissions/permissions.admin.routes'),
+  },
+  {
+    name: 'processes.routes',
+    load: () => import('./src/modules/processes/processes.routes'),
+  },
+  {
+    name: 'quitacao-queue.internal.routes',
+    load: () => import('./src/modules/quitacao-queue/quitacao-queue.internal.routes'),
+  },
+  {
+    name: 'settings.routes',
+    load: () => import('./src/modules/settings/settings.routes'),
+  },
+  {
+    name: 'titulares-caixa.routes',
+    load: () => import('./src/modules/titulares-caixa/titulares-caixa.routes'),
+  },
+  {
+    name: 'system.routes',
+    load: () => import('./src/modules/system/system.routes'),
+  },
+  {
+    name: 'telemetry.routes',
+    load: () => import('./src/modules/telemetry/telemetry.routes'),
+  },
+  {
+    name: 'middleware.cors',
+    load: () => import('./src/shared/middleware/cors'),
+  },
+  {
+    name: 'middleware.logger',
+    load: () => import('./src/shared/middleware/logger'),
+  },
+  {
+    name: 'middleware.request-id',
+    load: () => import('./src/shared/middleware/request-id'),
+  },
+  {
+    name: 'middleware.session',
+    load: () => import('./src/shared/middleware/session'),
+  },
+  { name: 'routes.index', load: () => import('./src/routes') },
+  { name: 'app', load: () => import('./src/app') },
+]
+
 let runtimeAppPromise: Promise<RuntimeApp> | null = null
 
 function getRuntimeApp() {
@@ -73,6 +146,47 @@ bootstrapApp.get('/api/system/bootstrap-check', async (c) => {
       ok: true,
       stage: 'ready',
       runtime: process.env.VERCEL ? 'vercel' : 'local',
+    },
+    200,
+  )
+})
+
+bootstrapApp.get('/api/system/module-check', async (c) => {
+  const loaded: string[] = []
+
+  for (const probe of routeModuleProbes) {
+    try {
+      await probe.load()
+      loaded.push(probe.name)
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : 'UnknownError'
+      const errorMessage =
+        error instanceof Error ? error.message.slice(0, 300) : 'unknown error'
+
+      console.error('Vercel module probe failed', {
+        module: probe.name,
+        error,
+      })
+
+      return c.json(
+        {
+          ok: false,
+          stage: 'module-import',
+          module: probe.name,
+          errorName,
+          errorMessage,
+          loaded,
+        },
+        503,
+      )
+    }
+  }
+
+  return c.json(
+    {
+      ok: true,
+      stage: 'all-modules-loaded',
+      loaded,
     },
     200,
   )
