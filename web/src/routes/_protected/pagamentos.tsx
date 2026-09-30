@@ -42,7 +42,7 @@ function PaymentsLayout() {
             className="shrink-0 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground no-underline transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
             key={section.to}
             preload={false}
-            to={section.to}
+            to={section.to as never}
           >
             {section.label}
           </Link>
