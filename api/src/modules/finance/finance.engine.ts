@@ -108,6 +108,7 @@ export type FinanceEngineRule = {
   validFrom: string
   /** YYYY-MM-DD inclusivo; null = aberta */
   validTo: string | null
+  /** vazio = regra global, aplicada a qualquer condominio do processo */
   housingComplexIds: readonly string[]
   origin: FinanceConfigOrigin
 }
@@ -256,8 +257,9 @@ export function ruleAppliesToComplex(
   rule: FinanceEngineRule,
   housingComplexId: string | null,
 ) {
+  if (housingComplexId === null) return false
   return (
-    housingComplexId !== null &&
+    rule.housingComplexIds.length === 0 ||
     rule.housingComplexIds.includes(housingComplexId)
   )
 }
@@ -302,9 +304,6 @@ export function validateRuleShape(rule: FinanceEngineRule): string[] {
   }
   if (rule.validTo !== null && rule.validTo < rule.validFrom) {
     errors.push('O fim da vigência deve ser igual ou posterior ao início.')
-  }
-  if (rule.housingComplexIds.length === 0) {
-    errors.push('Vincule pelo menos um condomínio.')
   }
   if (rule.valueType === 'PERCENTUAL') {
     if (rule.fixedCents !== null) {
@@ -357,9 +356,10 @@ function rangesOverlap(
 }
 
 /**
- * Sobreposicao ambigua (V3 §7): mesmo contexto/etapa, algum condominio em comum e
- * vigencias que se interceptam. Versoes da MESMA linhagem sao ignoradas quando
- * `ignoreLineageId` e informado (nova versao encerra a anterior).
+ * Sobreposicao ambigua (V3 §7): mesmo contexto/etapa, escopo global ou algum
+ * condominio em comum e vigencias que se interceptam. Versoes da MESMA linhagem
+ * sao ignoradas quando `ignoreLineageId` e informado (nova versao encerra a
+ * anterior).
  */
 export function findRuleConflicts(
   candidate: FinanceEngineRule,
@@ -372,7 +372,11 @@ export function findRuleConflicts(
     if (other.id === candidate.id) continue
     if (ignoreLineageId && other.lineageId === ignoreLineageId) continue
     if (ruleContextKey(other) !== key) continue
+    const candidateGlobal = candidate.housingComplexIds.length === 0
+    const otherGlobal = other.housingComplexIds.length === 0
     if (
+      !candidateGlobal &&
+      !otherGlobal &&
       !other.housingComplexIds.some((id) =>
         candidate.housingComplexIds.includes(id),
       )
@@ -383,7 +387,7 @@ export function findRuleConflicts(
     conflicts.push({
       ruleId: candidate.id,
       conflictingRuleId: other.id,
-      message: `${ruleDisplayName(other)} já possui regra em ${stageLabels[other.stage]} com condomínio e vigência sobrepostos (${other.validFrom} a ${other.validTo ?? 'aberta'}).`,
+      message: `${ruleDisplayName(other)} já possui regra em ${stageLabels[other.stage]} com escopo e vigência sobrepostos (${other.validFrom} a ${other.validTo ?? 'aberta'}).`,
     })
   }
   return conflicts
