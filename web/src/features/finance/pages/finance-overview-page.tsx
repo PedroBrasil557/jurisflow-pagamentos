@@ -16,6 +16,7 @@ import {
   FinanceSection,
   LoadingState,
   Money,
+  StatPill,
 } from '../components/finance-ui'
 import { financeAccess } from '../lib/finance-labels'
 import {
@@ -126,67 +127,57 @@ export function FinanceOverviewPage() {
           ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <SummaryCard
+            <StatPill
               cents={closedGrossCents}
-              hint="dinheiro recebido"
               label="Entrou"
+              hint="Dinheiro dos rateios já finalizados"
             />
-            <SummaryCard
+            <StatPill
               cents={separatedCents}
-              hint="provisões + reservas"
               label="Separado"
+              hint="Provisões + reservas"
             />
-            <SummaryCard
+            <StatPill
               cents={recipientCents}
-              hint="valor destinado a pessoas e empresas"
               label="Devido aos recebedores"
+              hint="Valor destinado a pessoas e empresas"
             />
-            <SummaryCard
+            <StatPill
               cents={data.credits.balanceCents}
-              hint="pendência atual"
               label="Ainda falta pagar"
+              hint="Pendência atual dos recebedores"
             />
           </div>
 
           <FinanceSection title="Para onde foi o dinheiro?">
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
+            <div className="grid gap-4 xl:grid-cols-[1fr_240px] xl:items-stretch">
               <div className="overflow-hidden rounded-lg border border-border">
-                <div className="grid grid-cols-[1fr_auto] gap-4 border-b border-border bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground">
+                <div className="grid grid-cols-[1fr_auto] gap-4 bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground">
                   <span>Destino</span>
                   <span>Valor</span>
                 </div>
-                <DestinationRow label="Provisões" cents={provisionCents} />
-                <DestinationRow label="Reservas" cents={reserveCents} />
-                <DestinationRow label="Recebedores" cents={recipientCents} />
-                <DestinationRow
-                  cents={allocatedCents}
-                  label="Total destinado"
-                  strong
-                />
+                <MoneyRow label="Provisões" cents={provisionCents} />
+                <MoneyRow label="Reservas" cents={reserveCents} />
+                <MoneyRow label="Recebedores" cents={recipientCents} />
+                <div className="grid grid-cols-[1fr_auto] items-center gap-4 border-t border-border px-4 py-3 text-sm font-semibold">
+                  <span>Total destinado</span>
+                  <Money cents={allocatedCents} strong />
+                </div>
               </div>
 
-              <div className="flex flex-col items-center justify-center gap-3 border-t border-border pt-5 text-center lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+              <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border p-4 text-center">
                 <div
-                  className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold ${
-                    balanced
-                      ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-500'
-                      : 'border-destructive/50 bg-destructive/10 text-destructive'
-                  }`}
+                  className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold ${balanced ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600' : 'border-destructive/50 bg-destructive/5 text-destructive'}`}
                 >
                   {balanced ? (
-                    <CheckCircle2 className="size-5" />
+                    <CheckCircle2 className="size-4" />
                   ) : (
-                    <TriangleAlert className="size-5" />
+                    <TriangleAlert className="size-4" />
                   )}
-                  {balanced ? 'Tudo conciliado' : 'Diferença encontrada'}
+                  {balanced ? 'Tudo conciliado' : 'Há valor sem destino'}
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  Diferença{' '}
-                  <Money
-                    cents={differenceCents}
-                    className="ml-1 text-foreground"
-                    strong
-                  />
+                <div className="text-xs text-muted-foreground">
+                  Diferença <Money cents={differenceCents} strong />
                 </div>
               </div>
             </div>
@@ -197,43 +188,11 @@ export function FinanceOverviewPage() {
   )
 }
 
-function SummaryCard({
-  label,
-  cents,
-  hint,
-}: {
-  label: string
-  cents: number
-  hint: string
-}) {
+function MoneyRow({ label, cents }: { label: string; cents: number }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="text-sm text-muted-foreground">{label}</div>
-      <div className="mt-2 text-2xl font-semibold tabular-nums">
-        <Money cents={cents} strong />
-      </div>
-      <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
-    </div>
-  )
-}
-
-function DestinationRow({
-  label,
-  cents,
-  strong = false,
-}: {
-  label: string
-  cents: number
-  strong?: boolean
-}) {
-  return (
-    <div
-      className={`grid grid-cols-[1fr_auto] gap-4 border-b border-border px-4 py-3 text-sm last:border-b-0 ${
-        strong ? 'bg-muted/20 font-semibold' : ''
-      }`}
-    >
+    <div className="grid grid-cols-[1fr_auto] items-center gap-4 border-t border-border px-4 py-3 text-sm first:border-t-0">
       <span>{label}</span>
-      <Money cents={cents} strong={strong} />
+      <Money cents={cents} />
     </div>
   )
 }
