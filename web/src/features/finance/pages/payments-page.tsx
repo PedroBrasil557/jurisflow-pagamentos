@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { type UseQueryResult, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
   ChevronDown,
@@ -35,6 +35,7 @@ import {
   formatCents,
   formatCivilDate,
 } from '../lib/finance-money'
+import type { AllocationPolicy } from '../services/finance-quick.service'
 import {
   allocationPolicyQuery,
   creditsQuery,
@@ -83,7 +84,8 @@ async function fetchPaymentRecipients(search: string, page: number) {
 }
 
 function summaryTone(summary: RecipientSummary) {
-  if (summary.balanceCents <= 0) return { label: 'Pago', tone: 'success' as const }
+  if (summary.balanceCents <= 0)
+    return { label: 'Pago', tone: 'success' as const }
   if (summary.paidCents > 0)
     return { label: 'Parcial', tone: 'info' as const }
   return { label: 'A pagar', tone: 'warning' as const }
@@ -206,7 +208,9 @@ export function PaymentsPage() {
               <div className="flex gap-2">
                 <Button
                   disabled={data.pagination.page <= 1 || query.isFetching}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  onClick={() =>
+                    setPage((current) => Math.max(1, current - 1))
+                  }
                   size="sm"
                   variant="outline"
                 >
@@ -239,13 +243,7 @@ export function PaymentsPage() {
 function AllocationPolicySection({
   policy,
 }: {
-  policy: ReturnType<typeof useQuery<
-    ReturnType<typeof allocationPolicyQuery> extends { queryFn: infer T }
-      ? T extends (...args: never[]) => Promise<infer R>
-        ? R
-        : never
-      : never
-  >>
+  policy: UseQueryResult<AllocationPolicy, Error>
 }) {
   if (policy.isPending) {
     return (
@@ -270,7 +268,7 @@ function AllocationPolicySection({
       description="Você pode ver a política e os grupos de distribuição. Nomes e valores individuais dos outros recebedores não aparecem nesta visão."
       title="Como o dinheiro é distribuído"
     >
-      {policy.data && policy.data.items.length > 0 ? (
+      {policy.data.items.length > 0 ? (
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -306,7 +304,8 @@ function AllocationPolicySection({
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
-          A política de distribuição ainda não foi configurada pelo administrador.
+          A política de distribuição ainda não foi configurada pelo
+          administrador.
         </p>
       )}
     </FinanceSection>
@@ -394,7 +393,9 @@ function RecipientCard({
                     <TableHead className="text-right">Devido</TableHead>
                     <TableHead className="text-right">Pago</TableHead>
                     <TableHead className="text-right">Falta</TableHead>
-                    {showRateioLink ? <TableHead className="w-32">Ação</TableHead> : null}
+                    {showRateioLink ? (
+                      <TableHead className="w-32">Ação</TableHead>
+                    ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
