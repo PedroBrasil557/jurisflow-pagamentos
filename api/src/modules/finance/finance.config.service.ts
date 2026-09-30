@@ -159,6 +159,7 @@ export type RuleInput = {
   uniqueness?: FinanceUniquenessPolicy
   validFrom: string
   validTo?: string | null
+  /** vazio = escopo global (todos os processos com condominio) */
   housingComplexIds: string[]
   notes?: string
 }
@@ -353,12 +354,14 @@ export async function insertRuleVersion(
     notes: input.notes?.trim() ?? '',
     createdByUserId: access.actor.id,
   })
-  await tx.insert(financeRuleHousingComplex).values(
-    candidate.housingComplexIds.map((housingComplexId) => ({
-      ruleId: id,
-      housingComplexId,
-    })),
-  )
+  if (candidate.housingComplexIds.length > 0) {
+    await tx.insert(financeRuleHousingComplex).values(
+      candidate.housingComplexIds.map((housingComplexId) => ({
+        ruleId: id,
+        housingComplexId,
+      })),
+    )
+  }
   await writeAudit(tx, {
     actor: access.actor,
     entityType: 'rule',
