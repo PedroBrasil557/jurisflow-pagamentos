@@ -79,15 +79,15 @@ export function ClosingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Primeiro finalize o rateio conferido. Depois, dentro de cada rateio finalizado, registre os pagamentos realmente feitos para cada recebedor."
+        description="Confira como cada entrada foi repartida e finalize apenas quando todos os destinos estiverem corretos."
         eyebrow="Pagamentos"
-        title="Rateios e pagamentos"
+        title="Rateios"
       />
 
       {canClose ? (
         <FinanceSection
           description="Só aparecem entradas cuja prévia já foi conferida e aprovada."
-          title="1. Finalizar rateio"
+          title="Finalizar rateio"
         >
           {ready.isPending ? <LoadingState rows={2} /> : null}
           {ready.data?.length === 0 ? (
@@ -179,8 +179,8 @@ export function ClosingsPage() {
                     <AlertDescription>
                       {preview.items.length} entrada(s), total recebido{' '}
                       <Money cents={preview.grossCents} strong />. Ao finalizar,
-                      os valores ficam congelados e viram obrigações de
-                      pagamento para cada recebedor.
+                      os destinos ficam congelados e os valores das pessoas e
+                      empresas passam a aparecer na aba Pagamentos.
                     </AlertDescription>
                   </Alert>
                 ) : (
@@ -234,8 +234,8 @@ export function ClosingsPage() {
       ) : null}
 
       <FinanceSection
-        description="Abra um rateio para ver quem tem a receber, quanto já foi pago e qual saldo continua aberto."
-        title="2. Rateios finalizados e pagamentos"
+        description="Histórico dos rateios já congelados. Abra um item para consultar a memória e os valores gerados."
+        title="Rateios finalizados"
       >
         {closings.isPending ? <LoadingState /> : null}
         {closings.isError ? (
@@ -285,7 +285,7 @@ export function ClosingsPage() {
                       <StatusBadge
                         tone={closing.status === 'ATIVO' ? 'success' : 'ghost'}
                       >
-                        {closing.status === 'ATIVO' ? 'Ativo' : 'Estornado'}
+                        {closing.status === 'ATIVO' ? 'Finalizado' : 'Estornado'}
                       </StatusBadge>
                     </TableCell>
                     <TableCell className="text-sm">
