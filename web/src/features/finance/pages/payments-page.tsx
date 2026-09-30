@@ -1,6 +1,12 @@
-import { useQuery } from '@tanstack/react-query'
+import { type UseQueryResult, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { ChevronDown, ChevronUp, ExternalLink, UserRound } from 'lucide-react'
+import {
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  ShieldCheck,
+  UserRound,
+} from 'lucide-react'
 import { useDeferredValue, useState } from 'react'
 import { Button } from '#/components/ui/button'
 import {
@@ -11,6 +17,7 @@ import {
   TableHeader,
   TableRow,
 } from '#/components/ui/table'
+import { useSession } from '@/features/auth/hooks/use-session'
 import { PageHeader } from '@/shared/components/page-header'
 import { SearchInput } from '@/shared/components/search-input'
 import { StatusBadge } from '@/shared/components/status-badge'
@@ -18,11 +25,21 @@ import { getErrorMessage } from '@/shared/services/api-error'
 import {
   EmptyState,
   ErrorState,
+  FinanceSection,
   LoadingState,
   Money,
   StatPill,
 } from '../components/finance-ui'
-import { creditsQuery } from '../services/finance.queries'
+import {
+  formatBasisPoints,
+  formatCents,
+  formatCivilDate,
+} from '../lib/finance-money'
+import type { AllocationPolicy } from '../services/finance-quick.service'
+import {
+  allocationPolicyQuery,
+  creditsQuery,
+} from '../services/finance.queries'
 
 type RecipientSummary = {
   recipientId: string
@@ -67,19 +84,26 @@ async function fetchPaymentRecipients(search: string, page: number) {
 }
 
 function summaryTone(summary: RecipientSummary) {
-  if (summary.balanceCents <= 0) return { label: 'Pago', tone: 'success' as const }
+  if (summary.balanceCents <= 0)
+    return { label: 'Pago', tone: 'success' as const }
   if (summary.paidCents > 0)
     return { label: 'Parcial', tone: 'info' as const }
   return { label: 'A pagar', tone: 'warning' as const }
 }
 
 export function PaymentsPage() {
+  const { permissions } = useSession()
+  const isAdmin = permissions.isAdmin
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const deferredSearch = useDeferredValue(search.trim())
+  const deferredSearch = useDeferredValue(isAdmin ? search.trim() : '')
   const query = useQuery({
-    queryKey: ['finance', 'payment-recipients', deferredSearch, page],
-    queryFn: () => fetchPaymentRecipients(deferredSearch, page),
+    queryKey: ['finance', 'payment-recipients', deferredSearch, page, isAdmin],
+    queryFn: () => fetchPaymentRecipients(deferredSearch, isAdmin ? page : 1),
+  })
+  const policy = useQuery({
+    ...allocationPolicyQuery(),
+    enabled: !isAdmin,
   })
 
   const data = query.data
@@ -87,10 +111,16 @@ export function PaymentsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Veja quanto cada recebedor tem direito, quanto já foi pago e qual valor ainda está pendente."
-        eyebrow="Pagamentos"
-        title="Pagamentos por recebedor"
+        description={
+          isAdmin
+            ? 'Veja quanto cada recebedor tem direito, quanto já foi pago e qual valor ainda está pendente.'
+            : 'Acompanhe somente a sua participação: quanto já foi gerado, pago e quanto ainda falta receber.'
+        }
+        eyebrow={isAdmin ? 'Pagamentos · Administrador' : 'Pagamentos'}
+        title={isAdmin ? 'Pagamentos por recebedor' : 'Minha participação'}
       />
+
+      {!isAdmin ? <AllocationPolicySection policy={policy} /> : null}
 
       {query.isPending ? <LoadingState /> : null}
       {query.isError ? (
@@ -102,52 +132,74 @@ export function PaymentsPage() {
           <div className="grid gap-3 sm:grid-cols-3">
             <StatPill
               cents={data.totals.dueCents}
-              label="Total devido"
-              hint="Direito gerado pelos rateios finalizados"
+              label={isAdmin ? 'Total devido' : 'Meu total gerado'}
+              hint={
+                isAdmin
+                  ? 'Direito gerado pelos rateios finalizados'
+                  : 'Créditos gerados pelos seus rateios finalizados'
+              }
             />
             <StatPill
               cents={data.totals.paidCents}
-              label="Total pago"
+              label={isAdmin ? 'Total pago' : 'Já recebi'}
               hint="Pagamentos já registrados"
             />
             <StatPill
               cents={data.totals.balanceCents}
-              label="Ainda falta pagar"
-              hint="Saldo aberto de todos os recebedores"
+              label={isAdmin ? 'Ainda falta pagar' : 'Tenho a receber'}
+              hint={
+                isAdmin
+                  ? 'Saldo aberto de todos os recebedores'
+                  : 'Seu saldo pessoal ainda em aberto'
+              }
             />
           </div>
 
-          <SearchInput
-            aria-label="Buscar recebedor ou processo"
-            onChange={(event) => {
-              setSearch(event.target.value)
-              setPage(1)
-            }}
-            placeholder="Buscar por recebedor, função, processo, cliente ou condomínio"
-            value={search}
-          />
+          {isAdmin ? (
+            <SearchInput
+              aria-label="Buscar recebedor ou processo"
+              onChange={(event) => {
+                setSearch(event.target.value)
+                setPage(1)
+              }}
+              placeholder="Buscar por recebedor, função, processo, cliente ou condomínio"
+              value={search}
+            />
+          ) : null}
 
           {data.pagination.total === 0 ? (
             <EmptyState
               description={
-                deferredSearch
-                  ? 'Nenhum recebedor corresponde à busca.'
-                  : 'Os valores a pagar aparecem aqui depois que um rateio é finalizado.'
+                isAdmin
+                  ? deferredSearch
+                    ? 'Nenhum recebedor corresponde à busca.'
+                    : 'Os valores a pagar aparecem aqui depois que um rateio é finalizado.'
+                  : 'Sua conta ainda não possui créditos vinculados. O administrador deve vincular seu usuário ao seu cadastro de recebedor; depois disso somente os seus valores aparecerão aqui.'
               }
-              icon={UserRound}
-              title={deferredSearch ? 'Nenhum resultado' : 'Nenhum valor a pagar ainda'}
+              icon={isAdmin ? UserRound : ShieldCheck}
+              title={
+                isAdmin && deferredSearch
+                  ? 'Nenhum resultado'
+                  : isAdmin
+                    ? 'Nenhum valor a pagar ainda'
+                    : 'Nenhum valor pessoal disponível'
+              }
             />
           ) : null}
 
           {data.items.length > 0 ? (
             <div className="grid gap-3">
               {data.items.map((summary) => (
-                <RecipientCard key={summary.recipientId} summary={summary} />
+                <RecipientCard
+                  key={summary.recipientId}
+                  showRateioLink={isAdmin}
+                  summary={summary}
+                />
               ))}
             </div>
           ) : null}
 
-          {data.pagination.totalPages > 1 ? (
+          {isAdmin && data.pagination.totalPages > 1 ? (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-4 py-3 text-sm">
               <span className="text-muted-foreground">
                 {data.pagination.total} recebedor(es) · página{' '}
@@ -156,7 +208,9 @@ export function PaymentsPage() {
               <div className="flex gap-2">
                 <Button
                   disabled={data.pagination.page <= 1 || query.isFetching}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  onClick={() =>
+                    setPage((current) => Math.max(1, current - 1))
+                  }
                   size="sm"
                   variant="outline"
                 >
@@ -186,7 +240,85 @@ export function PaymentsPage() {
   )
 }
 
-function RecipientCard({ summary }: { summary: RecipientSummary }) {
+function AllocationPolicySection({
+  policy,
+}: {
+  policy: UseQueryResult<AllocationPolicy, Error>
+}) {
+  if (policy.isPending) {
+    return (
+      <FinanceSection
+        description="Percentuais gerais sem expor quanto cada colega recebe."
+        title="Como o dinheiro é distribuído"
+      >
+        <LoadingState rows={3} />
+      </FinanceSection>
+    )
+  }
+  if (policy.isError) {
+    return (
+      <FinanceSection title="Como o dinheiro é distribuído">
+        <ErrorState error={policy.error} onRetry={() => policy.refetch()} />
+      </FinanceSection>
+    )
+  }
+
+  return (
+    <FinanceSection
+      description="Você pode ver a política e os grupos de distribuição. Nomes e valores individuais dos outros recebedores não aparecem nesta visão."
+      title="Como o dinheiro é distribuído"
+    >
+      {policy.data.items.length > 0 ? (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Grupo / função</TableHead>
+                <TableHead>Regra</TableHead>
+                <TableHead>Vigência</TableHead>
+                <TableHead>Escopo</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {policy.data.items.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell className="font-medium">{item.group}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {item.valueType === 'PERCENTUAL'
+                      ? formatBasisPoints(item.basisPoints)
+                      : formatCents(item.fixedCents)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap text-sm">
+                    {formatCivilDate(item.validFrom)} –{' '}
+                    {item.validTo ? formatCivilDate(item.validTo) : 'aberta'}
+                  </TableCell>
+                  <TableCell>
+                    <StatusBadge tone={item.global ? 'success' : 'info'}>
+                      {item.global ? 'Todos os processos' : 'Grupo específico'}
+                    </StatusBadge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          A política de distribuição ainda não foi configurada pelo
+          administrador.
+        </p>
+      )}
+    </FinanceSection>
+  )
+}
+
+function RecipientCard({
+  summary,
+  showRateioLink,
+}: {
+  summary: RecipientSummary
+  showRateioLink: boolean
+}) {
   const [open, setOpen] = useState(false)
   const status = summaryTone(summary)
   const credits = useQuery({
@@ -261,7 +393,9 @@ function RecipientCard({ summary }: { summary: RecipientSummary }) {
                     <TableHead className="text-right">Devido</TableHead>
                     <TableHead className="text-right">Pago</TableHead>
                     <TableHead className="text-right">Falta</TableHead>
-                    <TableHead className="w-32">Ação</TableHead>
+                    {showRateioLink ? (
+                      <TableHead className="w-32">Ação</TableHead>
+                    ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -293,18 +427,20 @@ function RecipientCard({ summary }: { summary: RecipientSummary }) {
                           <TableCell className="text-right">
                             <Money cents={balance} strong />
                           </TableCell>
-                          <TableCell>
-                            <Button asChild size="sm" variant="ghost">
-                              <Link
-                                params={{ closingId: credit.closingId }}
-                                preload={false}
-                                to="/pagamentos/fechamentos/$closingId"
-                              >
-                                <ExternalLink className="size-4" />
-                                Abrir rateio
-                              </Link>
-                            </Button>
-                          </TableCell>
+                          {showRateioLink ? (
+                            <TableCell>
+                              <Button asChild size="sm" variant="ghost">
+                                <Link
+                                  params={{ closingId: credit.closingId }}
+                                  preload={false}
+                                  to="/pagamentos/fechamentos/$closingId"
+                                >
+                                  <ExternalLink className="size-4" />
+                                  Abrir rateio
+                                </Link>
+                              </Button>
+                            </TableCell>
+                          ) : null}
                         </TableRow>
                       )
                     })}
