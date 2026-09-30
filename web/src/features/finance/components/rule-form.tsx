@@ -78,6 +78,10 @@ export function RuleForm({ initial, submitLabel, pending, onSubmit }: Props) {
   const [complexIds, setComplexIds] = useState<string[]>(
     initial?.housingComplexIds ?? [],
   )
+  const [applyToAll, setApplyToAll] = useState(
+    initial?.housingComplexIds === undefined ||
+      initial.housingComplexIds.length === 0,
+  )
   const [notes, setNotes] = useState('')
   const [error, setError] = useState<string | null>(null)
   const locked = Boolean(initial?.lockIdentity)
@@ -113,8 +117,8 @@ export function RuleForm({ initial, submitLabel, pending, onSubmit }: Props) {
     if (!isCredit && !poolLabel.trim())
       return setError('Informe o nome da reserva/provisão.')
     if (!validFrom) return setError('Informe o início da vigência.')
-    if (complexIds.length === 0)
-      return setError('Vincule pelo menos um condomínio.')
+    if (!applyToAll && complexIds.length === 0)
+      return setError('Vincule pelo menos um condomínio ou aplique a todos.')
     const order = Number(sortOrder)
     if (!Number.isInteger(order) || order < 0)
       return setError('Ordem inválida.')
@@ -131,7 +135,7 @@ export function RuleForm({ initial, submitLabel, pending, onSubmit }: Props) {
       uniqueness,
       validFrom,
       validTo: validTo || null,
-      housingComplexIds: complexIds,
+      housingComplexIds: applyToAll ? [] : complexIds,
       notes: notes.trim() || undefined,
     })
   }
@@ -224,12 +228,8 @@ export function RuleForm({ initial, submitLabel, pending, onSubmit }: Props) {
             }}
             value={valueType}
           >
-            <NativeSelectOption value="PERCENTUAL">
-              Percentual
-            </NativeSelectOption>
-            <NativeSelectOption value="VALOR_FIXO">
-              Valor fixo
-            </NativeSelectOption>
+            <NativeSelectOption value="PERCENTUAL">Percentual</NativeSelectOption>
+            <NativeSelectOption value="VALOR_FIXO">Valor fixo</NativeSelectOption>
           </NativeSelect>
         </div>
         <div className="grid gap-1.5">
@@ -241,7 +241,7 @@ export function RuleForm({ initial, submitLabel, pending, onSubmit }: Props) {
             id="rule-value"
             inputMode="decimal"
             onChange={(e) => setValueText(e.target.value)}
-            placeholder={valueType === 'PERCENTUAL' ? '0,00' : '0,00'}
+            placeholder="0,00"
             value={valueText}
           />
           <label
@@ -277,9 +277,7 @@ export function RuleForm({ initial, submitLabel, pending, onSubmit }: Props) {
               }
               value={uniqueness}
             >
-              <NativeSelectOption value="NENHUMA">
-                Em todo recebimento
-              </NativeSelectOption>
+              <NativeSelectOption value="NENHUMA">Em todo recebimento</NativeSelectOption>
               <NativeSelectOption value="UNICA_POR_PROCESSO">
                 Única por processo
               </NativeSelectOption>
@@ -308,60 +306,83 @@ export function RuleForm({ initial, submitLabel, pending, onSubmit }: Props) {
         </div>
       </div>
 
-      <fieldset className="grid gap-2">
-        <legend className="mb-1 text-sm font-medium">
-          Condomínios vinculados
-        </legend>
-        <div className="flex gap-2">
-          <Button
-            onClick={() =>
-              setComplexIds((complexes.data ?? []).map((c) => c.id))
-            }
-            size="xs"
-            type="button"
-            variant="outline"
-          >
-            Marcar todos
-          </Button>
-          <Button
-            onClick={() => setComplexIds([])}
-            size="xs"
-            type="button"
-            variant="ghost"
-          >
-            Limpar
-          </Button>
-        </div>
-        <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-2">
-          {(complexes.data ?? []).map((complex) => {
-            const id = `rule-complex-${complex.id}`
-            return (
-              <label
-                className="flex items-center gap-2 text-sm"
-                htmlFor={id}
-                key={complex.id}
+      <fieldset className="grid gap-3 rounded-lg border border-border p-4">
+        <legend className="px-1 text-sm font-medium">Onde esta regra vale</legend>
+        <label className="flex items-start gap-3" htmlFor="rule-apply-all">
+          <Checkbox
+            checked={applyToAll}
+            id="rule-apply-all"
+            onCheckedChange={(checked) => setApplyToAll(checked === true)}
+          />
+          <span className="grid gap-0.5 text-sm">
+            <span className="font-medium">Aplicar a todos os processos</span>
+            <span className="text-xs text-muted-foreground">
+              A regra será herdada automaticamente por qualquer condomínio. Use
+              uma vigência para casos como participantes que entraram ou saíram
+              do projeto.
+            </span>
+          </span>
+        </label>
+
+        {!applyToAll ? (
+          <>
+            <div className="flex gap-2">
+              <Button
+                onClick={() =>
+                  setComplexIds((complexes.data ?? []).map((c) => c.id))
+                }
+                size="xs"
+                type="button"
+                variant="outline"
               >
-                <Checkbox
-                  checked={complexIds.includes(complex.id)}
-                  id={id}
-                  onCheckedChange={(checked) =>
-                    setComplexIds((current) =>
-                      checked === true
-                        ? [...current, complex.id]
-                        : current.filter((c) => c !== complex.id),
-                    )
-                  }
-                />
-                {complex.name}
-              </label>
-            )
-          })}
-          {complexes.data?.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Nenhum condomínio cadastrado.
-            </p>
-          ) : null}
-        </div>
+                Marcar todos os condomínios
+              </Button>
+              <Button
+                onClick={() => setComplexIds([])}
+                size="xs"
+                type="button"
+                variant="ghost"
+              >
+                Limpar
+              </Button>
+            </div>
+            <div className="grid max-h-48 gap-1.5 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-2">
+              {(complexes.data ?? []).map((complex) => {
+                const id = `rule-complex-${complex.id}`
+                return (
+                  <label
+                    className="flex items-center gap-2 text-sm"
+                    htmlFor={id}
+                    key={complex.id}
+                  >
+                    <Checkbox
+                      checked={complexIds.includes(complex.id)}
+                      id={id}
+                      onCheckedChange={(checked) =>
+                        setComplexIds((current) =>
+                          checked === true
+                            ? [...current, complex.id]
+                            : current.filter((c) => c !== complex.id),
+                        )
+                      }
+                    />
+                    {complex.name}
+                  </label>
+                )
+              })}
+              {complexes.data?.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Nenhum condomínio cadastrado.
+                </p>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            Escopo global ativo. Não é necessário selecionar condomínio por
+            condomínio.
+          </p>
+        )}
       </fieldset>
 
       <div className="grid gap-1.5">
