@@ -64,10 +64,8 @@ export const rulePayloadSchema = z.object({
   uniqueness: z.enum(financeUniquenessPolicies).optional(),
   validFrom: civilDate,
   validTo: civilDate.nullable().optional(),
-  housingComplexIds: z
-    .array(id)
-    .min(1, { message: 'Vincule pelo menos um condomínio.' })
-    .max(500),
+  // Lista vazia = regra global, herdada por todos os processos com condomínio.
+  housingComplexIds: z.array(id).max(500),
   notes: z.string().trim().max(1000).optional(),
 })
 
