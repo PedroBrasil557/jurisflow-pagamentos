@@ -10,7 +10,8 @@ export const Route = createFileRoute('/_protected/pagamentos')({
 const sections = [
   { to: '/pagamentos', label: 'Visão geral', exact: true },
   { to: '/pagamentos/recebimentos', label: 'Entradas' },
-  { to: '/pagamentos/fechamentos', label: 'Rateios e pagamentos' },
+  { to: '/pagamentos/fechamentos', label: 'Rateios' },
+  { to: '/pagamentos/pagamentos', label: 'Pagamentos' },
   { to: '/pagamentos/reservas', label: 'Reservas' },
   { to: '/pagamentos/extratos', label: 'Extrato' },
   { to: '/pagamentos/configuracao', label: 'Configuração' },
