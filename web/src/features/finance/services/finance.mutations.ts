@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { linkRecipientUserRequest } from './finance-quick.service'
 import { financeKeys } from './finance.queries'
 import {
   approveReceiptRequest,
@@ -46,6 +47,8 @@ export const useRevokeRule = () =>
   useFinanceMutation((v: { id: string; reason: string }) =>
     revokeRuleRequest(v.id, v.reason),
   )
+export const useLinkRecipientUser = () =>
+  useFinanceMutation(linkRecipientUserRequest)
 export const usePreviewImport = () =>
   useMutation({
     mutationFn: (v: { file: File; mapping?: Record<string, string> }) =>
