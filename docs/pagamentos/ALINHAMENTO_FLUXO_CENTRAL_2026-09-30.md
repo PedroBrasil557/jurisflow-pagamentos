@@ -89,6 +89,8 @@ A aba **Pagamentos** deve responder, por recebedor:
 
 A baixa continua sendo o registro técnico do pagamento realizado fora do JurisFlow, mas a interface usa **Registrar pagamento** sempre que possível.
 
+A tela operacional agrupa os valores por recebedor. Cada pessoa/empresa pode ser expandida para mostrar a origem por processo, cliente e condomínio, com devido, pago e saldo.
+
 ### 6. Extratos e Controle
 
 Já existem extratos, reservas/provisões, ajustes, estornos e trilha auditável.
@@ -106,7 +108,7 @@ A visão esperada continua sendo:
 2. `Rateios e pagamentos` é separado em duas responsabilidades:
    - **Rateios** = conferência/finalização da repartição;
    - **Pagamentos** = visão por recebedor de devido, pago e saldo.
-3. Nova tela **Pagamentos por recebedor**, com detalhamento por processo.
+3. Nova tela **Pagamentos por recebedor**, com detalhamento por processo e acesso ao rateio de origem.
 4. Configuração continua administrativa e separada da operação diária.
 5. Códigos técnicos do motor permanecem para auditoria, não como linguagem principal.
 
