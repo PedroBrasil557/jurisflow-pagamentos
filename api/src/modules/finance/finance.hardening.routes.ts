@@ -8,6 +8,7 @@ import type { AppBindings } from '../../shared/types/app'
 import { queryValidator } from '../../shared/validation/validators'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import { process } from '../processes/processes.schema'
+import { getClosingDetail } from './finance.closings.service'
 import {
   financeClosing,
   financeClosingItem,
@@ -37,7 +38,7 @@ function visibleProcessFilter(access: FinanceAccess): SQL | undefined {
   return access.processFilter
 }
 
-async function reserveBalancesScoped(access: FinanceAccess) {
+export async function reserveBalancesScoped(access: FinanceAccess) {
   assertFinance(access, 'view')
   const rows = await db
     .select({
@@ -72,7 +73,7 @@ async function reserveBalancesScoped(access: FinanceAccess) {
   })
 }
 
-async function overviewScoped(access: FinanceAccess) {
+export async function overviewScoped(access: FinanceAccess) {
   assertFinance(access, 'view')
   const visible = visibleProcessFilter(access)
 
@@ -173,22 +174,25 @@ async function overviewScoped(access: FinanceAccess) {
   }
 }
 
-async function closingsScoped(access: FinanceAccess) {
+export async function closingsScoped(access: FinanceAccess) {
   assertFinance(access, 'view')
-  const visible = visibleProcessFilter(access)
-  const visibility = visible
-    ? sql`EXISTS (
-        SELECT 1
-        FROM ${financeClosingItem}
-        INNER JOIN ${financeReceipt}
-          ON ${financeReceipt.id} = ${financeClosingItem.receiptId}
-        INNER JOIN ${process}
-          ON ${process.id} = ${financeReceipt.processId}
-        WHERE ${financeClosingItem.closingId} = ${financeClosing.id}
-          AND ${financeClosingItem.isActive} = true
-          AND ${visible}
-      )`
-    : undefined
+  if (access.isGlobal || !access.processFilter) {
+    return db
+      .select({
+        id: financeClosing.id,
+        code: financeClosing.code,
+        status: financeClosing.status,
+        periodStart: financeClosing.periodStart,
+        periodEnd: financeClosing.periodEnd,
+        receiptCount: financeClosing.receiptCount,
+        grossCents: financeClosing.grossCents,
+        createdAt: financeClosing.createdAt,
+        reversedAt: financeClosing.reversedAt,
+      })
+      .from(financeClosing)
+      .orderBy(desc(financeClosing.createdAt))
+      .limit(200)
+  }
 
   return db
     .select({
@@ -197,15 +201,59 @@ async function closingsScoped(access: FinanceAccess) {
       status: financeClosing.status,
       periodStart: financeClosing.periodStart,
       periodEnd: financeClosing.periodEnd,
-      receiptCount: financeClosing.receiptCount,
-      grossCents: financeClosing.grossCents,
+      receiptCount: sql<number>`count(DISTINCT ${financeClosingItem.receiptId})::int`,
+      grossCents: sql<number>`coalesce(sum(${financeReceipt.amountCents}), 0)::bigint`,
       createdAt: financeClosing.createdAt,
       reversedAt: financeClosing.reversedAt,
     })
     .from(financeClosing)
-    .where(visibility)
+    .innerJoin(
+      financeClosingItem,
+      eq(financeClosingItem.closingId, financeClosing.id),
+    )
+    .innerJoin(financeReceipt, eq(financeClosingItem.receiptId, financeReceipt.id))
+    .innerJoin(process, eq(financeReceipt.processId, process.id))
+    .where(access.processFilter)
+    .groupBy(
+      financeClosing.id,
+      financeClosing.code,
+      financeClosing.status,
+      financeClosing.periodStart,
+      financeClosing.periodEnd,
+      financeClosing.createdAt,
+      financeClosing.reversedAt,
+    )
     .orderBy(desc(financeClosing.createdAt))
     .limit(200)
+}
+
+export async function closingDetailScoped(
+  access: FinanceAccess,
+  closingId: string,
+) {
+  const detail = await getClosingDetail(access, closingId)
+  if (access.isGlobal || !access.processFilter) return detail
+
+  const [summary] = await db
+    .select({
+      receiptCount: sql<number>`count(DISTINCT ${financeClosingItem.receiptId})::int`,
+      grossCents: sql<number>`coalesce(sum(${financeReceipt.amountCents}), 0)::bigint`,
+    })
+    .from(financeClosingItem)
+    .innerJoin(financeReceipt, eq(financeClosingItem.receiptId, financeReceipt.id))
+    .innerJoin(process, eq(financeReceipt.processId, process.id))
+    .where(and(eq(financeClosingItem.closingId, closingId), access.processFilter))
+
+  return {
+    ...detail,
+    closing: {
+      ...detail.closing,
+      receiptCount: summary?.receiptCount ?? 0,
+      grossCents: Number(summary?.grossCents ?? 0),
+      totals: null,
+      rulesSnapshot: null,
+    },
+  }
 }
 
 const paymentRecipientsQuerySchema = z.object({
@@ -214,7 +262,7 @@ const paymentRecipientsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(30),
 })
 
-async function paymentRecipientsScoped(
+export async function paymentRecipientsScoped(
   access: FinanceAccess,
   query: z.infer<typeof paymentRecipientsQuerySchema>,
 ) {
@@ -337,6 +385,16 @@ export const financeHardeningRoutes = new Hono<AppBindings>()
   .get('/closings', async (c) => {
     try {
       return c.json({ items: await closingsScoped(await access(c)) }, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get('/closings/:id', async (c) => {
+    try {
+      return c.json(
+        await closingDetailScoped(await access(c), c.req.param('id')),
+        200,
+      )
     } catch (error) {
       return handleServiceError(c, error)
     }
