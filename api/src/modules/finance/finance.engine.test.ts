@@ -283,7 +283,6 @@ describe('sistema vazio e bloqueios (CT-01, CT-05, CT-07)', () => {
 
   test('deducoes acima da receita liquida bloqueiam (nunca saldo inexistente)', () => {
     const c = calc(TEST_001_RULES, { grossCents: 50_000 })
-    // A 500; B 100; C 400; deducoes 4+4... + reserva 500 > C
     expect(c.blocks[0]?.code).toBe('RESULTADO_NEGATIVO')
   })
 
@@ -305,7 +304,6 @@ describe('0% explicito (CT-06, INV-04)', () => {
     const c = calc(rules)
     expect(c.blocked).toBe(false)
     expect(step(c, 'E.2')).toBe(0)
-    // D = 288 + 0 + 384 + 240 + 500 = 1.412; J = 8.188; L = 4.094; M = 4.094
     expect(step(c, 'J')).toBe(818_800)
     expect(step(c, 'P')).toBe(0)
   })
@@ -349,7 +347,6 @@ describe('reserva unica e segundo recebimento (CT-08, INV-05)', () => {
     expect(second?.steps.find((s) => s.code === 'I.1')?.note).toContain(
       'INV-05',
     )
-    // 2o: D = 288+192+384+240 = 1.104; J = 8.496; L = 4.248; N = 1.699,20 / 2.548,80
     expect(second && step(second, 'J')).toBe(849_600)
     expect(second && step(second, 'N.1')).toBe(169_920)
     expect(second && step(second, 'N.2')).toBe(254_880)
@@ -394,6 +391,17 @@ describe('multiplos recebedores e escopo (CT-12, CT-13, INV-02, INV-03)', () => 
     expect(c.steps.some((s) => s.ruleId === 'part-c')).toBe(false)
   })
 
+  test('regra global e herdada por qualquer condominio do processo', () => {
+    const globalRules = TEST_001_RULES.map((r) => ({
+      ...r,
+      housingComplexIds: [],
+    }))
+    const c = calc(globalRules, { housingComplexId: COND_2 })
+    expect(c.blocked).toBe(false)
+    expect(step(c, 'A')).toBe(1_200_000)
+    expect(step(c, 'P')).toBe(0)
+  })
+
   test('vigencia inclusiva nas bordas pela data de cadastro', () => {
     const limited = TEST_001_RULES.map((r) =>
       r.id === 'part-c'
@@ -407,7 +415,6 @@ describe('multiplos recebedores e escopo (CT-12, CT-13, INV-02, INV-03)', () => 
         'Colaborador C',
       ),
     ).toBe(0)
-    // data de liberacao NAO seleciona vigencia
     expect(
       byRecipient(
         calc(limited, { releaseDate: '2030-01-01' }),
@@ -419,11 +426,6 @@ describe('multiplos recebedores e escopo (CT-12, CT-13, INV-02, INV-03)', () => 
 
 describe('arredondamento e centavos (CT-14)', () => {
   test('meio para cima por regra; residuo da distribuicao final pelo maior resto', () => {
-    // A = 3,33. B = 20% = 66,6 -> 67. C = 266. E.1 3% = 7,98 -> 8; E.2 2% = 5,32 -> 5;
-    // E.3 4% = 10,64 -> 11; E.4 2,5% = 6,65 -> 7; reserva 0 (ja constituida)
-    // D = 31; J = 235; L 50% = 117,5 -> 118; M = 117.
-    // N: 40% = 46,8 (floor 46, resto .8); 60% = 70,2 (floor 70, resto .2)
-    // residuo 117 - 116 = 1 -> maior resto (40%) -> 47 / 70. P = 0.
     const c = calc(
       TEST_001_RULES,
       { grossCents: 333 },
@@ -477,14 +479,12 @@ describe('configuracao: forma e sobreposicao', () => {
     for (const r of TEST_001_RULES) expect(validateRuleShape(r)).toEqual([])
   })
 
-  test('erros de forma', () => {
+  test('erros de forma e escopo global valido', () => {
     const [prov] = TEST_001_RULES as [FinanceEngineRule]
     expect(validateRuleShape({ ...prov, nature: 'CREDITO' })).toContain(
       'Natureza incompatível com a etapa.',
     )
-    expect(validateRuleShape({ ...prov, housingComplexIds: [] })).toContain(
-      'Vincule pelo menos um condomínio.',
-    )
+    expect(validateRuleShape({ ...prov, housingComplexIds: [] })).toEqual([])
     expect(validateRuleShape({ ...prov, basisPoints: 10_001 })).toContain(
       'Percentual deve estar entre 0,00% e 100,00%.',
     )
@@ -502,11 +502,9 @@ describe('configuracao: forma e sobreposicao', () => {
       validFrom: '2026-06-01',
     }
     expect(findRuleConflicts(candidate, TEST_001_RULES)).toHaveLength(1)
-    // nova versao da MESMA linhagem nao conflita consigo (anterior sera encerrada)
     expect(findRuleConflicts(candidate, TEST_001_RULES, 'part-a')).toHaveLength(
       0,
     )
-    // condominios disjuntos ou outra funcao: sem conflito
     expect(
       findRuleConflicts(
         { ...candidate, housingComplexIds: [COND_2] },
@@ -519,6 +517,18 @@ describe('configuracao: forma e sobreposicao', () => {
         TEST_001_RULES,
       ),
     ).toHaveLength(0)
+  })
+
+  test('escopo global conflita com regra especifica do mesmo contexto', () => {
+    const [, partA] = TEST_001_RULES as [FinanceEngineRule, FinanceEngineRule]
+    const global = {
+      ...partA,
+      id: 'global',
+      lineageId: 'global',
+      housingComplexIds: [],
+      validFrom: '2026-06-01',
+    }
+    expect(findRuleConflicts(global, TEST_001_RULES)).toHaveLength(1)
   })
 })
 
