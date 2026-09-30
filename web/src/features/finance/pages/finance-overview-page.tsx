@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
-  ArrowRight,
   CheckCircle2,
   FileSpreadsheet,
   Plus,
@@ -17,7 +16,6 @@ import {
   FinanceSection,
   LoadingState,
   Money,
-  StatPill,
 } from '../components/finance-ui'
 import { financeAccess } from '../lib/finance-labels'
 import {
@@ -47,8 +45,9 @@ export function FinanceOverviewPage() {
   const reserveCents = (reserves.data ?? [])
     .filter((pool) => pool.nature === 'RESERVA')
     .reduce((sum, pool) => sum + pool.constitutedCents, 0)
+  const separatedCents = provisionCents + reserveCents
   const recipientCents = data?.credits.dueCents ?? 0
-  const allocatedCents = provisionCents + reserveCents + recipientCents
+  const allocatedCents = separatedCents + recipientCents
   const differenceCents = closedGrossCents - allocatedCents
   const balanced = differenceCents === 0
 
@@ -58,7 +57,7 @@ export function FinanceOverviewPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Acompanhe o caminho do dinheiro: quanto entrou, para onde foi destinado, quanto já foi pago e o que ainda está pendente."
+        description="Acompanhe o caminho do dinheiro: quanto entrou, para onde foi destinado e o que ainda falta fazer."
         eyebrow="Pagamentos"
         title="Visão geral"
       >
@@ -126,122 +125,115 @@ export function FinanceOverviewPage() {
             />
           ) : null}
 
-          <FinanceSection
-            description="Esta é a conciliação dos rateios já finalizados. Tudo que entrou precisa ter um destino visível."
-            title="Para onde foi o dinheiro"
-          >
-            <div className="grid gap-3 xl:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr] xl:items-center">
-              <FlowCard label="Entrou nos rateios finalizados" cents={closedGrossCents} />
-              <ArrowRight className="mx-auto hidden size-4 text-muted-foreground xl:block" />
-              <FlowCard label="Provisões" cents={provisionCents} />
-              <span className="mx-auto hidden text-muted-foreground xl:block">+</span>
-              <FlowCard label="Reservas" cents={reserveCents} />
-              <span className="mx-auto hidden text-muted-foreground xl:block">+</span>
-              <FlowCard label="Pessoas e empresas" cents={recipientCents} />
-            </div>
-
-            <div className={`mt-3 flex flex-col gap-2 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${balanced ? 'border-emerald-500/35 bg-emerald-500/5' : 'border-destructive/50 bg-destructive/5'}`}>
-              <div>
-                <div className="text-sm font-medium">Conferência do dinheiro finalizado</div>
-                <div className="text-xs text-muted-foreground">
-                  Total destinado <Money cents={allocatedCents} /> de <Money cents={closedGrossCents} />.
-                </div>
-              </div>
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                {balanced ? (
-                  <CheckCircle2 className="size-4 text-emerald-600" />
-                ) : (
-                  <TriangleAlert className="size-4 text-destructive" />
-                )}
-                Diferença <Money cents={differenceCents} />
-              </div>
-            </div>
-          </FinanceSection>
-
-          <FinanceSection
-            description="Depois que o rateio é finalizado, os valores destinados a pessoas e empresas viram obrigações de pagamento."
-            title="Pagamentos aos recebedores"
-          >
-            <div className="grid gap-3 sm:grid-cols-3">
-              <StatPill
-                cents={data.credits.dueCents}
-                label="Total devido"
-                hint="Quanto os recebedores têm direito"
-              />
-              <StatPill
-                cents={data.credits.paidCents}
-                label="Já pago"
-                hint="Pagamentos registrados no JurisFlow"
-              />
-              <StatPill
-                cents={data.credits.balanceCents}
-                label="Ainda falta pagar"
-                hint="Saldo aberto dos recebedores"
-              />
-            </div>
-          </FinanceSection>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <FinanceSection
-              description="Entradas passam por conferência, aprovação e finalização do rateio."
-              title="Entradas por situação"
-            >
-              <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-                {[
-                  ['Rascunho/conferência', data.receipts.draft],
-                  ['Bloqueadas', data.receipts.blocked],
-                  ['Prontas para finalizar', data.receipts.ready],
-                  ['Rateio finalizado', data.receipts.closed],
-                ].map(([label, value]) => (
-                  <div key={label as string}>
-                    <dt className="text-muted-foreground">{label}</dt>
-                    <dd className="text-lg font-semibold tabular-nums">
-                      {value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="mt-3 text-xs text-muted-foreground">
-                Entradas registradas, inclusive ainda não finalizadas: <Money cents={data.receipts.grossCents} />.
-              </p>
-            </FinanceSection>
-
-            <FinanceSection title="Configuração e saldos separados">
-              <dl className="grid grid-cols-3 gap-3 text-sm">
-                <div>
-                  <dt className="text-muted-foreground">Recebedores</dt>
-                  <dd className="text-lg font-semibold tabular-nums">
-                    {data.config.recipients}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Regras ativas</dt>
-                  <dd className="text-lg font-semibold tabular-nums">
-                    {data.config.activeRules}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Saldo atual em reservas/provisões</dt>
-                  <dd className="text-lg font-semibold tabular-nums">
-                    <Money cents={data.reservesBalanceCents} />
-                  </dd>
-                </div>
-              </dl>
-            </FinanceSection>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <SummaryCard
+              cents={closedGrossCents}
+              hint="dinheiro recebido"
+              label="Entrou"
+            />
+            <SummaryCard
+              cents={separatedCents}
+              hint="provisões + reservas"
+              label="Separado"
+            />
+            <SummaryCard
+              cents={recipientCents}
+              hint="valor destinado a pessoas e empresas"
+              label="Devido aos recebedores"
+            />
+            <SummaryCard
+              cents={data.credits.balanceCents}
+              hint="pendência atual"
+              label="Ainda falta pagar"
+            />
           </div>
+
+          <FinanceSection title="Para onde foi o dinheiro?">
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
+              <div className="overflow-hidden rounded-lg border border-border">
+                <div className="grid grid-cols-[1fr_auto] gap-4 border-b border-border bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground">
+                  <span>Destino</span>
+                  <span>Valor</span>
+                </div>
+                <DestinationRow label="Provisões" cents={provisionCents} />
+                <DestinationRow label="Reservas" cents={reserveCents} />
+                <DestinationRow label="Recebedores" cents={recipientCents} />
+                <DestinationRow
+                  cents={allocatedCents}
+                  label="Total destinado"
+                  strong
+                />
+              </div>
+
+              <div className="flex flex-col items-center justify-center gap-3 border-t border-border pt-5 text-center lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+                <div
+                  className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm font-semibold ${
+                    balanced
+                      ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-500'
+                      : 'border-destructive/50 bg-destructive/10 text-destructive'
+                  }`}
+                >
+                  {balanced ? (
+                    <CheckCircle2 className="size-5" />
+                  ) : (
+                    <TriangleAlert className="size-5" />
+                  )}
+                  {balanced ? 'Tudo conciliado' : 'Diferença encontrada'}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Diferença{' '}
+                  <Money
+                    cents={differenceCents}
+                    className="ml-1 text-foreground"
+                    strong
+                  />
+                </div>
+              </div>
+            </div>
+          </FinanceSection>
         </>
       ) : null}
     </div>
   )
 }
 
-function FlowCard({ label, cents }: { label: string; cents: number }) {
+function SummaryCard({
+  label,
+  cents,
+  hint,
+}: {
+  label: string
+  cents: number
+  hint: string
+}) {
   return (
-    <div className="rounded-lg border border-border bg-muted/20 px-4 py-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 text-xl font-semibold tabular-nums">
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="text-sm text-muted-foreground">{label}</div>
+      <div className="mt-2 text-2xl font-semibold tabular-nums">
         <Money cents={cents} strong />
       </div>
+      <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
+    </div>
+  )
+}
+
+function DestinationRow({
+  label,
+  cents,
+  strong = false,
+}: {
+  label: string
+  cents: number
+  strong?: boolean
+}) {
+  return (
+    <div
+      className={`grid grid-cols-[1fr_auto] gap-4 border-b border-border px-4 py-3 text-sm last:border-b-0 ${
+        strong ? 'bg-muted/20 font-semibold' : ''
+      }`}
+    >
+      <span>{label}</span>
+      <Money cents={cents} strong={strong} />
     </div>
   )
 }
