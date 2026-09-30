@@ -48,16 +48,6 @@ jobs:
         working-directory: ${{ github.workspace }}/web
         run: bun install --frozen-lockfile
 
-      - name: Generate Web route tree
-        working-directory: ${{ github.workspace }}/web
-        run: bun run build
-
-      - name: Upload generated route tree
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-route-tree
-          path: web/src/routeTree.gen.ts
-
       - name: Web lint
         working-directory: ${{ github.workspace }}/web
         run: bun run lint
@@ -90,7 +80,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
           aws-region: us-east-1
 
       - name: Build Web (dev)
