@@ -17,6 +17,21 @@ jobs:
     name: CI
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 3557:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,6 +58,10 @@ jobs:
       - name: API tests
         working-directory: ${{ github.workspace }}/api
         run: bun run test
+
+      - name: API finance integration tests (PostgreSQL real)
+        working-directory: ${{ github.workspace }}/api
+        run: bun run test:integration:finance
 
       - name: Install Web dependencies
         working-directory: ${{ github.workspace }}/web
