@@ -1,4 +1,5 @@
 import { queryOptions } from '@tanstack/react-query'
+import { fetchAllocationPolicy } from './finance-quick.service'
 import {
   fetchAttachments,
   fetchClosing,
@@ -24,6 +25,7 @@ export const financeKeys = {
   overview: () => [...financeKeys.all, 'overview'] as const,
   recipients: () => [...financeKeys.all, 'recipients'] as const,
   rules: () => [...financeKeys.all, 'rules'] as const,
+  allocationPolicy: () => [...financeKeys.all, 'allocation-policy'] as const,
   complexes: () => [...financeKeys.all, 'complexes'] as const,
   processes: (search: string) =>
     [...financeKeys.all, 'processes', search] as const,
@@ -50,6 +52,12 @@ export const recipientsQuery = () =>
   queryOptions({ queryKey: financeKeys.recipients(), queryFn: fetchRecipients })
 export const rulesQuery = () =>
   queryOptions({ queryKey: financeKeys.rules(), queryFn: fetchRules })
+export const allocationPolicyQuery = () =>
+  queryOptions({
+    queryKey: financeKeys.allocationPolicy(),
+    queryFn: fetchAllocationPolicy,
+    staleTime: 5 * 60 * 1000,
+  })
 export const complexOptionsQuery = () =>
   queryOptions({
     queryKey: financeKeys.complexes(),
