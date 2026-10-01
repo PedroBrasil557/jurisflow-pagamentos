@@ -20,6 +20,7 @@ import { PageHeader } from '@/shared/components/page-header'
 import {
   EmptyState,
   ErrorState,
+  FinanceSection,
   LoadingState,
   Money,
   StatPill,
@@ -28,6 +29,7 @@ import { formatCivilDate } from '../lib/finance-money'
 import { financeAccess, statementKindLabels } from '../lib/finance-labels'
 import {
   complexOptionsQuery,
+  overviewQuery,
   recipientsQuery,
   statementQuery,
 } from '../services/finance.queries'
@@ -36,11 +38,25 @@ import {
   statementCsvUrl,
 } from '../services/finance.service'
 
-/** Histórico operacional: valores devidos, pagos, ajustes e saldo atual. */
+type FinanceOverviewSnapshot = {
+  coverage: {
+    receivedCents: number
+    coveredCents: number
+    projectedCents: number
+  }
+  credits: {
+    dueCents: number
+    paidCents: number
+    balanceCents: number
+  }
+}
+
+/** Histórico operacional: valores liberados, pagos, ajustes e saldo atual. */
 export function StatementPage() {
   const { permissions } = useSession()
   const recipients = useQuery(recipientsQuery())
   const complexes = useQuery(complexOptionsQuery())
+  const overview = useQuery(overviewQuery())
   const [recipientId, setRecipientId] = useState('')
   const [housingComplexId, setHousingComplexId] = useState('')
   const [dateFrom, setDateFrom] = useState('')
@@ -52,11 +68,15 @@ export function StatementPage() {
     dateTo: dateTo || undefined,
   }
   const query = useQuery(statementQuery(filters))
+  const overviewData = overview.data as FinanceOverviewSnapshot | undefined
+  const hasFilters = Boolean(recipientId || housingComplexId || dateFrom || dateTo)
+  const hasCurrentActivity = (overviewData?.coverage.receivedCents ?? 0) > 0
+  const hasPendingPreview = (overviewData?.coverage.projectedCents ?? 0) > 0
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Consulte o histórico financeiro: valores distribuídos, pagamentos, ajustes e saldo atual. Cada movimento continua ligado ao processo e à distribuição de origem."
+        description="Veja o que já foi efetivado no Financeiro e acompanhe o saldo atual."
         eyebrow="Financeiro"
         title="Histórico"
       >
@@ -84,6 +104,36 @@ export function StatementPage() {
           ) : null}
         </div>
       </PageHeader>
+
+      {overviewData ? (
+        <FinanceSection
+          description="Resumo geral do Financeiro agora. Os filtros abaixo afetam somente os movimentos do histórico."
+          title="Situação atual"
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatPill
+              cents={overviewData.coverage.receivedCents}
+              label="Recebido"
+              hint="Total que entrou"
+            />
+            <StatPill
+              cents={overviewData.coverage.coveredCents}
+              label="Coberto"
+              hint="Já possui destino pelas regras"
+            />
+            <StatPill
+              cents={overviewData.credits.dueCents}
+              label="Liberado"
+              hint="Já virou valor a pagar"
+            />
+            <StatPill
+              cents={overviewData.credits.paidCents}
+              label="Pago"
+              hint="Pagamentos registrados"
+            />
+          </div>
+        </FinanceSection>
+      ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="grid gap-1.5">
@@ -119,19 +169,44 @@ export function StatementPage() {
       {query.data ? (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatPill cents={query.data.totals.openingCents} label="Já devia antes do período" />
-            <StatPill cents={query.data.totals.creditsCents} label="Novos valores devidos" />
+            <StatPill cents={query.data.totals.openingCents} label="Saldo anterior" />
+            <StatPill cents={query.data.totals.creditsCents} label="Liberado no período" />
             <StatPill cents={query.data.totals.paidCents} label="Pago no período" />
-            <StatPill cents={query.data.totals.closingBalanceCents} label="Ainda falta pagar" />
+            <StatPill cents={query.data.totals.closingBalanceCents} label="Saldo a pagar" />
           </div>
           {query.data.entries.length === 0 ? (
-            <EmptyState description="Nenhum valor devido, pagamento ou ajuste para os filtros selecionados." title="Histórico vazio" />
+            <EmptyState
+              action={
+                hasCurrentActivity ? (
+                  <Button asChild variant="outline">
+                    <Link className="no-underline" preload={false} to="/pagamentos">
+                      Ver distribuição
+                    </Link>
+                  </Button>
+                ) : undefined
+              }
+              description={
+                hasFilters
+                  ? 'Nenhuma movimentação efetivada para os filtros selecionados. A situação geral acima continua mostrando o Financeiro atual.'
+                  : hasPendingPreview
+                    ? 'Já existem valores previstos na Distribuição, mas ainda não houve liberação ou pagamento para registrar aqui.'
+                    : hasCurrentActivity
+                      ? 'Há entradas registradas, mas ainda não existem movimentos efetivados no histórico.'
+                      : 'Nenhuma movimentação financeira foi registrada ainda.'
+              }
+              title="Sem movimentações efetivadas"
+            />
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Data</TableHead><TableHead>O que aconteceu</TableHead><TableHead>Recebedor</TableHead><TableHead>Origem</TableHead><TableHead className="text-right">Movimento</TableHead><TableHead className="text-right">Saldo a receber</TableHead>
+                    <TableHead>Data</TableHead>
+                    <TableHead>O que aconteceu</TableHead>
+                    <TableHead>Recebedor</TableHead>
+                    <TableHead>Origem</TableHead>
+                    <TableHead className="text-right">Movimento</TableHead>
+                    <TableHead className="text-right">Saldo a receber</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
