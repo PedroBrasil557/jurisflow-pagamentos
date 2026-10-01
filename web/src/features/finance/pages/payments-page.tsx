@@ -83,6 +83,7 @@ async function fetchPaymentRecipients(search: string, page: number) {
   if (search) url.searchParams.set('search', search)
   url.searchParams.set('page', String(page))
   url.searchParams.set('limit', '30')
+
   const response = await fetch(url, { credentials: 'include' })
   if (!response.ok) {
     throw new Error(
@@ -92,27 +93,19 @@ async function fetchPaymentRecipients(search: string, page: number) {
       ),
     )
   }
+
   return (await response.json()) as PaymentRecipientsResponse
 }
 
 function summaryTone(summary: RecipientSummary) {
-  if (summary.awaitingDistributionCents > 0 && summary.releasedCents === 0) {
-    return {
-      label: 'Aguardando completar distribuição',
-      tone: 'warning' as const,
-    }
-  }
   if (summary.awaitingDistributionCents > 0) {
-    return {
-      label: 'Parte ainda em distribuição',
-      tone: 'info' as const,
-    }
+    return { label: 'Pendente', tone: 'warning' as const }
   }
   if (summary.releasedCents > 0 && summary.balanceCents <= 0) {
     return { label: 'Pago', tone: 'success' as const }
   }
   if (summary.paidCents > 0) {
-    return { label: 'Pago parcialmente', tone: 'info' as const }
+    return { label: 'Parcial', tone: 'info' as const }
   }
   if (summary.releasedCents > 0) {
     return { label: 'A pagar', tone: 'warning' as const }
@@ -126,6 +119,7 @@ export function PaymentsPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const deferredSearch = useDeferredValue(isAdmin ? search.trim() : '')
+
   const query = useQuery({
     queryKey: [
       'finance',
@@ -136,6 +130,7 @@ export function PaymentsPage() {
     ],
     queryFn: () => fetchPaymentRecipients(deferredSearch, isAdmin ? page : 1),
   })
+
   const policy = useQuery({
     ...allocationPolicyQuery(),
     enabled: !isAdmin,
@@ -148,8 +143,8 @@ export function PaymentsPage() {
       <PageHeader
         description={
           isAdmin
-            ? 'Veja quem já tem valor previsto pelas regras, quanto já foi liberado para pagamento, quanto foi pago e o que ainda depende de completar a distribuição.'
-            : 'Acompanhe sua participação prevista, os valores já liberados e os pagamentos realizados.'
+            ? 'Acompanhe os valores previstos, liberados e pagos por recebedor.'
+            : 'Acompanhe seus valores previstos, liberados e pagos.'
         }
         eyebrow="Financeiro · Pagamentos"
         title={isAdmin ? 'Pagamentos por recebedor' : 'Minha participação'}
@@ -167,31 +162,30 @@ export function PaymentsPage() {
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatPill
               cents={data.totals.plannedCents}
-              label={isAdmin ? 'Previsto pelas regras' : 'Meu valor previsto'}
-              hint="Inclui valores ainda aguardando a distribuição ser concluída"
+              label={isAdmin ? 'Previsto' : 'Meu previsto'}
+              hint="Valor calculado pelas regras"
             />
             <StatPill
               cents={data.totals.releasedCents}
-              label={isAdmin ? 'Liberado para pagamento' : 'Já liberado'}
-              hint="Valores efetivamente gerados por distribuições finalizadas"
+              label={isAdmin ? 'Liberado' : 'Já liberado'}
+              hint="Disponível para pagamento"
             />
             <StatPill
               cents={data.totals.paidCents}
-              label={isAdmin ? 'Total pago' : 'Já recebi'}
-              hint="Pagamentos já registrados"
+              label={isAdmin ? 'Pago' : 'Já recebi'}
+              hint="Pagamentos registrados"
             />
             <StatPill
               cents={data.totals.awaitingDistributionCents}
-              label="Aguardando distribuição"
-              hint="Previsão que ainda não virou obrigação de pagamento"
+              label="Pendente"
+              hint="Ainda depende da distribuição"
             />
           </div>
 
           {data.preview.inconsistent ? (
             <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-              Há {data.preview.inconsistentReceipts} recebimento(s) cuja prévia
-              não pôde ser calculada. Revise a distribuição para que esses
-              valores também apareçam corretamente.
+              Há {data.preview.inconsistentReceipts} recebimento(s) que precisam
+              de revisão na distribuição.
             </div>
           ) : null}
 
@@ -214,17 +208,15 @@ export function PaymentsPage() {
                   ? deferredSearch
                     ? 'Nenhum recebedor corresponde à busca.'
                     : data.preview.pendingReceipts > 0
-                      ? 'Existem recebimentos em distribuição, mas nenhuma regra válida destinou valor a um recebedor ainda.'
-                      : 'Nenhum valor previsto ou liberado para pagamento ainda.'
-                  : 'Sua conta ainda não possui valores vinculados. O administrador deve vincular seu usuário ao cadastro de recebedor.'
+                      ? 'Ainda não há valor destinado a um recebedor.'
+                      : 'Nenhum valor disponível ainda.'
+                  : 'Nenhum valor disponível para sua conta.'
               }
               icon={isAdmin ? UserRound : ShieldCheck}
               title={
                 isAdmin && deferredSearch
                   ? 'Nenhum resultado'
-                  : isAdmin
-                    ? 'Nenhum recebedor com valor ainda'
-                    : 'Nenhum valor pessoal disponível'
+                  : 'Nenhum valor disponível'
               }
             />
           ) : null}
@@ -289,14 +281,12 @@ function AllocationPolicySection({
 }) {
   if (policy.isPending) {
     return (
-      <FinanceSection
-        description="Percentuais gerais sem expor quanto cada colega recebe."
-        title="Como o dinheiro é distribuído"
-      >
+      <FinanceSection title="Como o dinheiro é distribuído">
         <LoadingState rows={3} />
       </FinanceSection>
     )
   }
+
   if (policy.isError) {
     return (
       <FinanceSection title="Como o dinheiro é distribuído">
@@ -306,10 +296,7 @@ function AllocationPolicySection({
   }
 
   return (
-    <FinanceSection
-      description="Você pode ver a política e os grupos de distribuição. Nomes e valores individuais dos outros recebedores não aparecem nesta visão."
-      title="Como o dinheiro é distribuído"
-    >
+    <FinanceSection title="Como o dinheiro é distribuído">
       {policy.data.items.length > 0 ? (
         <div className="overflow-x-auto">
           <Table>
@@ -346,8 +333,7 @@ function AllocationPolicySection({
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
-          A política de distribuição ainda não foi configurada pelo
-          administrador.
+          Distribuição ainda não configurada.
         </p>
       )}
     </FinanceSection>
@@ -396,17 +382,6 @@ function RecipientCard({
             <span className="text-muted-foreground">Pago </span>
             <Money cents={summary.paidCents} />
           </span>
-          {summary.awaitingDistributionCents > 0 ? (
-            <span>
-              <span className="text-muted-foreground">Aguardando </span>
-              <Money cents={summary.awaitingDistributionCents} strong />
-            </span>
-          ) : summary.balanceCents > 0 ? (
-            <span>
-              <span className="text-muted-foreground">A pagar </span>
-              <Money cents={summary.balanceCents} strong />
-            </span>
-          ) : null}
           <Button
             aria-expanded={open}
             onClick={() => setOpen((current) => !current)}
@@ -418,18 +393,10 @@ function RecipientCard({
             ) : (
               <ChevronDown className="size-4" />
             )}
-            {open ? 'Ocultar origem' : 'Ver valores liberados'}
+            {open ? 'Ocultar detalhes' : 'Ver detalhes'}
           </Button>
         </div>
       </div>
-
-      {summary.awaitingDistributionCents > 0 ? (
-        <div className="border-t border-border bg-amber-500/5 px-4 py-2 text-xs text-muted-foreground">
-          <Money cents={summary.awaitingDistributionCents} strong /> estão
-          previstos pelas regras atuais, mas ainda não foram liberados para
-          pagamento porque a distribuição não foi concluída em 100%.
-        </div>
-      ) : null}
 
       {open ? (
         <div className="border-t border-border">
@@ -444,9 +411,7 @@ function RecipientCard({
           ) : null}
           {credits.data && credits.data.length === 0 ? (
             <div className="p-4 text-sm text-muted-foreground">
-              Ainda não há valores liberados para este recebedor. O valor
-              previsto acima só vira pagamento quando a distribuição for
-              concluída.
+              Nenhum valor liberado.
             </div>
           ) : null}
           {credits.data && credits.data.length > 0 ? (
