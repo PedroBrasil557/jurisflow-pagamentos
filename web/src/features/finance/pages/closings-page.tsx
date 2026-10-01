@@ -36,7 +36,7 @@ import {
   previewClosingRequest,
 } from '../services/finance.service'
 
-/** Finaliza rateios aprovados e transforma as parcelas em valores a pagar. */
+/** Finaliza distribuições aprovadas e transforma as parcelas em valores a pagar. */
 export function ClosingsPage() {
   const { permissions } = useSession()
   const navigate = useNavigate()
@@ -79,20 +79,20 @@ export function ClosingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Confira como cada entrada foi repartida e finalize apenas quando todos os destinos estiverem corretos."
-        eyebrow="Pagamentos"
-        title="Rateios"
+        description="Confira as entradas prontas e finalize a distribuição para liberar os valores em Pagamentos."
+        eyebrow="Financeiro"
+        title="Finalização"
       />
 
       {canClose ? (
         <FinanceSection
-          description="Só aparecem entradas cuja prévia já foi conferida e aprovada."
-          title="Finalizar rateio"
+          description="Só aparecem entradas cuja distribuição já foi calculada e aprovada."
+          title="Finalizar distribuição"
         >
           {ready.isPending ? <LoadingState rows={2} /> : null}
           {ready.data?.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Nenhuma entrada está pronta para finalizar o rateio.
+              Nenhuma entrada está pronta para finalizar.
             </p>
           ) : null}
           {ready.data && ready.data.length > 0 ? (
@@ -167,7 +167,7 @@ export function ClosingsPage() {
                   onClick={check}
                   variant="outline"
                 >
-                  {checking ? 'Conferindo…' : 'Conferir rateio'}
+                  {checking ? 'Conferindo…' : 'Conferir distribuição'}
                 </Button>
               </div>
 
@@ -175,17 +175,17 @@ export function ClosingsPage() {
                 preview.canClose ? (
                   <Alert>
                     <Lock className="size-4" />
-                    <AlertTitle>Rateio conferido e pronto para finalizar</AlertTitle>
+                    <AlertTitle>Distribuição pronta para finalizar</AlertTitle>
                     <AlertDescription>
                       {preview.items.length} entrada(s), total recebido{' '}
                       <Money cents={preview.grossCents} strong />. Ao finalizar,
-                      os destinos ficam congelados e os valores das pessoas e
-                      empresas passam a aparecer na aba Pagamentos.
+                      os destinos ficam congelados e os valores dos recebedores
+                      passam a aparecer como liberados em Pagamentos.
                     </AlertDescription>
                   </Alert>
                 ) : (
                   <Alert variant="destructive">
-                    <AlertTitle>O rateio ainda tem impedimentos</AlertTitle>
+                    <AlertTitle>A distribuição ainda precisa de revisão</AlertTitle>
                     <AlertDescription>
                       <ul className="mt-1 grid gap-1">
                         {preview.items
@@ -214,7 +214,7 @@ export function ClosingsPage() {
                       },
                       {
                         onSuccess: ({ closing }) => {
-                          toast.success(`Rateio ${closing.code} finalizado.`)
+                          toast.success(`Distribuição ${closing.code} finalizada.`)
                           navigate({
                             to: '/pagamentos/fechamentos/$closingId',
                             params: { closingId: closing.id },
@@ -225,7 +225,7 @@ export function ClosingsPage() {
                   }
                 >
                   <Lock className="size-4" />
-                  {create.isPending ? 'Finalizando…' : 'Finalizar rateio'}
+                  {create.isPending ? 'Finalizando…' : 'Finalizar distribuição'}
                 </Button>
               </div>
             </div>
@@ -234,8 +234,8 @@ export function ClosingsPage() {
       ) : null}
 
       <FinanceSection
-        description="Histórico dos rateios já congelados. Abra um item para consultar a memória e os valores gerados."
-        title="Rateios finalizados"
+        description="Histórico das distribuições já finalizadas. Abra um item para consultar a memória e os valores gerados."
+        title="Distribuições finalizadas"
       >
         {closings.isPending ? <LoadingState /> : null}
         {closings.isError ? (
@@ -245,19 +245,19 @@ export function ClosingsPage() {
           />
         ) : null}
         {closings.data?.length === 0 ? (
-          <EmptyState title="Nenhum rateio finalizado ainda" />
+          <EmptyState title="Nenhuma distribuição finalizada ainda" />
         ) : null}
         {closings.data && closings.data.length > 0 ? (
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Rateio</TableHead>
+                  <TableHead>Distribuição</TableHead>
                   <TableHead>Período</TableHead>
                   <TableHead>Entradas</TableHead>
                   <TableHead className="text-right">Total recebido</TableHead>
-                  <TableHead>Situação</TableHead>
-                  <TableHead>Finalizado em</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Finalizada em</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -285,7 +285,7 @@ export function ClosingsPage() {
                       <StatusBadge
                         tone={closing.status === 'ATIVO' ? 'success' : 'ghost'}
                       >
-                        {closing.status === 'ATIVO' ? 'Finalizado' : 'Estornado'}
+                        {closing.status === 'ATIVO' ? 'Finalizada' : 'Estornada'}
                       </StatusBadge>
                     </TableCell>
                     <TableCell className="text-sm">
