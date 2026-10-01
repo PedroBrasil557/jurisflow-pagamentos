@@ -44,8 +44,8 @@ export function ReceiptsPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Toda entrada de dinheiro começa aqui. Depois ela é calculada, conferida e transformada em destinos visíveis para cada centavo."
-        eyebrow="Pagamentos"
+        description="Veja cada entrada de dinheiro, seu valor e o status da distribuição."
+        eyebrow="Financeiro"
         title="Entradas"
       >
         {financeAccess.lancar(permissions) ? (
@@ -71,12 +71,12 @@ export function ReceiptsPage() {
           />
         </div>
         <NativeSelect
-          aria-label="Filtrar por situação"
+          aria-label="Filtrar por status"
           className="sm:w-64"
           onChange={(e) => setStatus(e.target.value as ReceiptStatus | '')}
           value={status}
         >
-          <NativeSelectOption value="">Todas as situações</NativeSelectOption>
+          <NativeSelectOption value="">Todos os status</NativeSelectOption>
           {Object.entries(receiptStatusLabels).map(([key, value]) => (
             <NativeSelectOption key={key} value={key}>
               {value.label}
@@ -106,9 +106,9 @@ export function ReceiptsPage() {
                 <TableHead>Processo / cliente</TableHead>
                 <TableHead>Condomínio</TableHead>
                 <TableHead>Origem</TableHead>
-                <TableHead>Data da entrada</TableHead>
-                <TableHead className="text-right">Valor que entrou</TableHead>
-                <TableHead>Etapa atual</TableHead>
+                <TableHead>Data</TableHead>
+                <TableHead className="text-right">Valor</TableHead>
+                <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
