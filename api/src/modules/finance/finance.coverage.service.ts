@@ -1,5 +1,6 @@
 import { and, asc, eq, isNotNull, ne, type SQL } from 'drizzle-orm'
 import { db } from '../../shared/db'
+import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import { process } from '../processes/processes.schema'
 import { loadEngineRules } from './finance.config.service'
 import {
@@ -9,7 +10,10 @@ import {
   ruleAppliesToComplex,
   ruleAppliesToDate,
 } from './finance.engine'
-import { constitutedUniqueReserves, toEngineInput } from './finance.receipts.service'
+import {
+  constitutedUniqueReserves,
+  toEngineInput,
+} from './finance.receipts.service'
 import { financeReceipt } from './finance.schema'
 import type { FinanceAccess } from './finance.support'
 
@@ -27,6 +31,26 @@ export type FinanceCoveragePreview = {
   inconsistent: boolean
   pendingReceipts: number
   inconsistentReceipts: number
+}
+
+export type FinanceRecipientProjection = {
+  recipientId: string
+  recipientName: string
+  projectedCents: number
+  workTypes: string[]
+  searchTerms: string[]
+}
+
+type CoverageCalculation = FinanceCoveragePreview & {
+  recipients: FinanceRecipientProjection[]
+}
+
+type RecipientAccumulator = {
+  recipientId: string
+  recipientName: string
+  projectedCents: number
+  workTypes: Set<string>
+  searchTerms: Set<string>
 }
 
 function syntheticRule(input: {
@@ -62,6 +86,22 @@ function syntheticRule(input: {
   }
 }
 
+function emptyCalculation(): CoverageCalculation {
+  return {
+    coveredCents: 0,
+    uncoveredCents: 0,
+    provisionCents: 0,
+    reserveCents: 0,
+    recipientCents: 0,
+    coverageBasisPoints: 0,
+    complete: true,
+    inconsistent: false,
+    pendingReceipts: 0,
+    inconsistentReceipts: 0,
+    recipients: [],
+  }
+}
+
 /**
  * Calcula apenas uma PREVIA de cobertura para recebimentos ainda abertos.
  * O motor oficial continua estrito: para fechamento, a distribuicao final deve
@@ -70,9 +110,9 @@ function syntheticRule(input: {
  * Assim reaproveitamos as mesmas bases, arredondamentos e reservas do motor sem
  * gerar creditos, fechamentos ou qualquer efeito financeiro.
  */
-export async function previewOpenReceiptCoverage(
+async function calculateOpenCoverage(
   access: FinanceAccess,
-): Promise<FinanceCoveragePreview> {
+): Promise<CoverageCalculation> {
   const filters: SQL[] = [
     ne(financeReceipt.status, 'CANCELADO'),
     ne(financeReceipt.status, 'FECHADO'),
@@ -84,9 +124,16 @@ export async function previewOpenReceiptCoverage(
     .select({
       receipt: financeReceipt,
       housingComplexId: process.housingComplexId,
+      processCode: process.code,
+      clientName: process.fullName,
+      housingComplexName: housingComplex.name,
     })
     .from(financeReceipt)
     .innerJoin(process, eq(financeReceipt.processId, process.id))
+    .leftJoin(
+      housingComplex,
+      eq(process.housingComplexId, housingComplex.id),
+    )
     .where(and(...filters))
     .orderBy(
       asc(financeReceipt.releaseDate),
@@ -94,24 +141,12 @@ export async function previewOpenReceiptCoverage(
       asc(financeReceipt.id),
     )
 
-  if (rows.length === 0) {
-    return {
-      coveredCents: 0,
-      uncoveredCents: 0,
-      provisionCents: 0,
-      reserveCents: 0,
-      recipientCents: 0,
-      coverageBasisPoints: 0,
-      complete: true,
-      inconsistent: false,
-      pendingReceipts: 0,
-      inconsistentReceipts: 0,
-    }
-  }
+  if (rows.length === 0) return emptyCalculation()
 
   const rules = await loadEngineRules(db)
   const processIds = [...new Set(rows.map((row) => row.receipt.processId))]
   const constituted = await constitutedUniqueReserves(db, processIds)
+  const recipients = new Map<string, RecipientAccumulator>()
 
   let receivedCents = 0
   let coveredCents = 0
@@ -187,10 +222,32 @@ export async function previewOpenReceiptCoverage(
       if (!step.isAllocation || !step.ruleId || syntheticIds.has(step.ruleId)) {
         continue
       }
+
       coveredCents += step.amountCents
-      if (step.nature === 'PROVISAO') provisionCents += step.amountCents
-      else if (step.nature === 'RESERVA') reserveCents += step.amountCents
-      else if (step.nature === 'CREDITO') recipientCents += step.amountCents
+      if (step.nature === 'PROVISAO') {
+        provisionCents += step.amountCents
+        continue
+      }
+      if (step.nature === 'RESERVA') {
+        reserveCents += step.amountCents
+        continue
+      }
+      if (step.nature !== 'CREDITO' || !step.recipientId) continue
+
+      recipientCents += step.amountCents
+      const current = recipients.get(step.recipientId) ?? {
+        recipientId: step.recipientId,
+        recipientName: step.recipientName ?? 'Recebedor',
+        projectedCents: 0,
+        workTypes: new Set<string>(),
+        searchTerms: new Set<string>(),
+      }
+      current.projectedCents += step.amountCents
+      if (step.workType?.trim()) current.workTypes.add(step.workType.trim())
+      current.searchTerms.add(row.processCode)
+      current.searchTerms.add(row.clientName)
+      if (row.housingComplexName) current.searchTerms.add(row.housingComplexName)
+      recipients.set(step.recipientId, current)
     }
   }
 
@@ -212,5 +269,38 @@ export async function previewOpenReceiptCoverage(
     inconsistent: inconsistentReceipts > 0,
     pendingReceipts: rows.length,
     inconsistentReceipts,
+    recipients: [...recipients.values()]
+      .map((recipient) => ({
+        recipientId: recipient.recipientId,
+        recipientName: recipient.recipientName,
+        projectedCents: recipient.projectedCents,
+        workTypes: [...recipient.workTypes].sort(),
+        searchTerms: [...recipient.searchTerms],
+      }))
+      .sort((a, b) => a.recipientName.localeCompare(b.recipientName, 'pt-BR')),
+  }
+}
+
+export async function previewOpenReceiptCoverage(
+  access: FinanceAccess,
+): Promise<FinanceCoveragePreview> {
+  const { recipients: _recipients, ...coverage } =
+    await calculateOpenCoverage(access)
+  return coverage
+}
+
+export async function previewOpenRecipientAllocations(access: FinanceAccess) {
+  const result = await calculateOpenCoverage(access)
+  return {
+    items: result.recipients,
+    totals: {
+      projectedCents: result.recipients.reduce(
+        (sum, item) => sum + item.projectedCents,
+        0,
+      ),
+    },
+    pendingReceipts: result.pendingReceipts,
+    inconsistent: result.inconsistent,
+    inconsistentReceipts: result.inconsistentReceipts,
   }
 }
