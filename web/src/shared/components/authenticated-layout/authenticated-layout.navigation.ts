@@ -35,8 +35,8 @@ export const authenticatedNavigationItems = [
     isVisible: ({ permissions }) => canViewTitularesCaixa(permissions),
   },
   {
-    label: 'Pagamentos',
-    description: 'Recebimentos e repasses',
+    label: 'Financeiro',
+    description: 'Recebimentos, distribuicao e pagamentos',
     to: '/pagamentos',
     icon: Landmark,
     isVisible: ({ permissions }) => financeAccess.view(permissions),
