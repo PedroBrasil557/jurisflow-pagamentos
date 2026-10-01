@@ -5,7 +5,7 @@ import { DeniedState } from '@/features/finance/components/finance-ui'
 import { financeAccess } from '@/features/finance/lib/finance-labels'
 
 export const Route = createFileRoute('/_protected/pagamentos')({
-  component: PaymentsLayout,
+  component: FinanceLayout,
 })
 
 const sections = [
@@ -14,7 +14,7 @@ const sections = [
   { to: '/pagamentos/extratos', label: 'Histórico' },
 ] as const
 
-function PaymentsLayout() {
+function FinanceLayout() {
   const { permissions } = useSession()
   if (!financeAccess.view(permissions)) {
     return (
@@ -28,7 +28,7 @@ function PaymentsLayout() {
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 sm:p-6">
       <div className="-mx-1 flex flex-wrap items-center justify-between gap-2 border-b border-border pb-px">
         <nav
-          aria-label="Seções de Pagamentos"
+          aria-label="Seções do Financeiro"
           className="flex gap-1 overflow-x-auto"
         >
           {sections.map((section) => (
