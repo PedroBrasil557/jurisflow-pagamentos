@@ -66,7 +66,7 @@ function activeGlobalRevenueProvisionRules(rules: Rule[]) {
 
 function coverageTone(totalBasisPoints: number) {
   if (totalBasisPoints === ONE_HUNDRED_PERCENT_BP) return 'success' as const
-  if (totalBasisPoints > ONE_HUNDRED_PERCENT_BP) return 'danger' as const
+  if (totalBasisPoints > ONE_HUNDRED_PERCENT_BP) return 'error' as const
   return 'warning' as const
 }
 
