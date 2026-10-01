@@ -36,7 +36,7 @@ import {
   statementCsvUrl,
 } from '../services/finance.service'
 
-/** Extrato operacional: o que foi devido, pago, ajustado e o saldo atual. */
+/** Histórico operacional: valores devidos, pagos, ajustes e saldo atual. */
 export function StatementPage() {
   const { permissions } = useSession()
   const recipients = useQuery(recipientsQuery())
@@ -56,24 +56,37 @@ export function StatementPage() {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Veja quanto cada recebedor passou a ter direito, quanto foi pago e quanto ainda falta. Cada movimento continua ligado ao rateio e ao processo de origem."
+        description="Consulte o histórico financeiro: valores distribuídos, pagamentos, ajustes e saldo atual. Cada movimento continua ligado ao processo e à distribuição de origem."
         eyebrow="Pagamentos"
-        title="Extrato"
+        title="Histórico"
       >
-        {financeAccess.exportar(permissions) ? (
-          <Button
-            onClick={() =>
-              downloadAuthenticated(
-                statementCsvUrl(filters),
-                'extrato-pagamentos.csv',
-              ).catch((error: Error) => toast.error(error.message))
-            }
-            variant="outline"
-          >
-            <Download className="size-4" />
-            Exportar CSV
-          </Button>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {financeAccess.reservas(permissions) ? (
+            <Button asChild variant="outline">
+              <Link
+                className="no-underline"
+                preload={false}
+                to="/pagamentos/reservas"
+              >
+                Ver reservas
+              </Link>
+            </Button>
+          ) : null}
+          {financeAccess.exportar(permissions) ? (
+            <Button
+              onClick={() =>
+                downloadAuthenticated(
+                  statementCsvUrl(filters),
+                  'historico-pagamentos.csv',
+                ).catch((error: Error) => toast.error(error.message))
+              }
+              variant="outline"
+            >
+              <Download className="size-4" />
+              Exportar CSV
+            </Button>
+          ) : null}
+        </div>
       </PageHeader>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -154,7 +167,7 @@ export function StatementPage() {
           {query.data.entries.length === 0 ? (
             <EmptyState
               description="Nenhum valor devido, pagamento ou ajuste para os filtros selecionados."
-              title="Extrato vazio"
+              title="Histórico vazio"
             />
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
@@ -197,7 +210,7 @@ export function StatementPage() {
                         </Link>{' '}
                         · {entry.clientName} · {entry.housingComplexName ?? '—'}
                         <span className="block">
-                          Rateio{' '}
+                          Distribuição{' '}
                           <Link
                             className="text-primary"
                             params={{ closingId: entry.closingId }}
