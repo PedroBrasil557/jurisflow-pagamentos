@@ -107,7 +107,7 @@ export function CalculationMemory({
 
   return (
     <div className="grid gap-5">
-      <section className="grid gap-3" aria-label="Resumo do rateio">
+      <section className="grid gap-3" aria-label="Resumo da distribuição">
         <div>
           <h3 className="text-sm font-semibold">Para onde foi o dinheiro</h3>
           <p className="text-xs text-muted-foreground">
@@ -132,7 +132,7 @@ export function CalculationMemory({
           )}
         >
           <div>
-            <div className="text-sm font-medium">Conferência do rateio</div>
+            <div className="text-sm font-medium">Conferência da distribuição</div>
             <div className="text-xs text-muted-foreground">
               Entrou {formatCents(gross)} · destinado {formatCents(allocated)}
             </div>

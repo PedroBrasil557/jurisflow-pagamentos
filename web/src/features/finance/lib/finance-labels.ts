@@ -6,12 +6,12 @@ export const receiptStatusLabels: Record<
   string,
   { label: string; tone: Tone }
 > = {
-  RASCUNHO: { label: 'Rascunho', tone: 'ghost' },
-  EM_PREVIA: { label: 'Em conferência', tone: 'info' },
-  BLOQUEADO: { label: 'Bloqueado', tone: 'error' },
-  APTO: { label: 'Pronto para finalizar distribuição', tone: 'success' },
-  FECHADO: { label: 'Distribuição finalizada', tone: 'success' },
-  CANCELADO: { label: 'Cancelado', tone: 'ghost' },
+  RASCUNHO: { label: 'Pendente', tone: 'warning' },
+  EM_PREVIA: { label: 'Em distribuição', tone: 'info' },
+  BLOQUEADO: { label: 'Revisar regras', tone: 'error' },
+  APTO: { label: 'Pronta para finalizar', tone: 'success' },
+  FECHADO: { label: 'Finalizada', tone: 'success' },
+  CANCELADO: { label: 'Cancelada', tone: 'ghost' },
 }
 
 export const creditStatusLabels: Record<string, { label: string; tone: Tone }> =
@@ -42,9 +42,9 @@ export const stageLabels: Record<
     help: 'Separa uma parte do valor que entrou antes das demais distribuições.',
   },
   DEDUCAO_LIQUIDA: {
-    label: 'Pagamento ou provisão sobre a receita líquida',
+    label: 'Destino sobre a receita líquida',
     base: 'receita líquida após as provisões iniciais',
-    help: 'Destina percentual ou valor para pessoas, empresas ou provisões calculadas sobre a receita líquida.',
+    help: 'Destina percentual ou valor para recebedores ou provisões calculadas sobre a receita líquida.',
   },
   RESERVA: {
     label: 'Reserva para uma finalidade',
@@ -72,7 +72,7 @@ export const stageOrder = [
 ] as const
 
 export const natureLabels: Record<string, string> = {
-  CREDITO: 'Pagamento para pessoa/empresa',
+  CREDITO: 'Recebedor',
   PROVISAO: 'Provisão',
   RESERVA: 'Reserva',
 }
@@ -86,11 +86,11 @@ export const stageNatures: Record<string, string[]> = {
 }
 
 export const statementKindLabels: Record<string, string> = {
-  CREDITO: 'Valor devido',
+  CREDITO: 'Valor liberado',
   AJUSTE: 'Ajuste',
   BAIXA: 'Pagamento registrado',
   ESTORNO_BAIXA: 'Estorno de pagamento',
-  ESTORNO_CREDITO: 'Estorno de valor devido',
+  ESTORNO_CREDITO: 'Estorno de valor liberado',
 }
 
 // Espelha a autorizacao da API (que e a fonte de verdade): esconde o que o

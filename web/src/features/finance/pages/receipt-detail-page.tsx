@@ -40,9 +40,9 @@ import { receiptQuery } from '../services/finance.queries'
 const auditLabels: Record<string, string> = {
   CRIADO: 'Entrada registrada',
   ALTERADO: 'Entrada alterada',
-  PREVIA_CALCULADA: 'Rateio calculado',
+  PREVIA_CALCULADA: 'Distribuição calculada',
   BLOQUEADO: 'Cálculo bloqueado',
-  APROVADO: 'Rateio aprovado para finalização',
+  APROVADO: 'Distribuição aprovada para finalização',
   CANCELADO: 'Entrada cancelada',
 }
 
@@ -77,7 +77,7 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
       <BackLink label="Entradas" to="/pagamentos/recebimentos" />
       <PageHeader
         description={`${process.code} · ${process.clientName}`}
-        eyebrow="Pagamentos · entrada"
+        eyebrow="Financeiro · entrada"
         title={receiptKindLabels[receipt.kind] ?? receipt.kind}
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -87,15 +87,15 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
               disabled={calculate.isPending}
               onClick={() =>
                 calculate.mutate(receipt.id, {
-                  onSuccess: () => toast.success('Rateio recalculado.'),
+                  onSuccess: () => toast.success('Distribuição recalculada.'),
                 })
               }
               variant="outline"
             >
               <Calculator className="size-4" />
               {receipt.status === 'RASCUNHO'
-                ? 'Calcular rateio'
-                : 'Recalcular rateio'}
+                ? 'Calcular distribuição'
+                : 'Recalcular distribuição'}
             </Button>
           ) : null}
           {receipt.status === 'EM_PREVIA' &&
@@ -105,12 +105,12 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
               onClick={() =>
                 approve.mutate(receipt.id, {
                   onSuccess: () =>
-                    toast.success('Rateio aprovado e pronto para finalizar.'),
+                    toast.success('Distribuição aprovada e pronta para finalizar.'),
                 })
               }
             >
               <CheckCircle2 className="size-4" />
-              Aprovar rateio
+              Aprovar distribuição
             </Button>
           ) : null}
           {open && financeAccess.lancar(permissions) ? (
@@ -162,15 +162,15 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
       <FinanceSection
         description={
           calculation
-            ? `Calculado em ${formatInstant(receipt.lastCalculatedAt)}. Primeiro confira para onde cada centavo foi; os detalhes técnicos ficam recolhidos abaixo.`
-            : 'O rateio ainda não foi calculado.'
+            ? `Calculado em ${formatInstant(receipt.lastCalculatedAt)}. Veja primeiro para onde o valor foi destinado; os detalhes técnicos ficam recolhidos abaixo.`
+            : 'A distribuição ainda não foi calculada.'
         }
-        title="Rateio do valor"
+        title="Distribuição do valor"
       >
         {!calculation ? (
           <p className="text-sm text-muted-foreground">
-            Clique em “Calcular rateio”. O sistema localizará as regras válidas e
-            mostrará quanto vai para cada pessoa, empresa, provisão e reserva.
+            Clique em “Calcular distribuição”. O sistema localizará as regras válidas e
+            mostrará quanto vai para cada recebedor, provisão e reserva.
           </p>
         ) : calculation.blocked ? (
           <BlocksPanel blocks={calculation.blocks} />
@@ -181,8 +181,8 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
 
       {credits.length > 0 ? (
         <FinanceSection
-          description="Estes valores nasceram quando o rateio foi finalizado. Pago e saldo são atualizados pelos pagamentos registrados."
-          title="Valores a pagar gerados"
+          description="Estes valores foram liberados quando a distribuição foi finalizada. Pago e saldo são atualizados pelos pagamentos registrados."
+          title="Valores liberados para pagamento"
         >
           <ul className="grid gap-1.5 text-sm">
             {credits.map((credit) => (
@@ -206,8 +206,8 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
               preload={false}
               to="/pagamentos/fechamentos/$closingId"
             >
-              Abrir rateio {closing.code}
-              {closing.isActive ? '' : ' (estornado)'}
+              Abrir distribuição {closing.code}
+              {closing.isActive ? '' : ' (estornada)'}
             </Link>
           ))}
         </FinanceSection>
@@ -225,7 +225,7 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
           />
         </FinanceSection>
         <FinanceSection
-          description="Cada entrada do processo tem seu próprio rateio; uma reserva configurada como única por processo não é criada duas vezes."
+          description="Cada entrada do processo tem sua própria distribuição; uma reserva configurada como única por processo não é criada duas vezes."
           title="Outras entradas do processo"
         >
           {others.length === 0 ? (
@@ -255,7 +255,7 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
         </FinanceSection>
       </div>
 
-      <FinanceSection title="Histórico">
+      <FinanceSection title="Histórico da entrada">
         <ol className="grid gap-1 text-sm">
           {history.map((entry) => (
             <li className="flex flex-wrap justify-between gap-2" key={entry.id}>
