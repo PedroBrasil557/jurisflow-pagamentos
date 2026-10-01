@@ -39,6 +39,7 @@ import type { AllocationPolicy } from '../services/finance-quick.service'
 import {
   allocationPolicyQuery,
   creditsQuery,
+  overviewQuery,
 } from '../services/finance.queries'
 
 type RecipientSummary = {
@@ -72,6 +73,15 @@ type PaymentRecipientsResponse = {
     limit: number
     total: number
     totalPages: number
+  }
+}
+
+type PaymentCoverageOverview = {
+  coverage: {
+    coveredCents: number
+    provisionCents: number
+    reserveCents: number
+    recipientCents: number
   }
 }
 
@@ -136,7 +146,13 @@ export function PaymentsPage() {
     enabled: !isAdmin,
   })
 
+  const overview = useQuery({
+    ...overviewQuery(),
+    enabled: isAdmin,
+  })
+
   const data = query.data
+  const overviewData = overview.data as PaymentCoverageOverview | undefined
 
   return (
     <div className="flex flex-col gap-6">
@@ -162,7 +178,7 @@ export function PaymentsPage() {
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatPill
               cents={data.totals.plannedCents}
-              label={isAdmin ? 'Previsto' : 'Meu previsto'}
+              label={isAdmin ? 'Previsto para recebedores' : 'Meu previsto'}
               hint="Valor calculado pelas regras"
             />
             <StatPill
@@ -181,6 +197,30 @@ export function PaymentsPage() {
               hint="Ainda depende da distribuição"
             />
           </div>
+
+          {isAdmin && overviewData ? (
+            <FinanceSection title="Destino do valor coberto">
+              <div className="grid overflow-hidden rounded-lg border border-border sm:grid-cols-2 xl:grid-cols-4">
+                <CoverageDestination
+                  cents={overviewData.coverage.recipientCents}
+                  label="Recebedores"
+                />
+                <CoverageDestination
+                  cents={overviewData.coverage.provisionCents}
+                  label="Provisões"
+                />
+                <CoverageDestination
+                  cents={overviewData.coverage.reserveCents}
+                  label="Reservas"
+                />
+                <CoverageDestination
+                  cents={overviewData.coverage.coveredCents}
+                  label="Total previsto"
+                  strong
+                />
+              </div>
+            </FinanceSection>
+          ) : null}
 
           {data.preview.inconsistent ? (
             <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
@@ -270,6 +310,25 @@ export function PaymentsPage() {
           ) : null}
         </>
       ) : null}
+    </div>
+  )
+}
+
+function CoverageDestination({
+  cents,
+  label,
+  strong = false,
+}: {
+  cents: number
+  label: string
+  strong?: boolean
+}) {
+  return (
+    <div className="border-b border-border p-4 last:border-b-0 sm:border-r sm:[&:nth-child(2)]:border-r-0 xl:border-b-0 xl:[&:nth-child(2)]:border-r xl:last:border-r-0">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg">
+        <Money cents={cents} strong={strong} />
+      </div>
     </div>
   )
 }
