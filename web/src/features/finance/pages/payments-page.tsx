@@ -46,17 +46,26 @@ type RecipientSummary = {
   recipientName: string
   workTypes: string[]
   creditCount: number
-  dueCents: number
+  plannedCents: number
+  releasedCents: number
   paidCents: number
   balanceCents: number
+  awaitingDistributionCents: number
 }
 
 type PaymentRecipientsResponse = {
   items: RecipientSummary[]
   totals: {
-    dueCents: number
+    plannedCents: number
+    releasedCents: number
     paidCents: number
     balanceCents: number
+    awaitingDistributionCents: number
+  }
+  preview: {
+    pendingReceipts: number
+    inconsistent: boolean
+    inconsistentReceipts: number
   }
   pagination: {
     page: number
@@ -67,7 +76,10 @@ type PaymentRecipientsResponse = {
 }
 
 async function fetchPaymentRecipients(search: string, page: number) {
-  const url = new URL('/api/finance/payment-recipients', window.location.origin)
+  const url = new URL(
+    '/api/finance/payment-recipients-preview',
+    window.location.origin,
+  )
   if (search) url.searchParams.set('search', search)
   url.searchParams.set('page', String(page))
   url.searchParams.set('limit', '30')
@@ -84,11 +96,28 @@ async function fetchPaymentRecipients(search: string, page: number) {
 }
 
 function summaryTone(summary: RecipientSummary) {
-  if (summary.balanceCents <= 0)
+  if (summary.awaitingDistributionCents > 0 && summary.releasedCents === 0) {
+    return {
+      label: 'Aguardando completar distribuição',
+      tone: 'warning' as const,
+    }
+  }
+  if (summary.awaitingDistributionCents > 0) {
+    return {
+      label: 'Parte ainda em distribuição',
+      tone: 'info' as const,
+    }
+  }
+  if (summary.releasedCents > 0 && summary.balanceCents <= 0) {
     return { label: 'Pago', tone: 'success' as const }
-  if (summary.paidCents > 0)
-    return { label: 'Parcial', tone: 'info' as const }
-  return { label: 'A pagar', tone: 'warning' as const }
+  }
+  if (summary.paidCents > 0) {
+    return { label: 'Pago parcialmente', tone: 'info' as const }
+  }
+  if (summary.releasedCents > 0) {
+    return { label: 'A pagar', tone: 'warning' as const }
+  }
+  return { label: 'Previsto', tone: 'ghost' as const }
 }
 
 export function PaymentsPage() {
@@ -98,7 +127,13 @@ export function PaymentsPage() {
   const [page, setPage] = useState(1)
   const deferredSearch = useDeferredValue(isAdmin ? search.trim() : '')
   const query = useQuery({
-    queryKey: ['finance', 'payment-recipients', deferredSearch, page, isAdmin],
+    queryKey: [
+      'finance',
+      'payment-recipients-preview',
+      deferredSearch,
+      page,
+      isAdmin,
+    ],
     queryFn: () => fetchPaymentRecipients(deferredSearch, isAdmin ? page : 1),
   })
   const policy = useQuery({
@@ -113,10 +148,10 @@ export function PaymentsPage() {
       <PageHeader
         description={
           isAdmin
-            ? 'Veja quanto cada recebedor tem direito, quanto já foi pago e qual valor ainda está pendente.'
-            : 'Acompanhe somente a sua participação: quanto já foi gerado, pago e quanto ainda falta receber.'
+            ? 'Veja quem já tem valor previsto pelas regras, quanto já foi liberado para pagamento, quanto foi pago e o que ainda depende de completar a distribuição.'
+            : 'Acompanhe sua participação prevista, os valores já liberados e os pagamentos realizados.'
         }
-        eyebrow={isAdmin ? 'Pagamentos · Administrador' : 'Pagamentos'}
+        eyebrow="Financeiro · Pagamentos"
         title={isAdmin ? 'Pagamentos por recebedor' : 'Minha participação'}
       />
 
@@ -129,15 +164,16 @@ export function PaymentsPage() {
 
       {data ? (
         <>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatPill
-              cents={data.totals.dueCents}
-              label={isAdmin ? 'Total devido' : 'Meu total gerado'}
-              hint={
-                isAdmin
-                  ? 'Direito gerado pelos rateios finalizados'
-                  : 'Créditos gerados pelos seus rateios finalizados'
-              }
+              cents={data.totals.plannedCents}
+              label={isAdmin ? 'Previsto pelas regras' : 'Meu valor previsto'}
+              hint="Inclui valores ainda aguardando a distribuição ser concluída"
+            />
+            <StatPill
+              cents={data.totals.releasedCents}
+              label={isAdmin ? 'Liberado para pagamento' : 'Já liberado'}
+              hint="Valores efetivamente gerados por distribuições finalizadas"
             />
             <StatPill
               cents={data.totals.paidCents}
@@ -145,15 +181,19 @@ export function PaymentsPage() {
               hint="Pagamentos já registrados"
             />
             <StatPill
-              cents={data.totals.balanceCents}
-              label={isAdmin ? 'Ainda falta pagar' : 'Tenho a receber'}
-              hint={
-                isAdmin
-                  ? 'Saldo aberto de todos os recebedores'
-                  : 'Seu saldo pessoal ainda em aberto'
-              }
+              cents={data.totals.awaitingDistributionCents}
+              label="Aguardando distribuição"
+              hint="Previsão que ainda não virou obrigação de pagamento"
             />
           </div>
+
+          {data.preview.inconsistent ? (
+            <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
+              Há {data.preview.inconsistentReceipts} recebimento(s) cuja prévia
+              não pôde ser calculada. Revise a distribuição para que esses
+              valores também apareçam corretamente.
+            </div>
+          ) : null}
 
           {isAdmin ? (
             <SearchInput
@@ -173,15 +213,17 @@ export function PaymentsPage() {
                 isAdmin
                   ? deferredSearch
                     ? 'Nenhum recebedor corresponde à busca.'
-                    : 'Os valores a pagar aparecem aqui depois que um rateio é finalizado.'
-                  : 'Sua conta ainda não possui créditos vinculados. O administrador deve vincular seu usuário ao seu cadastro de recebedor; depois disso somente os seus valores aparecerão aqui.'
+                    : data.preview.pendingReceipts > 0
+                      ? 'Existem recebimentos em distribuição, mas nenhuma regra válida destinou valor a um recebedor ainda.'
+                      : 'Nenhum valor previsto ou liberado para pagamento ainda.'
+                  : 'Sua conta ainda não possui valores vinculados. O administrador deve vincular seu usuário ao cadastro de recebedor.'
               }
               icon={isAdmin ? UserRound : ShieldCheck}
               title={
                 isAdmin && deferredSearch
                   ? 'Nenhum resultado'
                   : isAdmin
-                    ? 'Nenhum valor a pagar ainda'
+                    ? 'Nenhum recebedor com valor ainda'
                     : 'Nenhum valor pessoal disponível'
               }
             />
@@ -192,7 +234,7 @@ export function PaymentsPage() {
               {data.items.map((summary) => (
                 <RecipientCard
                   key={summary.recipientId}
-                  showRateioLink={isAdmin}
+                  showDistributionLink={isAdmin}
                   summary={summary}
                 />
               ))}
@@ -314,10 +356,10 @@ function AllocationPolicySection({
 
 function RecipientCard({
   summary,
-  showRateioLink,
+  showDistributionLink,
 }: {
   summary: RecipientSummary
-  showRateioLink: boolean
+  showDistributionLink: boolean
 }) {
   const [open, setOpen] = useState(false)
   const status = summaryTone(summary)
@@ -338,24 +380,33 @@ function RecipientCard({
             {summary.workTypes.length > 0
               ? summary.workTypes.join(' · ')
               : 'Recebedor financeiro'}
-            {' · '}
-            {summary.creditCount} valor(es) originado(s) em rateios
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           <span>
-            <span className="text-muted-foreground">Devido </span>
-            <Money cents={summary.dueCents} strong />
+            <span className="text-muted-foreground">Previsto </span>
+            <Money cents={summary.plannedCents} strong />
+          </span>
+          <span>
+            <span className="text-muted-foreground">Liberado </span>
+            <Money cents={summary.releasedCents} />
           </span>
           <span>
             <span className="text-muted-foreground">Pago </span>
             <Money cents={summary.paidCents} />
           </span>
-          <span>
-            <span className="text-muted-foreground">Falta </span>
-            <Money cents={summary.balanceCents} strong />
-          </span>
+          {summary.awaitingDistributionCents > 0 ? (
+            <span>
+              <span className="text-muted-foreground">Aguardando </span>
+              <Money cents={summary.awaitingDistributionCents} strong />
+            </span>
+          ) : summary.balanceCents > 0 ? (
+            <span>
+              <span className="text-muted-foreground">A pagar </span>
+              <Money cents={summary.balanceCents} strong />
+            </span>
+          ) : null}
           <Button
             aria-expanded={open}
             onClick={() => setOpen((current) => !current)}
@@ -367,10 +418,18 @@ function RecipientCard({
             ) : (
               <ChevronDown className="size-4" />
             )}
-            {open ? 'Ocultar origem' : 'Ver origem'}
+            {open ? 'Ocultar origem' : 'Ver valores liberados'}
           </Button>
         </div>
       </div>
+
+      {summary.awaitingDistributionCents > 0 ? (
+        <div className="border-t border-border bg-amber-500/5 px-4 py-2 text-xs text-muted-foreground">
+          <Money cents={summary.awaitingDistributionCents} strong /> estão
+          previstos pelas regras atuais, mas ainda não foram liberados para
+          pagamento porque a distribuição não foi concluída em 100%.
+        </div>
+      ) : null}
 
       {open ? (
         <div className="border-t border-border">
@@ -383,18 +442,25 @@ function RecipientCard({
               />
             </div>
           ) : null}
-          {credits.data ? (
+          {credits.data && credits.data.length === 0 ? (
+            <div className="p-4 text-sm text-muted-foreground">
+              Ainda não há valores liberados para este recebedor. O valor
+              previsto acima só vira pagamento quando a distribuição for
+              concluída.
+            </div>
+          ) : null}
+          {credits.data && credits.data.length > 0 ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Processo / cliente</TableHead>
                     <TableHead>Origem do valor</TableHead>
-                    <TableHead className="text-right">Devido</TableHead>
+                    <TableHead className="text-right">Liberado</TableHead>
                     <TableHead className="text-right">Pago</TableHead>
-                    <TableHead className="text-right">Falta</TableHead>
-                    {showRateioLink ? (
-                      <TableHead className="w-32">Ação</TableHead>
+                    <TableHead className="text-right">A pagar</TableHead>
+                    {showDistributionLink ? (
+                      <TableHead className="w-36">Ação</TableHead>
                     ) : null}
                   </TableRow>
                 </TableHeader>
@@ -407,7 +473,9 @@ function RecipientCard({
                       return (
                         <TableRow key={credit.id}>
                           <TableCell>
-                            <div className="font-medium">{credit.processCode}</div>
+                            <div className="font-medium">
+                              {credit.processCode}
+                            </div>
                             <div className="text-xs text-muted-foreground">
                               {credit.clientName}
                               {credit.housingComplexName
@@ -416,7 +484,7 @@ function RecipientCard({
                             </div>
                           </TableCell>
                           <TableCell className="text-sm">
-                            {credit.workType || 'Rateio financeiro'}
+                            {credit.workType || 'Distribuição financeira'}
                           </TableCell>
                           <TableCell className="text-right">
                             <Money cents={due} />
@@ -427,7 +495,7 @@ function RecipientCard({
                           <TableCell className="text-right">
                             <Money cents={balance} strong />
                           </TableCell>
-                          {showRateioLink ? (
+                          {showDistributionLink ? (
                             <TableCell>
                               <Button asChild size="sm" variant="ghost">
                                 <Link
@@ -436,7 +504,7 @@ function RecipientCard({
                                   to="/pagamentos/fechamentos/$closingId"
                                 >
                                   <ExternalLink className="size-4" />
-                                  Abrir rateio
+                                  Abrir distribuição
                                 </Link>
                               </Button>
                             </TableCell>
