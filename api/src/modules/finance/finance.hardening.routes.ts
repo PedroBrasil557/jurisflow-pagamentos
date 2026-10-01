@@ -9,6 +9,7 @@ import { queryValidator } from '../../shared/validation/validators'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import { process } from '../processes/processes.schema'
 import { getClosingDetail } from './finance.closings.service'
+import { previewOpenReceiptCoverage } from './finance.coverage.service'
 import {
   financeClosing,
   financeClosingItem,
@@ -115,6 +116,7 @@ export async function overviewScoped(access: FinanceAccess) {
     )
 
   const reserves = await reserveBalancesScoped(access)
+  const coveragePreview = await previewOpenReceiptCoverage(access)
   const provisionCents = reserves
     .filter((pool) => pool.nature === 'PROVISAO')
     .reduce((sum, pool) => sum + pool.constitutedCents, 0)
@@ -129,6 +131,16 @@ export async function overviewScoped(access: FinanceAccess) {
   const receivedCents = Number(receipts?.receivedCents ?? 0)
   const allocatedCents = provisionCents + reserveCents + recipientAllocatedCents
   const differenceCents = ratedCents - allocatedCents
+
+  const coveredCents = Math.min(
+    receivedCents,
+    ratedCents + coveragePreview.coveredCents,
+  )
+  const uncoveredCents = Math.max(0, receivedCents - coveredCents)
+  const coverageBasisPoints =
+    receivedCents > 0
+      ? Math.min(10_000, Math.round((coveredCents * 10_000) / receivedCents))
+      : 0
 
   let config = { recipients: 0, activeRules: 0 }
   if (access.isGlobal) {
@@ -169,6 +181,25 @@ export async function overviewScoped(access: FinanceAccess) {
       allocatedCents,
       differenceCents,
       balanced: differenceCents === 0,
+    },
+    coverage: {
+      receivedCents,
+      coveredCents,
+      uncoveredCents,
+      coverageBasisPoints,
+      complete:
+        receivedCents > 0 &&
+        uncoveredCents === 0 &&
+        !coveragePreview.inconsistent,
+      inconsistent: coveragePreview.inconsistent,
+      inconsistentReceipts: coveragePreview.inconsistentReceipts,
+      pendingReceipts: coveragePreview.pendingReceipts,
+      finalizedCents: ratedCents,
+      projectedCents: coveragePreview.coveredCents,
+      provisionCents: provisionCents + coveragePreview.provisionCents,
+      reserveCents: reserveCents + coveragePreview.reserveCents,
+      recipientCents:
+        recipientAllocatedCents + coveragePreview.recipientCents,
     },
     config,
   }

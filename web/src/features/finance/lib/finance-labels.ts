@@ -9,8 +9,8 @@ export const receiptStatusLabels: Record<
   RASCUNHO: { label: 'Rascunho', tone: 'ghost' },
   EM_PREVIA: { label: 'Em conferência', tone: 'info' },
   BLOQUEADO: { label: 'Bloqueado', tone: 'error' },
-  APTO: { label: 'Pronto para finalizar rateio', tone: 'success' },
-  FECHADO: { label: 'Rateio finalizado', tone: 'success' },
+  APTO: { label: 'Pronto para finalizar distribuição', tone: 'success' },
+  FECHADO: { label: 'Distribuição finalizada', tone: 'success' },
   CANCELADO: { label: 'Cancelado', tone: 'ghost' },
 }
 
@@ -39,7 +39,7 @@ export const stageLabels: Record<
   PROVISAO_RECEITA: {
     label: 'Provisão sobre o valor recebido',
     base: 'valor bruto recebido',
-    help: 'Separa uma parte do valor que entrou antes dos demais rateios.',
+    help: 'Separa uma parte do valor que entrou antes das demais distribuições.',
   },
   DEDUCAO_LIQUIDA: {
     label: 'Pagamento ou provisão sobre a receita líquida',
