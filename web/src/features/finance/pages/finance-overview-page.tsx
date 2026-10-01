@@ -1,12 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import {
-  CheckCircle2,
-  FileSpreadsheet,
-  Plus,
-  Settings2,
-  TriangleAlert,
-} from 'lucide-react'
+import { CheckCircle2, List, Plus, Settings2, TriangleAlert } from 'lucide-react'
 import { Button } from '#/components/ui/button'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { PageHeader } from '@/shared/components/page-header'
@@ -55,25 +49,50 @@ export function FinanceOverviewPage() {
     data.config.activeRules === 0 &&
     financeAccess.regras(permissions)
 
+  const receivedCents = data?.receipts.receivedCents ?? 0
+  const distributedCents = data?.receipts.ratedCents ?? 0
+  const pendingCents = data?.receipts.pendingRateioCents ?? 0
+  const coverage =
+    receivedCents > 0
+      ? Math.max(
+          0,
+          Math.min(100, Math.round((distributedCents / receivedCents) * 10_000) / 100),
+        )
+      : 0
+  const hasEntries = receivedCents > 0
+  const distributionComplete = hasEntries && pendingCents === 0
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader
-        description="Acompanhe o caminho do dinheiro: quanto entrou, quanto já foi rateado, para onde foi destinado e o que ainda falta pagar."
+        description="Registre o valor recebido e acompanhe se 100% dele já foi distribuído pelas regras. Se ainda existir valor sem distribuição, ele permanece pendente."
         eyebrow="Pagamentos"
-        title="Visão geral"
+        title="Distribuição"
       >
-        {financeAccess.lancar(permissions) ? (
-          <Button asChild>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline">
             <Link
               className="no-underline"
               preload={false}
-              to="/pagamentos/recebimentos/novo"
+              to="/pagamentos/recebimentos"
             >
-              <Plus className="size-4" />
-              Registrar entrada
+              <List className="size-4" />
+              Ver entradas
             </Link>
           </Button>
-        ) : null}
+          {financeAccess.lancar(permissions) ? (
+            <Button asChild>
+              <Link
+                className="no-underline"
+                preload={false}
+                to="/pagamentos/recebimentos/novo"
+              >
+                <Plus className="size-4" />
+                Registrar entrada
+              </Link>
+            </Button>
+          ) : null}
+        </div>
       </PageHeader>
 
       {overview.isPending ? <LoadingState /> : null}
@@ -86,67 +105,43 @@ export function FinanceOverviewPage() {
           {noConfig ? (
             <EmptyState
               action={
-                <div className="flex flex-wrap justify-center gap-2">
-                  <Button asChild>
-                    <Link
-                      className="no-underline"
-                      preload={false}
-                      to="/pagamentos/configuracao/novo"
-                    >
-                      <Settings2 className="size-4" />
-                      Configurar regras
-                    </Link>
-                  </Button>
-                  {financeAccess.importar(permissions) ? (
-                    <Button asChild variant="outline">
-                      <Link
-                        className="no-underline"
-                        preload={false}
-                        to="/pagamentos/configuracao/importar"
-                      >
-                        <FileSpreadsheet className="size-4" />
-                        Importar planilha
-                      </Link>
-                    </Button>
-                  ) : null}
-                </div>
+                <Button asChild>
+                  <Link
+                    className="no-underline"
+                    preload={false}
+                    to="/pagamentos/configuracao"
+                  >
+                    <Settings2 className="size-4" />
+                    Configurar distribuição
+                  </Link>
+                </Button>
               }
-              description="Ainda não existe regra financeira. Sem configuração o sistema não inventa percentuais nem destinos."
+              description="Defina quem recebe e os percentuais. O sistema só considera a distribuição pronta quando ela alcançar 100%."
               icon={Settings2}
-              title="Configure o financeiro antes de calcular"
+              title="Configure a distribuição antes de começar"
             />
           ) : null}
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-3">
             <StatPill
-              cents={data.receipts.receivedCents}
-              label="Entrou"
-              hint="Entradas com data de liberação registrada"
+              cents={receivedCents}
+              label="Recebido"
+              hint="Total de entradas com valor liberado"
             />
             <StatPill
-              cents={data.receipts.ratedCents}
-              label="Já rateado"
-              hint="Entradas incluídas em rateios ativos"
+              cents={distributedCents}
+              label="Distribuído"
+              hint="Valor que já teve sua distribuição finalizada"
             />
             <StatPill
-              cents={data.receipts.pendingRateioCents}
-              label="Aguardando rateio"
-              hint="Entrou, mas ainda não foi finalizado em rateio"
-            />
-            <StatPill
-              cents={data.credits.dueCents}
-              label="Devido aos recebedores"
-              hint="Obrigação atual, incluindo ajustes"
-            />
-            <StatPill
-              cents={data.credits.balanceCents}
-              label="Ainda falta pagar"
-              hint="Pendência atual dos recebedores"
+              cents={pendingCents}
+              label="Pendente"
+              hint="Valor recebido que ainda precisa completar a distribuição"
             />
           </div>
 
-          <FinanceSection title="Para onde foi o dinheiro rateado?">
-            <div className="grid gap-4 xl:grid-cols-[1fr_240px] xl:items-stretch">
+          <FinanceSection title="Cobertura da distribuição">
+            <div className="grid gap-4 xl:grid-cols-[1fr_280px] xl:items-stretch">
               <div className="overflow-hidden rounded-lg border border-border">
                 <div className="grid grid-cols-[1fr_auto] gap-4 bg-muted/30 px-4 py-2 text-xs font-medium text-muted-foreground">
                   <span>Destino</span>
@@ -172,21 +167,54 @@ export function FinanceOverviewPage() {
 
               <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-border p-4 text-center">
                 <div
-                  className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold ${data.allocations.balanced ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600' : 'border-destructive/50 bg-destructive/5 text-destructive'}`}
+                  className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-semibold ${
+                    distributionComplete
+                      ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-600'
+                      : hasEntries
+                        ? 'border-amber-500/35 bg-amber-500/10 text-amber-600'
+                        : 'border-border bg-muted/30 text-muted-foreground'
+                  }`}
                 >
-                  {data.allocations.balanced ? (
+                  {distributionComplete ? (
                     <CheckCircle2 className="size-4" />
-                  ) : (
+                  ) : hasEntries ? (
                     <TriangleAlert className="size-4" />
-                  )}
-                  {data.allocations.balanced
-                    ? 'Tudo conciliado'
-                    : 'Há valor sem destino'}
+                  ) : null}
+                  {distributionComplete
+                    ? 'Distribuição finalizada'
+                    : hasEntries
+                      ? 'Distribuição pendente'
+                      : 'Aguardando entradas'}
+                </div>
+
+                <div className="text-3xl font-semibold tabular-nums">
+                  {coverage.toLocaleString('pt-BR', {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2,
+                  })}
+                  %
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Diferença{' '}
-                  <Money cents={data.allocations.differenceCents} strong />
+                  {hasEntries ? (
+                    <>
+                      Falta distribuir <Money cents={pendingCents} strong />
+                    </>
+                  ) : (
+                    'Registre uma entrada para iniciar a distribuição.'
+                  )}
                 </div>
+
+                {hasEntries && pendingCents > 0 && financeAccess.conferir(permissions) ? (
+                  <Button asChild size="sm" variant="outline">
+                    <Link
+                      className="no-underline"
+                      preload={false}
+                      to="/pagamentos/fechamentos"
+                    >
+                      Revisar distribuição
+                    </Link>
+                  </Button>
+                ) : null}
               </div>
             </div>
           </FinanceSection>
