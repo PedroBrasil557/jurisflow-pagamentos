@@ -18,7 +18,10 @@ import {
   type RulePayload,
   reverseClosingRequest,
   reversePayoutRequest,
+  reverseReserveMovementRequest,
   revokeRuleRequest,
+  updateReceiptRequest,
+  updateRecipientRequest,
   uploadAttachmentRequest,
 } from './finance.service'
 
@@ -38,6 +41,8 @@ function useFinanceMutation<TVariables, TResult>(
 
 export const useCreateRecipient = () =>
   useFinanceMutation(createRecipientRequest)
+export const useUpdateRecipient = () =>
+  useFinanceMutation(updateRecipientRequest)
 export const useCreateRule = () => useFinanceMutation(createRuleRequest)
 export const useCreateRuleVersion = () =>
   useFinanceMutation((v: { lineageId: string; payload: RulePayload }) =>
@@ -59,6 +64,7 @@ export const useConfirmImport = () =>
     confirmImportRequest(v.file, v.mapping),
   )
 export const useCreateReceipt = () => useFinanceMutation(createReceiptRequest)
+export const useUpdateReceipt = () => useFinanceMutation(updateReceiptRequest)
 export const useCalculateReceipt = () =>
   useFinanceMutation(calculateReceiptRequest)
 export const useApproveReceipt = () => useFinanceMutation(approveReceiptRequest)
@@ -80,6 +86,10 @@ export const useCreateAdjustment = () =>
   useFinanceMutation(createAdjustmentRequest)
 export const useCreateReserveDebit = () =>
   useFinanceMutation(createReserveDebitRequest)
+export const useReverseReserveMovement = () =>
+  useFinanceMutation((v: { id: string; reason: string }) =>
+    reverseReserveMovementRequest(v.id, v.reason),
+  )
 export const useUploadAttachment = () =>
   useFinanceMutation(
     (v: {
