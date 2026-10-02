@@ -457,6 +457,18 @@ export async function uploadAttachmentRequest(
     'Não foi possível anexar o comprovante.',
   )
 }
+export async function removeAttachmentRequest(input: {
+  id: string
+  reason: string
+}) {
+  return ok(
+    await finance.attachments[':id'].remove.$post({
+      param: { id: input.id },
+      json: { reason: input.reason },
+    }),
+    'Não foi possível remover o comprovante.',
+  )
+}
 
 /** Download autenticado (sem URL publica): baixa via fetch e aciona o navegador. */
 export async function downloadAuthenticated(url: string, fallbackName: string) {
