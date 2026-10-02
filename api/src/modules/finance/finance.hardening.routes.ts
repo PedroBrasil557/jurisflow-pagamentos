@@ -1,4 +1,17 @@
-import { and, asc, desc, eq, ilike, ne, or, type SQL, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  ilike,
+  isNull,
+  lte,
+  ne,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { z } from 'zod'
 import { db } from '../../shared/db'
@@ -24,6 +37,7 @@ import {
   assertFinance,
   type FinanceAccess,
   resolveFinanceAccess,
+  todaySaoPaulo,
 } from './finance.support'
 
 async function access(c: Context<AppBindings>) {
@@ -144,10 +158,17 @@ export async function overviewScoped(access: FinanceAccess) {
 
   let config = { recipients: 0, activeRules: 0 }
   if (access.isGlobal) {
+    const today = todaySaoPaulo()
     const [row] = await db
       .select({
         recipients: sql<number>`(SELECT count(*) FROM ${financeRecipient})::int`,
-        activeRules: sql<number>`(SELECT count(*) FROM ${financeRule} WHERE ${financeRule.status} = 'ATIVA')::int`,
+        activeRules: sql<number>`(
+          SELECT count(*)
+          FROM ${financeRule}
+          WHERE ${financeRule.status} = 'ATIVA'
+            AND ${financeRule.validFrom} <= ${today}
+            AND (${financeRule.validTo} IS NULL OR ${financeRule.validTo} >= ${today})
+        )::int`,
       })
       .from(sql`(SELECT 1) AS one`)
     config = {
