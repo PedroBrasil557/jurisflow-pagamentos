@@ -510,7 +510,7 @@ export function FinanceConfigPage() {
                     </div>
 
                     <div className="divide-y divide-border">
-                      {group.versions.map((version, index) => {
+                      {group.versions.map((version) => {
                         const revoked = version.status === 'REVOGADA'
                         const effectiveNow = ruleEffectiveOn(
                           version,
