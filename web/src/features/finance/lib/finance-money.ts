@@ -56,12 +56,17 @@ export function formatInstant(value: string | Date | null | undefined): string {
   }).format(new Date(value))
 }
 
-/** Data civil de hoje em America/Sao_Paulo (YYYY-MM-DD). */
-export function todayCivil(): string {
+/** Instante -> data civil em America/Sao_Paulo (YYYY-MM-DD). */
+export function instantToCivil(value: string | Date): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date())
+  }).format(new Date(value))
+}
+
+/** Data civil de hoje em America/Sao_Paulo (YYYY-MM-DD). */
+export function todayCivil(): string {
+  return instantToCivil(new Date())
 }

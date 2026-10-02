@@ -16,6 +16,7 @@ import {
   fetchReserves,
   fetchRules,
   fetchStatement,
+  fetchStatementRecipientOptions,
   type ReceiptStatus,
   type StatementQuery,
 } from './finance.service'
@@ -39,6 +40,8 @@ export const financeKeys = {
     [...financeKeys.all, 'credits', query] as const,
   statement: (query: StatementQuery) =>
     [...financeKeys.all, 'statement', query] as const,
+  statementRecipients: () =>
+    [...financeKeys.all, 'statement-recipient-options'] as const,
   reserves: () => [...financeKeys.all, 'reserves'] as const,
   reserveMovements: (poolKey?: string) =>
     [...financeKeys.reserves(), 'movements', poolKey ?? 'todas'] as const,
@@ -101,6 +104,12 @@ export const statementQuery = (query: StatementQuery) =>
   queryOptions({
     queryKey: financeKeys.statement(query),
     queryFn: () => fetchStatement(query),
+  })
+export const statementRecipientOptionsQuery = () =>
+  queryOptions({
+    queryKey: financeKeys.statementRecipients(),
+    queryFn: fetchStatementRecipientOptions,
+    staleTime: 5 * 60 * 1000,
   })
 export const reservesQuery = () =>
   queryOptions({ queryKey: financeKeys.reserves(), queryFn: fetchReserves })

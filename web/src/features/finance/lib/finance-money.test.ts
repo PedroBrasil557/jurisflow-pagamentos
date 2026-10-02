@@ -4,6 +4,7 @@ import {
   formatBasisPoints,
   formatCents,
   formatCivilDate,
+  instantToCivil,
   parseBRLToCents,
   parsePercentToBasisPoints,
 } from './finance-money'
@@ -58,7 +59,8 @@ describe('finance-money: paridade com a API', () => {
     expect(formatCents(null)).toBe('—')
   })
 
-  test('data civil sem fuso', () => {
+  test('data civil sem fuso e instante convertido em Sao Paulo', () => {
     expect(formatCivilDate('2026-03-10')).toBe('10/03/2026')
+    expect(instantToCivil('2026-10-02T01:30:00.000Z')).toBe('2026-10-01')
   })
 })
