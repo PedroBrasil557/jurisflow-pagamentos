@@ -418,7 +418,7 @@ export async function createRuleVersion(
   try {
     return await db.transaction(async (tx) => {
       await tx.execute(RULES_LOCK)
-      const [current] = await tx
+      const activeVersions = await tx
         .select()
         .from(financeRule)
         .where(
@@ -428,14 +428,26 @@ export async function createRuleVersion(
           ),
         )
         .orderBy(desc(financeRule.version))
-        .limit(1)
-      if (!current) {
+        .for('update')
+      if (activeVersions.length === 0) {
         throw new FinanceServiceError(404, 'Regra não encontrada.')
       }
-      if (input.validFrom < current.validFrom) {
+
+      // A edição parte da versão que cobre a data informada, não
+      // necessariamente da versão de maior número. Assim uma correção da
+      // regra vigente continua possível mesmo quando já existe versão futura.
+      const current =
+        activeVersions.find(
+          (rule) =>
+            rule.validFrom <= input.validFrom &&
+            (rule.validTo === null || rule.validTo >= input.validFrom),
+        ) ??
+        activeVersions.find((rule) => rule.validFrom < input.validFrom)
+
+      if (!current) {
         throw new FinanceServiceError(
           422,
-          'A nova versão não pode começar antes da versão atual.',
+          'A nova versão não pode começar antes da primeira versão da regra.',
         )
       }
       if (
@@ -486,15 +498,13 @@ export async function createRuleVersion(
           })
         }
       }
-      const latest = await tx
-        .select({ version: financeRule.version })
-        .from(financeRule)
-        .where(eq(financeRule.lineageId, lineageId))
-        .orderBy(desc(financeRule.version))
-        .limit(1)
+      const latestVersion = Math.max(
+        current.version,
+        ...activeVersions.map((rule) => rule.version),
+      )
       return insertRuleVersion(tx, access, input, {
         lineageId,
-        version: (latest[0]?.version ?? current.version) + 1,
+        version: latestVersion + 1,
       })
     })
   } catch (error) {
