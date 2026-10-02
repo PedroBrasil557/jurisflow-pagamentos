@@ -478,40 +478,55 @@ export function FinanceConfigPage() {
                     </div>
 
                     <div className="divide-y divide-border">
-                      {group.versions.map((version) => (
-                        <div
-                          className="grid gap-3 px-4 py-3 sm:grid-cols-[80px_minmax(0,1fr)_auto] sm:items-center"
-                          key={version.id}
-                        >
-                          <div>
-                            <p className="text-sm font-semibold">
-                              v{version.version}
-                            </p>
-                            <StatusBadge
-                              tone={
-                                version.status === 'ATIVA' ? 'success' : 'ghost'
-                              }
-                            >
-                              {version.status === 'ATIVA' ? 'Atual' : 'Encerrada'}
-                            </StatusBadge>
+                      {group.versions.map((version, index) => {
+                        const revoked = version.status === 'REVOGADA'
+                        const versionLabel = revoked
+                          ? 'Revogada'
+                          : index === 0
+                            ? 'Atual'
+                            : 'Anterior'
+
+                        return (
+                          <div
+                            className="grid gap-3 px-4 py-3 sm:grid-cols-[80px_minmax(0,1fr)_auto] sm:items-center"
+                            key={version.id}
+                          >
+                            <div>
+                              <p className="text-sm font-semibold">
+                                v{version.version}
+                              </p>
+                              <StatusBadge
+                                tone={
+                                  revoked
+                                    ? 'ghost'
+                                    : index === 0
+                                      ? 'success'
+                                      : 'info'
+                                }
+                              >
+                                {versionLabel}
+                              </StatusBadge>
+                            </div>
+                            <div className="grid gap-1 text-sm">
+                              <p>
+                                <span className="text-muted-foreground">Valor: </span>
+                                <strong>{ruleValue(version)}</strong>
+                              </p>
+                              <p className="text-muted-foreground">
+                                {scopeLabel(version)}
+                              </p>
+                            </div>
+                            <div className="text-sm text-muted-foreground sm:text-right">
+                              {formatCivilDate(version.validFrom)}
+                              {version.validTo
+                                ? ` → ${formatCivilDate(version.validTo)}`
+                                : revoked
+                                  ? ' → revogada'
+                                  : ' → atual'}
+                            </div>
                           </div>
-                          <div className="grid gap-1 text-sm">
-                            <p>
-                              <span className="text-muted-foreground">Valor: </span>
-                              <strong>{ruleValue(version)}</strong>
-                            </p>
-                            <p className="text-muted-foreground">
-                              {scopeLabel(version)}
-                            </p>
-                          </div>
-                          <div className="text-sm text-muted-foreground sm:text-right">
-                            {formatCivilDate(version.validFrom)}
-                            {version.validTo
-                              ? ` → ${formatCivilDate(version.validTo)}`
-                              : ' → atual'}
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </article>
                 )
