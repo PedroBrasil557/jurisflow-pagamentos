@@ -2,9 +2,11 @@ import { useQuery } from '@tanstack/react-query'
 import {
   CheckCircle2,
   CircleDollarSign,
+  Pencil,
   Plus,
   Settings2,
   ShieldCheck,
+  Trash2,
   TriangleAlert,
   Users,
 } from 'lucide-react'
@@ -36,7 +38,9 @@ import { rulesEffectiveOn } from '../lib/finance-rules'
 import {
   useCreateRecipient,
   useCreateRule,
+  useCreateRuleVersion,
   useLinkRecipientUser,
+  useRevokeRule,
 } from '../services/finance.mutations'
 import { recipientsQuery, rulesQuery } from '../services/finance.queries'
 import type { Recipient, Rule } from '../services/finance.service'
@@ -93,6 +97,8 @@ export function FinanceQuickConfigPage() {
   const [advanced, setAdvanced] = useState(false)
   const [participantOpen, setParticipantOpen] = useState(false)
   const [provisionOpen, setProvisionOpen] = useState(false)
+  const [editRule, setEditRule] = useState<Rule | null>(null)
+  const [removeRule, setRemoveRule] = useState<Rule | null>(null)
   const rules = useQuery(rulesQuery())
 
   if (advanced) {
@@ -187,15 +193,11 @@ export function FinanceQuickConfigPage() {
 
       <FinanceSection
         action={
-          hasProvision ? (
-            <Button onClick={() => setAdvanced(true)} size="sm" variant="outline">
-              Editar
-            </Button>
-          ) : (
+          !hasProvision ? (
             <Button onClick={() => setProvisionOpen(true)} size="sm">
               Configurar
             </Button>
-          )
+          ) : undefined
         }
         description="A provisão é definida antes da distribuição. Se não existir retenção, o administrador registra 0% de forma explícita."
         title="1. Entrada do dinheiro"
@@ -206,20 +208,46 @@ export function FinanceQuickConfigPage() {
         ) : null}
         {!rules.isPending && !rules.isError ? (
           hasProvision ? (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4">
-              <div>
-                <p className="font-medium">Provisão configurada</p>
-                <p className="text-sm text-muted-foreground">
-                  {provisionRules
-                    .map((rule) =>
-                      rule.valueType === 'PERCENTUAL'
-                        ? `${rule.poolLabel ?? 'Provisão'} · ${formatBasisPoints(rule.basisPoints ?? 0)}`
-                        : rule.poolLabel ?? 'Provisão',
-                    )
-                    .join(' · ')}
-                </p>
-              </div>
-              <StatusBadge tone="success">Definida</StatusBadge>
+            <div className="grid gap-2">
+              {provisionRules.map((rule) => (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4"
+                  key={rule.id}
+                >
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium">
+                        {rule.poolLabel ?? 'Provisão configurada'}
+                      </p>
+                      <StatusBadge tone="success">Definida</StatusBadge>
+                    </div>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {rule.valueType === 'PERCENTUAL'
+                        ? formatBasisPoints(rule.basisPoints ?? 0)
+                        : 'Valor fixo'}{' '}
+                      · válida desde {formatCivilDate(rule.validFrom)}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={() => setEditRule(rule)}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <Pencil className="size-4" />
+                      Editar
+                    </Button>
+                    <Button
+                      onClick={() => setRemoveRule(rule)}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      <Trash2 className="size-4" />
+                      Remover
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
             <EmptyState
@@ -268,9 +296,27 @@ export function FinanceQuickConfigPage() {
                           : ''}
                       </p>
                     </div>
-                    <p className="text-lg font-semibold tabular-nums">
-                      {formatBasisPoints(rule.basisPoints ?? 0)}
-                    </p>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <p className="mr-2 text-lg font-semibold tabular-nums">
+                        {formatBasisPoints(rule.basisPoints ?? 0)}
+                      </p>
+                      <Button
+                        onClick={() => setEditRule(rule)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        <Pencil className="size-4" />
+                        Editar
+                      </Button>
+                      <Button
+                        onClick={() => setRemoveRule(rule)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        <Trash2 className="size-4" />
+                        Remover
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -371,7 +417,224 @@ export function FinanceQuickConfigPage() {
         onClose={() => setParticipantOpen(false)}
         open={participantOpen}
       />
+      {editRule ? (
+        <EditSimpleRuleDialog
+          otherFinalBasisPoints={
+            editRule.stage === 'DISTRIBUICAO_FINAL'
+              ? finalBasisPoints - (editRule.basisPoints ?? 0)
+              : 0
+          }
+          onClose={() => setEditRule(null)}
+          rule={editRule}
+        />
+      ) : null}
+      {removeRule ? (
+        <RemoveRuleDialog
+          onClose={() => setRemoveRule(null)}
+          rule={removeRule}
+        />
+      ) : null}
     </div>
+  )
+}
+
+function EditSimpleRuleDialog({
+  rule,
+  otherFinalBasisPoints,
+  onClose,
+}: {
+  rule: Rule
+  otherFinalBasisPoints: number
+  onClose: () => void
+}) {
+  const mutation = useCreateRuleVersion()
+  const [percent, setPercent] = useState(
+    rule.basisPoints === null
+      ? ''
+      : String(rule.basisPoints / 100).replace('.', ','),
+  )
+  const [validFrom, setValidFrom] = useState(rule.validFrom)
+  const [validTo, setValidTo] = useState(rule.validTo ?? '')
+  const [error, setError] = useState<string | null>(null)
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setError(null)
+    const basisPoints = parsePercentToBasisPoints(percent)
+    if (basisPoints === null) {
+      return setError('Informe um percentual válido entre 0 e 100%.')
+    }
+    if (!validFrom) return setError('Informe quando a alteração passa a valer.')
+    if (validFrom < rule.validFrom) {
+      return setError(
+        `A alteração não pode começar antes de ${formatCivilDate(rule.validFrom)}.`,
+      )
+    }
+    if (validTo && validTo < validFrom) {
+      return setError('A data final não pode ser anterior à data inicial.')
+    }
+    if (
+      rule.stage === 'DISTRIBUICAO_FINAL' &&
+      otherFinalBasisPoints + basisPoints > ONE_HUNDRED_PERCENT_BP
+    ) {
+      return setError(
+        `Esse percentual faria a distribuição ultrapassar 100%. Os outros destinos já somam ${formatBasisPoints(otherFinalBasisPoints)}.`,
+      )
+    }
+
+    mutation.mutate(
+      {
+        lineageId: rule.lineageId,
+        payload: {
+          stage: rule.stage,
+          nature: rule.nature,
+          recipientId: rule.recipientId,
+          poolLabel: rule.poolLabel,
+          workType: rule.workType,
+          valueType: 'PERCENTUAL',
+          basisPoints,
+          fixedCents: null,
+          sortOrder: rule.sortOrder,
+          uniqueness: rule.uniqueness,
+          validFrom,
+          validTo: validTo || null,
+          housingComplexIds: rule.housingComplexes.map((complex) => complex.id),
+          notes: rule.notes || undefined,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Regra atualizada; a versão anterior foi preservada.')
+          onClose()
+        },
+        onError: (cause) => setError((cause as Error).message),
+      },
+    )
+  }
+
+  return (
+    <AppDialog
+      description="A alteração cria uma nova versão. Distribuições já finalizadas não mudam. Para corrigir desde o mesmo início, mantenha a data atual da regra."
+      icon={Pencil}
+      maxWidth="md"
+      onClose={onClose}
+      open
+      title={
+        rule.stage === 'PROVISAO_RECEITA'
+          ? 'Editar provisão'
+          : `Editar — ${rule.recipientName ?? 'destino'}`
+      }
+    >
+      <form className="grid gap-4" onSubmit={submit}>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-simple-percent">Percentual</Label>
+          <Input
+            autoFocus
+            id="edit-simple-percent"
+            inputMode="decimal"
+            onChange={(event) => setPercent(event.target.value)}
+            value={percent}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-simple-from">Válido desde</Label>
+          <Input
+            id="edit-simple-from"
+            min={rule.validFrom}
+            onChange={(event) => setValidFrom(event.target.value)}
+            type="date"
+            value={validFrom}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-simple-to">Válido até (opcional)</Label>
+          <Input
+            id="edit-simple-to"
+            min={validFrom || rule.validFrom}
+            onChange={(event) => setValidTo(event.target.value)}
+            type="date"
+            value={validTo}
+          />
+        </div>
+        <FieldError message={error} />
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose} type="button" variant="ghost">
+            Cancelar
+          </Button>
+          <Button disabled={mutation.isPending} type="submit">
+            {mutation.isPending ? 'Salvando…' : 'Salvar alteração'}
+          </Button>
+        </div>
+      </form>
+    </AppDialog>
+  )
+}
+
+function RemoveRuleDialog({
+  rule,
+  onClose,
+}: {
+  rule: Rule
+  onClose: () => void
+}) {
+  const mutation = useRevokeRule()
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const label =
+    rule.stage === 'PROVISAO_RECEITA'
+      ? rule.poolLabel ?? 'Provisão'
+      : rule.recipientName ?? 'Destino'
+
+  return (
+    <AppDialog
+      description="A regra será desativada para novos cálculos. Distribuições já finalizadas continuam exatamente como foram registradas. Versões futuras da mesma regra também são desativadas."
+      footer={
+        <Button
+          disabled={reason.trim().length < 3 || mutation.isPending}
+          onClick={() =>
+            mutation.mutate(
+              { id: rule.id, reason },
+              {
+                onSuccess: () => {
+                  toast.success('Regra removida da configuração vigente.')
+                  onClose()
+                },
+                onError: (cause) => setError((cause as Error).message),
+              },
+            )
+          }
+          variant="destructive"
+        >
+          Remover regra
+        </Button>
+      }
+      icon={Trash2}
+      maxWidth="md"
+      onClose={onClose}
+      open
+      title={`Remover ${label}`}
+      variant="destructive"
+    >
+      <div className="grid gap-3">
+        <div className="rounded-md border border-border p-3 text-sm">
+          <p className="font-medium">{label}</p>
+          <p className="mt-1 text-muted-foreground">
+            {formatBasisPoints(rule.basisPoints)} · válida desde{' '}
+            {formatCivilDate(rule.validFrom)}
+          </p>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="remove-rule-reason">Motivo</Label>
+          <Input
+            id="remove-rule-reason"
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Ex.: percentual alterado, participante removido"
+            value={reason}
+          />
+        </div>
+        <FieldError message={error} />
+      </div>
+    </AppDialog>
   )
 }
 
