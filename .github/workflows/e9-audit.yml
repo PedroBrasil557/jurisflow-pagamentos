@@ -56,7 +56,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
-      - name: Install
+      - name: Install API dependencies for shared inferred types
+        working-directory: api
+        run: bun install --frozen-lockfile
+      - name: Install Web
         working-directory: web
         run: bun install --frozen-lockfile
       - name: Lint
