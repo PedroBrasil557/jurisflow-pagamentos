@@ -99,7 +99,11 @@ export function FinanceQuickConfigPage() {
   const [provisionOpen, setProvisionOpen] = useState(false)
   const [editRule, setEditRule] = useState<Rule | null>(null)
   const [removeRule, setRemoveRule] = useState<Rule | null>(null)
-  const rules = useQuery(rulesQuery())
+  const canManageRules = financeAccess.regras(permissions)
+  const rules = useQuery({
+    ...rulesQuery(),
+    enabled: canManageRules && permissions.isAdmin,
+  })
 
   if (advanced) {
     return (
@@ -114,18 +118,18 @@ export function FinanceQuickConfigPage() {
     )
   }
 
-  if (!permissions.isAdmin) {
+  if (!permissions.isAdmin || !canManageRules) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader
-          description="Somente o administrador altera a distribuição financeira."
+          description="Somente administradores com permissão de regras podem alterar a distribuição financeira."
           eyebrow="Pagamentos"
           title="Configuração de pagamentos"
         />
         <EmptyState
           description="As regras ficam protegidas para preservar histórico e evitar alterações indevidas."
           icon={ShieldCheck}
-          title="Configuração exclusiva do administrador"
+          title="Configuração sem permissão de edição"
         />
       </div>
     )
@@ -835,12 +839,17 @@ function QuickParticipantDialog({
       return setError('A data final não pode ser anterior à data inicial.')
 
     try {
-      const existing = (recipients.data ?? []).find(
+      const matches = (recipients.data ?? []).filter(
         (recipient) =>
           recipient.name.trim().toLocaleLowerCase('pt-BR') ===
           name.trim().toLocaleLowerCase('pt-BR'),
       )
-      let recipient: Pick<Recipient, 'id'> | undefined = existing
+      if (matches.length > 1) {
+        return setError(
+          'Há mais de um recebedor com esse nome. Use Recebedores nas Opções avançadas para identificar o cadastro correto.',
+        )
+      }
+      let recipient: Pick<Recipient, 'id'> | undefined = matches[0]
       if (!recipient) {
         const created = (await createRecipient.mutateAsync({
           name: name.trim(),
@@ -870,7 +879,16 @@ function QuickParticipantDialog({
       })
 
       if (userId) {
-        await linkUser.mutateAsync({ recipientId: recipient.id, userId })
+        try {
+          await linkUser.mutateAsync({ recipientId: recipient.id, userId })
+        } catch (cause) {
+          toast.warning(
+            'Destino salvo, mas o vínculo com a conta de usuário não foi concluído. Ajuste o vínculo em Recebedores.',
+          )
+          reset()
+          onClose()
+          return
+        }
       }
 
       toast.success('Destino adicionado à distribuição.')
