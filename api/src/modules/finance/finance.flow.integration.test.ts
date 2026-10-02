@@ -27,7 +27,9 @@ import {
   createRuleVersion,
   listRecipients,
   listRules,
+  revokeRule,
   type RuleInput,
+  updateRecipient,
 } from './finance.config.service'
 import type { FinanceCalcStep } from './finance.engine'
 import { confirmImport, previewImport } from './finance.import.service'
@@ -36,6 +38,7 @@ import {
   calculateReceipt,
   createReceipt,
   getReceiptDetail,
+  listHousingComplexOptions,
   listReceipts,
 } from './finance.receipts.service'
 import {
@@ -43,8 +46,10 @@ import {
   exportStatementCsv,
   getOverview,
   getStatement,
+  listStatementRecipientOptions,
   reserveBalances,
   reserveProcessBalances,
+  reverseReserveMovement,
 } from './finance.reports.service'
 import {
   financeClosing,
@@ -625,6 +630,17 @@ suite(
     test('CT-09 / CT-10 baixa parcial, acima do saldo e concorrente', async () => {
       const credits = await listCredits(admin, { closingId })
       const creditF = credits.find((c) => c.recipientName === 'Distribuição F')
+      await expectFinanceError(
+        createPayout(admin, {
+          idempotencyKey: key('payout'),
+          creditId: creditF?.id as string,
+          amountCents: 1,
+          paidOn: YESTERDAY,
+          reference: 'data anterior à finalização',
+        }),
+        422,
+        /anterior.*finaliza/i,
+      )
       const { payout } = await createPayout(admin, {
         idempotencyKey: key('payout'),
         creditId: creditF?.id as string,
@@ -643,7 +659,7 @@ suite(
           idempotencyKey: key('payout'),
           creditId: creditF?.id as string,
           amountCents: 139_881,
-          paidOn: YESTERDAY,
+          paidOn: TODAY,
           reference: 'acima',
         }),
         422,
@@ -655,7 +671,7 @@ suite(
         idempotencyKey: idem,
         creditId: creditF?.id as string,
         amountCents: 10_000,
-        paidOn: YESTERDAY,
+        paidOn: TODAY,
         reference: 'PIX fictício 003',
       }
       const first = await createPayout(admin, body)
@@ -736,11 +752,11 @@ suite(
     test('CT-17 consulta por data mostra o que foi efetivamente pago no dia', async () => {
       const day = await getStatement(admin, {
         recipientId: recipients['Distribuição F'],
-        dateFrom: YESTERDAY,
-        dateTo: YESTERDAY,
+        dateFrom: TODAY,
+        dateTo: TODAY,
       })
       expect(day.totals.paidCents).toBe(10_000)
-      expect(day.entries.every((e) => e.date === YESTERDAY)).toBe(true)
+      expect(day.entries.every((e) => e.date === TODAY)).toBe(true)
       const csv = await exportStatementCsv(admin, {
         recipientId: recipients['Distribuição F'],
       })
@@ -807,6 +823,46 @@ suite(
         description: 'Transferência do saldo (teste)',
         destination: 'Conta fictícia',
       })
+      await expectFinanceError(
+        createReserveDebit(admin, {
+          idempotencyKey: key('mov'),
+          poolKey: 'reserva-de-teste',
+          processId: p1,
+          kind: 'TRANSFERENCIA',
+          amountCents: 1,
+          movementDate: TODAY,
+          description: 'Transferência sem destino',
+        }),
+        422,
+        /destino/i,
+      )
+      await expectFinanceError(
+        createReserveDebit(admin, {
+          idempotencyKey: key('mov'),
+          poolKey: 'reserva-de-teste',
+          processId: p1,
+          kind: 'DESPESA',
+          amountCents: 1,
+          movementDate: '9999-12-31',
+          description: 'Data futura',
+        }),
+        422,
+        /futura/i,
+      )
+      const reversible = await createReserveDebit(admin, {
+        idempotencyKey: key('mov'),
+        poolKey: 'reserva-de-teste',
+        processId: p1,
+        kind: 'DESPESA',
+        amountCents: 1_000,
+        movementDate: TODAY,
+        description: 'Despesa reversível',
+      })
+      await reverseReserveMovement(
+        admin,
+        reversible.movement?.id as string,
+        'Lançamento duplicado',
+      )
       const reserve = (
         await reserveProcessBalances(admin, 'reserva-de-teste')
       ).find((r) => r.processId === p1)
@@ -1077,6 +1133,89 @@ suite(
       )
     })
 
+    test('E9 manutenção de regras: correção no mesmo dia, remoção futura e inativação segura', async () => {
+      const recipient = await createRecipient(admin, {
+        name: 'Recebedor E9',
+        kind: 'PESSOA_FISICA',
+      })
+      const first = await createRule(admin, {
+        stage: 'DISTRIBUICAO_FINAL',
+        nature: 'CREDITO',
+        recipientId: recipient?.id as string,
+        workType: 'Cenário E9',
+        valueType: 'PERCENTUAL',
+        basisPoints: 1000,
+        validFrom: '2035-01-01',
+        housingComplexIds: [],
+      })
+
+      await expectFinanceError(
+        updateRecipient(admin, recipient?.id as string, { isActive: false }),
+        409,
+        /regra vigente ou futura/i,
+      )
+
+      const corrected = await createRuleVersion(
+        admin,
+        first?.lineageId as string,
+        {
+          stage: 'DISTRIBUICAO_FINAL',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Cenário E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 2000,
+          validFrom: '2035-01-01',
+          housingComplexIds: [],
+        },
+      )
+      expect(corrected?.version).toBe(2)
+
+      const scheduled = await createRuleVersion(
+        admin,
+        first?.lineageId as string,
+        {
+          stage: 'DISTRIBUICAO_FINAL',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Cenário E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 3000,
+          validFrom: '2036-01-01',
+          housingComplexIds: [],
+        },
+      )
+      expect(scheduled?.version).toBe(3)
+
+      const versionsBeforeRemove = (await listRules(admin)).filter(
+        (rule) => rule.lineageId === first?.lineageId,
+      )
+      expect(versionsBeforeRemove.map((rule) => rule.status)).toEqual([
+        'REVOGADA',
+        'ATIVA',
+        'ATIVA',
+      ])
+
+      await revokeRule(
+        admin,
+        corrected?.id as string,
+        'Participante removido do cenário E9',
+      )
+      const versionsAfterRemove = (await listRules(admin)).filter(
+        (rule) => rule.lineageId === first?.lineageId,
+      )
+      expect(versionsAfterRemove.map((rule) => rule.status)).toEqual([
+        'REVOGADA',
+        'REVOGADA',
+        'REVOGADA',
+      ])
+
+      const inactive = await updateRecipient(admin, recipient?.id as string, {
+        isActive: false,
+      })
+      expect(inactive?.isActive).toBe(false)
+    })
+
     test('permissões no servidor: sem acesso, leitura por condomínio e operações globais', async () => {
       await expectFinanceError(listReceipts(noAccess, {}), 403)
       await expectFinanceError(getOverview(noAccess), 403)
@@ -1086,6 +1225,22 @@ suite(
         visible.every((r) => r.housingComplexName === 'Condomínio Teste 2'),
       ).toBe(true)
       await expectFinanceError(getReceiptDetail(viewer, firstReceiptId), 404)
+      const statement = await getStatement(viewer, {})
+      await expectFinanceError(listRecipients(viewer), 403)
+      await expectFinanceError(listRules(viewer), 403)
+      const complexes = await listHousingComplexOptions(viewer)
+      expect(complexes).toEqual([
+        { id: ids.cond2, name: 'Condomínio Teste 2' },
+      ])
+      const statementRecipients = await listStatementRecipientOptions(viewer)
+      const statementRecipientIds = new Set(
+        statement.entries.map((entry) => entry.recipientId).filter(Boolean),
+      )
+      expect(
+        statementRecipients.every((recipient) =>
+          statementRecipientIds.has(recipient.id),
+        ),
+      ).toBe(true)
       await expectFinanceError(
         createRule(viewer, {
           stage: 'PROVISAO_RECEITA',
@@ -1107,7 +1262,6 @@ suite(
         }),
         403,
       )
-      const statement = await getStatement(viewer, {})
       expect(
         statement.entries.every(
           (e) => e.housingComplexName === 'Condomínio Teste 2',
