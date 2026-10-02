@@ -13,6 +13,7 @@ import {
 import {
   downloadAttachment,
   listAttachments,
+  removeAttachment,
   uploadAttachment,
 } from './finance.attachments.service'
 import {
@@ -573,6 +574,23 @@ export const financeRoutes = new Hono<AppBindings>()
           file,
         )
         return c.json({ attachment }, 201)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .post(
+    '/attachments/:id/remove',
+    paramsValidator(idParamSchema),
+    jsonValidator(reasonPayloadSchema),
+    async (c) => {
+      try {
+        const attachment = await removeAttachment(
+          await access(c),
+          c.req.valid('param').id,
+          c.req.valid('json').reason,
+        )
+        return c.json({ attachment }, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }
