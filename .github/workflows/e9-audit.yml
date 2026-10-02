@@ -1,0 +1,73 @@
+name: E9 Audit
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+
+jobs:
+  api:
+    name: API PG${{ matrix.pg }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [17, 18]
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 3557:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install
+        working-directory: api
+        run: bun install --frozen-lockfile
+      - name: Migration journal
+        working-directory: api
+        run: bun run db:check
+      - name: Lint
+        working-directory: api
+        run: bun run lint
+      - name: Typecheck
+        working-directory: api
+        run: bun run typecheck
+      - name: Unit
+        working-directory: api
+        run: bun run test
+      - name: Finance integration
+        working-directory: api
+        run: bun run test:integration:finance
+
+  web:
+    name: Web full gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Lint
+        working-directory: web
+        run: bun run lint
+      - name: Typecheck
+        working-directory: web
+        run: bun run typecheck
+      - name: Tests
+        working-directory: web
+        run: bun run test
+      - name: Build
+        working-directory: web
+        run: bun run build
