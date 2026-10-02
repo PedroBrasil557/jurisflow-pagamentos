@@ -6,8 +6,11 @@ import {
   FileSpreadsheet,
   GitBranch,
   History,
+  Pencil,
   Plus,
+  UserMinus,
   UserPlus,
+  UserRoundCheck,
   Users,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -45,9 +48,10 @@ import {
   useCreateRecipient,
   useCreateRuleVersion,
   useRevokeRule,
+  useUpdateRecipient,
 } from '../services/finance.mutations'
 import { recipientsQuery, rulesQuery } from '../services/finance.queries'
-import type { Rule } from '../services/finance.service'
+import type { Recipient, Rule } from '../services/finance.service'
 
 type AdvancedTab = 'regras' | 'recebedores' | 'importacao' | 'historico'
 type RuleFilter =
@@ -124,6 +128,8 @@ export function FinanceConfigPage() {
   const [tab, setTab] = useState<AdvancedTab>('regras')
   const [filter, setFilter] = useState<RuleFilter>('TODAS')
   const [recipientOpen, setRecipientOpen] = useState(false)
+  const [editingRecipient, setEditingRecipient] = useState<Recipient | null>(null)
+  const [togglingRecipient, setTogglingRecipient] = useState<Recipient | null>(null)
   const [versionOf, setVersionOf] = useState<Rule | null>(null)
   const [revoking, setRevoking] = useState<Rule | null>(null)
   const [historyLineageId, setHistoryLineageId] = useState<string | null>(null)
@@ -396,6 +402,30 @@ export function FinanceConfigPage() {
                       Cadastro criado por importação.
                     </p>
                   ) : null}
+                  {canEdit ? (
+                    <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
+                      <Button
+                        onClick={() => setEditingRecipient(recipient)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        <Pencil className="size-4" />
+                        Editar
+                      </Button>
+                      <Button
+                        onClick={() => setTogglingRecipient(recipient)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        {recipient.isActive ? (
+                          <UserMinus className="size-4" />
+                        ) : (
+                          <UserRoundCheck className="size-4" />
+                        )}
+                        {recipient.isActive ? 'Desativar' : 'Reativar'}
+                      </Button>
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -542,6 +572,18 @@ export function FinanceConfigPage() {
         onClose={() => setRecipientOpen(false)}
         open={recipientOpen}
       />
+      {editingRecipient ? (
+        <EditRecipientDialog
+          onClose={() => setEditingRecipient(null)}
+          recipient={editingRecipient}
+        />
+      ) : null}
+      {togglingRecipient ? (
+        <RecipientStatusDialog
+          onClose={() => setTogglingRecipient(null)}
+          recipient={togglingRecipient}
+        />
+      ) : null}
       {versionOf ? (
         <VersionDialog onClose={() => setVersionOf(null)} rule={versionOf} />
       ) : null}
@@ -596,6 +638,7 @@ function RecipientDialog({
           setPaymentNote('')
           onClose()
         },
+        onError: (cause) => setError((cause as Error).message),
       },
     )
   }
@@ -662,6 +705,171 @@ function RecipientDialog({
           </Button>
         </div>
       </form>
+    </AppDialog>
+  )
+}
+
+function EditRecipientDialog({
+  recipient,
+  onClose,
+}: {
+  recipient: Recipient
+  onClose: () => void
+}) {
+  const mutation = useUpdateRecipient()
+  const [name, setName] = useState(recipient.name)
+  const [kind, setKind] = useState(recipient.kind)
+  const [document, setDocument] = useState(recipient.document ?? '')
+  const [paymentNote, setPaymentNote] = useState(recipient.paymentNote ?? '')
+  const [error, setError] = useState<string | null>(null)
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setError(null)
+    if (!name.trim()) return setError('Informe o nome.')
+    mutation.mutate(
+      {
+        id: recipient.id,
+        payload: {
+          name: name.trim(),
+          kind,
+          document,
+          paymentNote,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Recebedor atualizado.')
+          onClose()
+        },
+        onError: (cause) => setError((cause as Error).message),
+      },
+    )
+  }
+
+  return (
+    <AppDialog
+      icon={Pencil}
+      maxWidth="md"
+      onClose={onClose}
+      open
+      title={`Editar recebedor — ${recipient.name}`}
+    >
+      <form className="grid gap-3" onSubmit={submit}>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-recipient-name">Nome</Label>
+          <Input
+            autoFocus
+            id="edit-recipient-name"
+            onChange={(event) => setName(event.target.value)}
+            value={name}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-recipient-kind">Tipo de pessoa</Label>
+          <NativeSelect
+            id="edit-recipient-kind"
+            onChange={(event) =>
+              setKind(event.target.value as typeof recipient.kind)
+            }
+            value={kind}
+          >
+            <NativeSelectOption value="PESSOA_FISICA">
+              Pessoa física
+            </NativeSelectOption>
+            <NativeSelectOption value="PESSOA_JURIDICA">
+              Pessoa jurídica
+            </NativeSelectOption>
+          </NativeSelect>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-recipient-doc">CPF/CNPJ (opcional)</Label>
+          <Input
+            id="edit-recipient-doc"
+            inputMode="numeric"
+            onChange={(event) => setDocument(event.target.value)}
+            value={document}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-recipient-payment">
+            Dados para pagamento (informativo)
+          </Label>
+          <Textarea
+            id="edit-recipient-payment"
+            onChange={(event) => setPaymentNote(event.target.value)}
+            rows={2}
+            value={paymentNote}
+          />
+        </div>
+        <FieldError message={error} />
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose} type="button" variant="ghost">
+            Cancelar
+          </Button>
+          <Button disabled={mutation.isPending} type="submit">
+            {mutation.isPending ? 'Salvando…' : 'Salvar alterações'}
+          </Button>
+        </div>
+      </form>
+    </AppDialog>
+  )
+}
+
+function RecipientStatusDialog({
+  recipient,
+  onClose,
+}: {
+  recipient: Recipient
+  onClose: () => void
+}) {
+  const mutation = useUpdateRecipient()
+  const nextActive = !recipient.isActive
+  const [error, setError] = useState<string | null>(null)
+
+  return (
+    <AppDialog
+      description={
+        nextActive
+          ? 'O recebedor voltará a ficar disponível para novas regras.'
+          : 'Recebedores ligados a regras vigentes ou futuras não podem ser desativados. Remova essas regras primeiro para preservar a consistência.'
+      }
+      footer={
+        <Button
+          disabled={mutation.isPending}
+          onClick={() => {
+            setError(null)
+            mutation.mutate(
+              {
+                id: recipient.id,
+                payload: { isActive: nextActive },
+              },
+              {
+                onSuccess: () => {
+                  toast.success(
+                    nextActive
+                      ? 'Recebedor reativado.'
+                      : 'Recebedor desativado.',
+                  )
+                  onClose()
+                },
+                onError: (cause) => setError((cause as Error).message),
+              },
+            )
+          }}
+          variant={nextActive ? 'default' : 'destructive'}
+        >
+          {nextActive ? 'Reativar recebedor' : 'Desativar recebedor'}
+        </Button>
+      }
+      icon={nextActive ? UserRoundCheck : UserMinus}
+      maxWidth="md"
+      onClose={onClose}
+      open
+      title={`${nextActive ? 'Reativar' : 'Desativar'} — ${recipient.name}`}
+      variant={nextActive ? 'default' : 'destructive'}
+    >
+      <FieldError message={error} />
     </AppDialog>
   )
 }
