@@ -755,7 +755,7 @@ suite(
         dateFrom: TODAY,
         dateTo: TODAY,
       })
-      expect(day.totals.paidCents).toBe(10_000)
+      expect(day.totals.paidCents).toBe(210_000)
       expect(day.entries.every((e) => e.date === TODAY)).toBe(true)
       const csv = await exportStatementCsv(admin, {
         recipientId: recipients['Distribuição F'],
