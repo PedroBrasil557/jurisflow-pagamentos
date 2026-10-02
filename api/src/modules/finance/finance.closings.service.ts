@@ -54,6 +54,9 @@ export async function previewClosing(
   input: ClosingInput,
 ) {
   assertFinance(access, 'fechar', { global: true })
+  if (input.periodEnd < input.periodStart) {
+    throw new FinanceServiceError(422, 'Período inválido.')
+  }
   const receipts = await db
     .select()
     .from(financeReceipt)
@@ -854,6 +857,34 @@ export async function createAdjustment(
   if (previous) return previous
   try {
     const adjustment = await db.transaction(async (tx) => {
+      const [credit] = await tx
+        .select()
+        .from(financeCredit)
+        .where(eq(financeCredit.id, input.creditId))
+        .for('update')
+      if (!credit) {
+        throw new FinanceServiceError(404, 'Crédito não encontrado.')
+      }
+      if (credit.status === 'ESTORNADO') {
+        throw new FinanceServiceError(
+          409,
+          'Crédito estornado não aceita ajuste.',
+        )
+      }
+      const dueAfter =
+        credit.amountCents + credit.adjustedCents + input.amountCents
+      if (dueAfter < credit.paidCents) {
+        throw new FinanceServiceError(
+          422,
+          'O ajuste reduziria o valor devido para abaixo do que já foi pago.',
+        )
+      }
+      if (dueAfter < 0) {
+        throw new FinanceServiceError(
+          422,
+          'O ajuste não pode tornar o valor devido negativo.',
+        )
+      }
       const [created] = await tx
         .insert(financeAdjustment)
         .values({
