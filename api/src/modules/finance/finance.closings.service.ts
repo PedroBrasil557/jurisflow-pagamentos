@@ -690,6 +690,23 @@ export async function createPayout(
           'Crédito estornado não aceita baixa.',
         )
       }
+      const [closing] = await tx
+        .select({ createdAt: financeClosing.createdAt })
+        .from(financeClosing)
+        .where(eq(financeClosing.id, credit.closingId))
+      if (!closing) {
+        throw new FinanceServiceError(
+          409,
+          'Finalização do crédito não encontrada.',
+        )
+      }
+      const closingDate = toSaoPauloDate(closing.createdAt)
+      if (input.paidOn < closingDate) {
+        throw new FinanceServiceError(
+          422,
+          `A data do pagamento não pode ser anterior à finalização (${closingDate}).`,
+        )
+      }
       const problem = validatePayout(
         credit.amountCents + credit.adjustedCents,
         credit.paidCents,

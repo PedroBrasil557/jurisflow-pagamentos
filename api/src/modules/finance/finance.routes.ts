@@ -59,6 +59,7 @@ import {
   getOverview,
   getStatement,
   listReserveMovements,
+  listStatementRecipientOptions,
   reserveBalances,
   reverseReserveMovement,
 } from './finance.reports.service'
@@ -262,6 +263,16 @@ export const financeRoutes = new Hono<AppBindings>()
   .get('/housing-complexes', async (c) => {
     try {
       return c.json({ items: await listHousingComplexOptions(await access(c)) }, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get('/statement-recipient-options', async (c) => {
+    try {
+      return c.json(
+        { items: await listStatementRecipientOptions(await access(c)) },
+        200,
+      )
     } catch (error) {
       return handleServiceError(c, error)
     }

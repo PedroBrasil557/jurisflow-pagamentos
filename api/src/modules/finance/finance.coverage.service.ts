@@ -185,7 +185,10 @@ async function calculateOpenCoverage(
     const previewRules = [...rules]
     const syntheticIds = new Set<string>()
 
-    if (!applicable.some((rule) => rule.stage === 'PROVISAO_RECEITA')) {
+    const missingProvision = !applicable.some(
+      (rule) => rule.stage === 'PROVISAO_RECEITA',
+    )
+    if (missingProvision) {
       const zeroProvision = syntheticRule({
         receipt,
         stage: 'PROVISAO_RECEITA',
@@ -215,6 +218,8 @@ async function calculateOpenCoverage(
       inconsistentReceipts += 1
       continue
     }
+
+    if (missingProvision) inconsistentReceipts += 1
 
     for (const key of calculation.uniqueReserveKeys) constituted.add(key)
 

@@ -48,7 +48,7 @@ export type RecipientInput = {
 }
 
 export async function listRecipients(access: FinanceAccess) {
-  assertFinance(access, 'view')
+  assertFinance(access, 'regras', { global: true })
   return db
     .select()
     .from(financeRecipient)
@@ -503,7 +503,7 @@ export async function revokeRule(
 }
 
 export async function listRules(access: FinanceAccess) {
-  assertFinance(access, 'view')
+  assertFinance(access, 'regras', { global: true })
   const rows = await db
     .select({ rule: financeRule, recipientName: financeRecipient.name })
     .from(financeRule)

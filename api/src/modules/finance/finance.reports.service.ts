@@ -23,6 +23,7 @@ import {
   isUniqueViolation,
   mapDbError,
   toSaoPauloDate,
+  todaySaoPaulo,
   writeAudit,
 } from './finance.support'
 
@@ -310,6 +311,29 @@ export async function getStatement(
   }
 }
 
+export async function listStatementRecipientOptions(
+  access: FinanceAccess,
+) {
+  assertFinance(access, 'view')
+  const filters: SQL[] = []
+  if (access.processFilter) filters.push(access.processFilter)
+
+  return db
+    .select({
+      id: financeRecipient.id,
+      name: financeRecipient.name,
+    })
+    .from(financeCredit)
+    .innerJoin(
+      financeRecipient,
+      eq(financeCredit.recipientId, financeRecipient.id),
+    )
+    .innerJoin(process, eq(financeCredit.processId, process.id))
+    .where(filters.length ? and(...filters) : undefined)
+    .groupBy(financeRecipient.id, financeRecipient.name)
+    .orderBy(asc(financeRecipient.name), asc(financeRecipient.id))
+}
+
 const csvHeader = [
   'Data',
   'Tipo',
@@ -486,6 +510,18 @@ export async function createReserveDebit(
     throw new FinanceServiceError(
       422,
       'Informe a origem/justificativa do movimento.',
+    )
+  }
+  if (input.movementDate > todaySaoPaulo()) {
+    throw new FinanceServiceError(
+      422,
+      'A data do movimento não pode ser futura.',
+    )
+  }
+  if (input.kind === 'TRANSFERENCIA' && !input.destination?.trim()) {
+    throw new FinanceServiceError(
+      422,
+      'Informe o destino da transferência.',
     )
   }
   const requestHash = hashPayload({ ...input, idempotencyKey: undefined })

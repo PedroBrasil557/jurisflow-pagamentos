@@ -207,6 +207,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
   .get('/allocation-policy', async (c) => {
     try {
       const financeAccess = await access(c)
+      assertFinance(financeAccess, 'view')
       const rows = await db
         .select({
           id: financeRule.id,

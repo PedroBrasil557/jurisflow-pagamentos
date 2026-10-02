@@ -64,6 +64,20 @@ export async function paymentRecipientsPreviewScoped(
   assertFinance(accessData, 'view')
   const filters: SQL[] = [ne(financeCredit.status, 'ESTORNADO')]
   if (accessData.processFilter) filters.push(accessData.processFilter)
+  if (!accessData.perms.isAdmin) {
+    filters.push(eq(financeRecipient.userId, accessData.actor.id))
+  }
+
+  const ownedRecipientIds = accessData.perms.isAdmin
+    ? null
+    : new Set(
+        (
+          await db
+            .select({ id: financeRecipient.id })
+            .from(financeRecipient)
+            .where(eq(financeRecipient.userId, accessData.actor.id))
+        ).map((row) => row.id),
+      )
 
   const [actual, projection] = await Promise.all([
     db
@@ -120,6 +134,7 @@ export async function paymentRecipientsPreviewScoped(
   }
 
   for (const item of projection.items) {
+    if (ownedRecipientIds && !ownedRecipientIds.has(item.recipientId)) continue
     const current = merged.get(item.recipientId) ?? {
       recipientId: item.recipientId,
       recipientName: item.recipientName,
@@ -191,11 +206,17 @@ export async function paymentRecipientsPreviewScoped(
       balanceCents: totals.releasedCents - totals.paidCents,
       awaitingDistributionCents: totals.awaitingDistributionCents,
     },
-    preview: {
-      pendingReceipts: projection.pendingReceipts,
-      inconsistent: projection.inconsistent,
-      inconsistentReceipts: projection.inconsistentReceipts,
-    },
+    preview: accessData.perms.isAdmin
+      ? {
+          pendingReceipts: projection.pendingReceipts,
+          inconsistent: projection.inconsistent,
+          inconsistentReceipts: projection.inconsistentReceipts,
+        }
+      : {
+          pendingReceipts: 0,
+          inconsistent: false,
+          inconsistentReceipts: 0,
+        },
     pagination: {
       page,
       limit: query.limit,

@@ -718,8 +718,18 @@ export async function searchProcesses(access: FinanceAccess, search: string) {
 
 export async function listHousingComplexOptions(access: FinanceAccess) {
   assertFinance(access, 'view')
+  if (access.isGlobal || !access.processFilter) {
+    return db
+      .select({ id: housingComplex.id, name: housingComplex.name })
+      .from(housingComplex)
+      .orderBy(asc(housingComplex.name))
+  }
+
   return db
     .select({ id: housingComplex.id, name: housingComplex.name })
     .from(housingComplex)
+    .innerJoin(process, eq(process.housingComplexId, housingComplex.id))
+    .where(access.processFilter)
+    .groupBy(housingComplex.id, housingComplex.name)
     .orderBy(asc(housingComplex.name))
 }
