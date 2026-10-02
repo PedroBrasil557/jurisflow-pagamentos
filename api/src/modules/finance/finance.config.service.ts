@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import {
@@ -25,6 +25,7 @@ import {
   type FinanceTx,
   mapDbError,
   previousCivilDate,
+  todaySaoPaulo,
   writeAudit,
 } from './finance.support'
 
@@ -111,6 +112,26 @@ export async function updateRecipient(
         .for('update')
       if (!before) {
         throw new FinanceServiceError(404, 'Recebedor não encontrado.')
+      }
+      if (input.isActive === false && before.isActive) {
+        const today = todaySaoPaulo()
+        const [activeRule] = await tx
+          .select({ id: financeRule.id })
+          .from(financeRule)
+          .where(
+            and(
+              eq(financeRule.recipientId, recipientId),
+              eq(financeRule.status, 'ATIVA'),
+              or(isNull(financeRule.validTo), gte(financeRule.validTo, today)),
+            ),
+          )
+          .limit(1)
+        if (activeRule) {
+          throw new FinanceServiceError(
+            409,
+            'Recebedor possui regra vigente ou futura. Remova/desative as regras antes de inativá-lo.',
+          )
+        }
       }
       const [after] = await tx
         .update(financeRecipient)
@@ -411,10 +432,10 @@ export async function createRuleVersion(
       if (!current) {
         throw new FinanceServiceError(404, 'Regra não encontrada.')
       }
-      if (input.validFrom <= current.validFrom) {
+      if (input.validFrom < current.validFrom) {
         throw new FinanceServiceError(
           422,
-          'A nova versão deve começar depois do início da versão atual.',
+          'A nova versão não pode começar antes da versão atual.',
         )
       }
       if (
@@ -427,20 +448,43 @@ export async function createRuleVersion(
           'Nova versão mantém etapa, natureza e recebedor; para mudá-los, crie outra regra.',
         )
       }
-      const newEnd = previousCivilDate(input.validFrom)
-      if (current.validTo === null || current.validTo > newEnd) {
-        await tx
+
+      if (input.validFrom === current.validFrom) {
+        const replacedAt = new Date()
+        const [replaced] = await tx
           .update(financeRule)
-          .set({ validTo: newEnd })
+          .set({
+            status: 'REVOGADA',
+            revokedAt: replacedAt,
+            revokedByUserId: access.actor.id,
+            revokeReason: 'Substituída por correção com a mesma vigência.',
+          })
           .where(eq(financeRule.id, current.id))
+          .returning()
         await writeAudit(tx, {
           actor: access.actor,
           entityType: 'rule',
           entityId: current.id,
-          action: 'VIGENCIA_ENCERRADA',
-          before: { validTo: current.validTo },
-          after: { validTo: newEnd },
+          action: 'SUBSTITUIDA_MESMA_VIGENCIA',
+          before: current,
+          after: replaced,
         })
+      } else {
+        const newEnd = previousCivilDate(input.validFrom)
+        if (current.validTo === null || current.validTo > newEnd) {
+          await tx
+            .update(financeRule)
+            .set({ validTo: newEnd })
+            .where(eq(financeRule.id, current.id))
+          await writeAudit(tx, {
+            actor: access.actor,
+            entityType: 'rule',
+            entityId: current.id,
+            action: 'VIGENCIA_ENCERRADA',
+            before: { validTo: current.validTo },
+            after: { validTo: newEnd },
+          })
+        }
       }
       const latest = await tx
         .select({ version: financeRule.version })
@@ -472,30 +516,52 @@ export async function revokeRule(
         .select()
         .from(financeRule)
         .where(eq(financeRule.id, ruleId))
+        .for('update')
       if (!before) throw new FinanceServiceError(404, 'Regra não encontrada.')
       if (before.status === 'REVOGADA') {
         throw new FinanceServiceError(409, 'Regra já revogada.')
       }
-      const [after] = await tx
-        .update(financeRule)
-        .set({
-          status: 'REVOGADA',
-          revokedAt: new Date(),
-          revokedByUserId: access.actor.id,
-          revokeReason: reason.trim(),
+
+      // Remover uma configuração não pode fazê-la "voltar" por uma versão
+      // futura já agendada. Revoga a versão escolhida e as posteriores da
+      // mesma linhagem; versões históricas anteriores permanecem intactas.
+      const targets = await tx
+        .select()
+        .from(financeRule)
+        .where(
+          and(
+            eq(financeRule.lineageId, before.lineageId),
+            eq(financeRule.status, 'ATIVA'),
+            gte(financeRule.validFrom, before.validFrom),
+          ),
+        )
+        .for('update')
+
+      const revokedAt = new Date()
+      let selected = before
+      for (const target of targets) {
+        const [after] = await tx
+          .update(financeRule)
+          .set({
+            status: 'REVOGADA',
+            revokedAt,
+            revokedByUserId: access.actor.id,
+            revokeReason: reason.trim(),
+          })
+          .where(eq(financeRule.id, target.id))
+          .returning()
+        await writeAudit(tx, {
+          actor: access.actor,
+          entityType: 'rule',
+          entityId: target.id,
+          action: 'REVOGADA',
+          reason,
+          before: target,
+          after,
         })
-        .where(eq(financeRule.id, ruleId))
-        .returning()
-      await writeAudit(tx, {
-        actor: access.actor,
-        entityType: 'rule',
-        entityId: ruleId,
-        action: 'REVOGADA',
-        reason,
-        before,
-        after,
-      })
-      return after
+        if (target.id === ruleId && after) selected = after
+      }
+      return selected
     })
   } catch (error) {
     mapDbError(error)
