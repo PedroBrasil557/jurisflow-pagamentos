@@ -1210,24 +1210,67 @@ suite(
       )
       expect(scheduled?.version).toBe(3)
 
+      // Uma correção da regra vigente continua possível mesmo quando já existe
+      // uma versão futura agendada. Sem limitar a vigência, a correção deve
+      // ser recusada porque invadiria o período da futura.
+      await expectFinanceError(
+        createRuleVersion(admin, first?.lineageId as string, {
+          stage: 'DISTRIBUICAO_FINAL',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Cenário E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 2500,
+          validFrom: '2035-01-01',
+          housingComplexIds: [],
+        }),
+        409,
+        /Sobreposição de vigência/i,
+      )
+
+      const correctedWithFuture = await createRuleVersion(
+        admin,
+        first?.lineageId as string,
+        {
+          stage: 'DISTRIBUICAO_FINAL',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Cenário E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 2500,
+          validFrom: '2035-01-01',
+          validTo: '2035-12-31',
+          housingComplexIds: [],
+        },
+      )
+      expect(correctedWithFuture?.version).toBe(4)
+
       const versionsBeforeRemove = (await listRules(admin)).filter(
         (rule) => rule.lineageId === first?.lineageId,
       )
       expect(versionsBeforeRemove.map((rule) => rule.status)).toEqual([
         'REVOGADA',
+        'REVOGADA',
         'ATIVA',
         'ATIVA',
+      ])
+      expect(versionsBeforeRemove.map((rule) => rule.basisPoints)).toEqual([
+        1000,
+        2000,
+        3000,
+        2500,
       ])
 
       await revokeRule(
         admin,
-        corrected?.id as string,
+        correctedWithFuture?.id as string,
         'Participante removido do cenário E9',
       )
       const versionsAfterRemove = (await listRules(admin)).filter(
         (rule) => rule.lineageId === first?.lineageId,
       )
       expect(versionsAfterRemove.map((rule) => rule.status)).toEqual([
+        'REVOGADA',
         'REVOGADA',
         'REVOGADA',
         'REVOGADA',
