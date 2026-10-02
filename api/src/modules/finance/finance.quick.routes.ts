@@ -234,11 +234,37 @@ export const financeQuickRoutes = new Hono<AppBindings>()
         .orderBy(asc(financeRule.stage), asc(financeRule.sortOrder))
       const links = rows.length
         ? await db
-            .select({ ruleId: financeRuleHousingComplex.ruleId })
+            .select({
+              ruleId: financeRuleHousingComplex.ruleId,
+              housingComplexId: financeRuleHousingComplex.housingComplexId,
+            })
             .from(financeRuleHousingComplex)
         : []
+      const visibleComplexIds =
+        financeAccess.perms.isAdmin || !financeAccess.processFilter
+          ? null
+          : new Set(
+              (
+                await db
+                  .selectDistinct({
+                    id: process.housingComplexId,
+                  })
+                  .from(process)
+                  .where(financeAccess.processFilter)
+              )
+                .map((row) => row.id)
+                .filter((id): id is string => Boolean(id)),
+            )
+      const visibleRows = rows.filter((row) => {
+        if (!visibleComplexIds) return true
+        const scoped = links.filter((link) => link.ruleId === row.id)
+        if (scoped.length === 0) return true
+        return scoped.some((link) =>
+          visibleComplexIds.has(link.housingComplexId),
+        )
+      })
       return c.json({
-        items: rows.map((row) => ({
+        items: visibleRows.map((row) => ({
           id: row.id,
           group: publicGroupLabel(row),
           stage: row.stage,
