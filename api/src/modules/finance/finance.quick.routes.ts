@@ -1,4 +1,4 @@
-import { and, asc, eq, ne, type SQL, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, isNull, lte, ne, or, type SQL, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { z } from 'zod'
 import { db } from '../../shared/db'
@@ -22,6 +22,7 @@ import {
   assertFinance,
   FinanceServiceError,
   resolveFinanceAccess,
+  todaySaoPaulo,
   writeAudit,
 } from './finance.support'
 
@@ -208,6 +209,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
     try {
       const financeAccess = await access(c)
       assertFinance(financeAccess, 'view')
+      const today = todaySaoPaulo()
       const rows = await db
         .select({
           id: financeRule.id,
@@ -222,7 +224,13 @@ export const financeQuickRoutes = new Hono<AppBindings>()
           validTo: financeRule.validTo,
         })
         .from(financeRule)
-        .where(eq(financeRule.status, 'ATIVA'))
+        .where(
+          and(
+            eq(financeRule.status, 'ATIVA'),
+            lte(financeRule.validFrom, today),
+            or(isNull(financeRule.validTo), gte(financeRule.validTo, today)),
+          ),
+        )
         .orderBy(asc(financeRule.stage), asc(financeRule.sortOrder))
       const links = rows.length
         ? await db
