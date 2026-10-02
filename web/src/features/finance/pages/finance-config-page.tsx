@@ -38,7 +38,7 @@ import {
   formatCivilDate,
   todayCivil,
 } from '../lib/finance-money'
-import { rulesEffectiveOn } from '../lib/finance-rules'
+import { ruleEffectiveOn, rulesEffectiveOn } from '../lib/finance-rules'
 import {
   financeAccess,
   natureLabels,
@@ -512,11 +512,19 @@ export function FinanceConfigPage() {
                     <div className="divide-y divide-border">
                       {group.versions.map((version, index) => {
                         const revoked = version.status === 'REVOGADA'
+                        const effectiveNow = ruleEffectiveOn(
+                          version,
+                          todayCivil(),
+                        )
+                        const future =
+                          !revoked && version.validFrom > todayCivil()
                         const versionLabel = revoked
                           ? 'Revogada'
-                          : index === 0
+                          : effectiveNow
                             ? 'Atual'
-                            : 'Anterior'
+                            : future
+                              ? 'Agendada'
+                              : 'Anterior'
 
                         return (
                           <div
@@ -531,9 +539,11 @@ export function FinanceConfigPage() {
                                 tone={
                                   revoked
                                     ? 'ghost'
-                                    : index === 0
+                                    : effectiveNow
                                       ? 'success'
-                                      : 'info'
+                                      : future
+                                        ? 'warning'
+                                        : 'info'
                                 }
                               >
                                 {versionLabel}
@@ -878,7 +888,7 @@ function VersionDialog({ rule, onClose }: { rule: Rule; onClose: () => void }) {
   const mutation = useCreateRuleVersion()
   return (
     <AppDialog
-      description="A versão atual terá a vigência encerrada na véspera do novo início. Fechamentos anteriores continuam com a versão usada."
+      description="Salvar cria uma nova versão. Use a mesma data para corrigir a configuração vigente ou uma data posterior para agendar a mudança. Distribuições finalizadas não mudam."
       icon={GitBranch}
       maxWidth="3xl"
       onClose={onClose}
@@ -888,8 +898,8 @@ function VersionDialog({ rule, onClose }: { rule: Rule; onClose: () => void }) {
       <RuleForm
         initial={{
           ...rule,
-          validFrom: '',
-          validTo: null,
+          validFrom: rule.validFrom,
+          validTo: rule.validTo,
           housingComplexIds: rule.housingComplexes.map((c) => c.id),
           lockIdentity: true,
         }}
