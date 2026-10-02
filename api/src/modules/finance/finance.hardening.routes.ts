@@ -318,6 +318,9 @@ export async function paymentRecipientsScoped(
   assertFinance(access, 'view')
   const filters: SQL[] = [ne(financeCredit.status, 'ESTORNADO')]
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.perms.isAdmin) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   if (query.search) {
     const term = `%${query.search}%`
     filters.push(
