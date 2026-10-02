@@ -16,6 +16,7 @@ import {
   createAdjustment,
   createClosing,
   createPayout,
+  previewClosing,
   getClosingDetail,
   listCredits,
   reverseClosing,
@@ -520,6 +521,18 @@ suite(
       expect(credit?.status).toBe('PAGO')
     })
 
+    test('fechamento recusa período invertido já na conferência', async () => {
+      await expectFinanceError(
+        previewClosing(admin, {
+          receiptIds: [firstReceiptId],
+          periodStart: '2026-10-01',
+          periodEnd: '2026-09-01',
+        }),
+        422,
+        /Período inválido/i,
+      )
+    })
+
     test('fechamento idempotente, imutável e sem recebimento em dois lotes', async () => {
       const receipt = await newReceipt(
         admin,
@@ -697,6 +710,16 @@ suite(
         .where(eq(financeCredit.id, creditF?.id as string))
       expect(after?.paidCents).toBe(210_000)
       expect(after?.paidCents).toBeLessThanOrEqual(after?.amountCents ?? 0)
+      await expectFinanceError(
+        createAdjustment(admin, {
+          idempotencyKey: key('adj'),
+          creditId: creditF?.id as string,
+          amountCents: -30_000,
+          reason: 'Não pode reduzir abaixo do já pago',
+        }),
+        422,
+        /abaixo do que já foi pago/i,
+      )
     })
 
     test('CT-16 estorno de baixa preserva histórico e restaura saldo', async () => {
