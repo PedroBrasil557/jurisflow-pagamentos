@@ -128,10 +128,18 @@ export function FinanceConfigPage() {
 
   const allRules = rules.data ?? []
   const activeRules = allRules.filter((rule) => rule.status === 'ATIVA')
+  const specialRules = activeRules.filter(
+    (rule) =>
+      !(
+        rule.housingComplexes.length === 0 &&
+        (rule.stage === 'PROVISAO_RECEITA' ||
+          rule.stage === 'DISTRIBUICAO_FINAL')
+      ),
+  )
   const visibleRules =
     filter === 'TODAS'
-      ? activeRules
-      : activeRules.filter((rule) => rule.stage === filter)
+      ? specialRules
+      : specialRules.filter((rule) => rule.stage === filter)
 
   const historyGroups = useMemo(() => {
     const groups = new Map<string, Rule[]>()
@@ -242,7 +250,7 @@ export function FinanceConfigPage() {
               </Button>
             ) : undefined
           }
-          description="Mostra somente regras ativas. Use os filtros para encontrar a exceção que deseja manter."
+          description="Mostra regras ativas fora da configuração principal: exceções por condomínio, reservas, deduções e participações. Provisão e distribuição globais continuam em Gerenciar regras."
           title="Regras especiais"
         >
           <div className="grid gap-4">
