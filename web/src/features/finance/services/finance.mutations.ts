@@ -15,6 +15,7 @@ import {
   createRuleRequest,
   createRuleVersionRequest,
   previewImportRequest,
+  removeAttachmentRequest,
   type RulePayload,
   reverseClosingRequest,
   reversePayoutRequest,
@@ -98,3 +99,5 @@ export const useUploadAttachment = () =>
       file: File
     }) => uploadAttachmentRequest(v.ownerKind, v.ownerId, v.file),
   )
+export const useRemoveAttachment = () =>
+  useFinanceMutation(removeAttachmentRequest)
