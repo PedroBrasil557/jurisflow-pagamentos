@@ -495,7 +495,6 @@ export async function createRuleVersion(
       return insertRuleVersion(tx, access, input, {
         lineageId,
         version: (latest[0]?.version ?? current.version) + 1,
-        ignoreLineageId: lineageId,
       })
     })
   } catch (error) {
