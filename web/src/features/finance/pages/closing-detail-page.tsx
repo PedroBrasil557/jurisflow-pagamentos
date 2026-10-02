@@ -29,6 +29,7 @@ import {
   formatCents,
   formatCivilDate,
   formatInstant,
+  instantToCivil,
   parseBRLToCents,
   todayCivil,
 } from '../lib/finance-money'
@@ -203,7 +204,11 @@ export function ClosingDetailPage({ closingId }: { closingId: string }) {
       </FinanceSection>
 
       {payoutFor ? (
-        <PayoutDialog credit={payoutFor} onClose={() => setPayoutFor(null)} />
+        <PayoutDialog
+          credit={payoutFor}
+          minimumDate={instantToCivil(closing.createdAt)}
+          onClose={() => setPayoutFor(null)}
+        />
       ) : null}
       {adjustFor ? (
         <AdjustmentDialog
@@ -323,9 +328,11 @@ function PayoutList({ creditId }: { creditId: string }) {
 
 function PayoutDialog({
   credit,
+  minimumDate,
   onClose,
 }: {
   credit: Credit
+  minimumDate: string
   onClose: () => void
 }) {
   const mutation = useCreatePayout()
@@ -343,6 +350,11 @@ function PayoutDialog({
       return setError('Informe um valor maior que zero.')
     if (amountCents > balance)
       return setError(`O valor excede o saldo de ${formatCents(balance)}.`)
+    if (!paidOn) return setError('Informe a data efetiva do pagamento.')
+    if (paidOn < minimumDate)
+      return setError(
+        `A data não pode ser anterior à finalização (${formatCivilDate(minimumDate)}).`,
+      )
     if (!reference.trim())
       return setError(
         'Informe a referência da transferência (ex.: ID do PIX/TED).',
@@ -403,6 +415,7 @@ function PayoutDialog({
           <Input
             id="payout-date"
             max={todayCivil()}
+            min={minimumDate}
             onChange={(e) => setPaidOn(e.target.value)}
             type="date"
             value={paidOn}

@@ -251,6 +251,11 @@ function DebitDialog({
       return setError('Esta reserva é por processo: selecione o processo.')
     if (description.trim().length < 3)
       return setError('Informe a origem/justificativa.')
+    if (!movementDate) return setError('Informe a data do movimento.')
+    if (movementDate > todayCivil())
+      return setError('A data do movimento não pode ser futura.')
+    if (kind === 'TRANSFERENCIA' && destination.trim().length < 2)
+      return setError('Informe o destino da transferência.')
     mutation.mutate(
       {
         idempotencyKey,
@@ -334,6 +339,7 @@ function DebitDialog({
           <Label htmlFor="debit-date">Data</Label>
           <Input
             id="debit-date"
+            max={todayCivil()}
             onChange={(e) => setMovementDate(e.target.value)}
             type="date"
             value={movementDate}

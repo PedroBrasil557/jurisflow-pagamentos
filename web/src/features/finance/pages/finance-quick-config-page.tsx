@@ -30,7 +30,9 @@ import {
   formatBasisPoints,
   formatCivilDate,
   parsePercentToBasisPoints,
+  todayCivil,
 } from '../lib/finance-money'
+import { rulesEffectiveOn } from '../lib/finance-rules'
 import {
   useCreateRecipient,
   useCreateRule,
@@ -43,7 +45,7 @@ import { FinanceConfigPage } from './finance-config-page'
 const ONE_HUNDRED_PERCENT_BP = 10_000
 
 function activeRules(rules: Rule[]) {
-  return rules.filter((rule) => rule.status === 'ATIVA')
+  return rulesEffectiveOn(rules, todayCivil())
 }
 
 function activeGlobalFinalRules(rules: Rule[]) {

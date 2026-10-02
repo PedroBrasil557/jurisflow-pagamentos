@@ -33,7 +33,9 @@ import {
   formatBasisPoints,
   formatCents,
   formatCivilDate,
+  todayCivil,
 } from '../lib/finance-money'
+import { rulesEffectiveOn } from '../lib/finance-rules'
 import {
   financeAccess,
   natureLabels,
@@ -127,7 +129,7 @@ export function FinanceConfigPage() {
   const [historyLineageId, setHistoryLineageId] = useState<string | null>(null)
 
   const allRules = rules.data ?? []
-  const activeRules = allRules.filter((rule) => rule.status === 'ATIVA')
+  const activeRules = rulesEffectiveOn(allRules, todayCivil())
   const specialRules = activeRules.filter(
     (rule) =>
       !(
