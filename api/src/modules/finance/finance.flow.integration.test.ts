@@ -883,6 +883,19 @@ suite(
           processId: p1,
           kind: 'DESPESA',
           amountCents: 1,
+          movementDate: '2000-01-01',
+          description: 'Movimento anterior à constituição',
+        }),
+        422,
+        /saldo/i,
+      )
+      await expectFinanceError(
+        createReserveDebit(admin, {
+          idempotencyKey: key('mov'),
+          poolKey: 'reserva-de-teste',
+          processId: p1,
+          kind: 'DESPESA',
+          amountCents: 1,
           movementDate: '9999-12-31',
           description: 'Data futura',
         }),
