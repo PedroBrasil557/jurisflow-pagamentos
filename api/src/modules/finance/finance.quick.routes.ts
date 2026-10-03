@@ -161,7 +161,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
         const financeAccess = await access(c)
         assertFinance(financeAccess, 'view')
         const query = c.req.valid('query')
-        if (financeAccess.perms.isAdmin) {
+        if (financeAccess.isGlobal) {
           return c.json(await paymentRecipientsScoped(financeAccess, query), 200)
         }
         return c.json(await ownPaymentRecipients(financeAccess, query), 200)
@@ -175,7 +175,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
       const financeAccess = await access(c)
       assertFinance(financeAccess, 'view')
       const query = c.req.valid('query')
-      if (financeAccess.perms.isAdmin) {
+      if (financeAccess.isGlobal) {
         return c.json({ items: await listCredits(financeAccess, query) }, 200)
       }
 
@@ -241,7 +241,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
             .from(financeRuleHousingComplex)
         : []
       const visibleComplexIds =
-        financeAccess.perms.isAdmin || !financeAccess.processFilter
+        financeAccess.isGlobal || !financeAccess.processFilter
           ? null
           : new Set(
               (
@@ -275,7 +275,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
           validTo: row.validTo,
           global: !links.some((link) => link.ruleId === row.id),
         })),
-        visibility: financeAccess.perms.isAdmin ? 'ADMIN' : 'GROUPS_ONLY',
+        visibility: financeAccess.isGlobal ? 'ADMIN' : 'GROUPS_ONLY',
       })
     } catch (error) {
       return handleServiceError(c, error)
@@ -288,7 +288,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
       try {
         const financeAccess = await access(c)
         assertFinance(financeAccess, 'regras', { global: true })
-        if (!financeAccess.perms.isAdmin) {
+        if (!financeAccess.isGlobal) {
           throw new FinanceServiceError(
             403,
             'Somente o administrador pode vincular contas aos recebedores.',
