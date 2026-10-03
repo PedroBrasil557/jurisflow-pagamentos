@@ -91,7 +91,7 @@ async function assertOwnerVisible(
       .where(eq(financePayout.id, owner.id))
     if (
       !row ||
-      (!access.perms.isAdmin && row.recipientUserId !== access.actor.id)
+      (!access.isGlobal && row.recipientUserId !== access.actor.id)
     ) {
       throw new FinanceServiceError(404, 'Baixa não encontrada.')
     }
