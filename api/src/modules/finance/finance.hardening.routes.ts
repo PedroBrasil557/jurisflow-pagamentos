@@ -318,7 +318,7 @@ export async function paymentRecipientsScoped(
   assertFinance(access, 'view')
   const filters: SQL[] = [ne(financeCredit.status, 'ESTORNADO')]
   if (access.processFilter) filters.push(access.processFilter)
-  if (!access.perms.isAdmin) {
+  if (!access.isGlobal) {
     filters.push(eq(financeRecipient.userId, access.actor.id))
   }
   if (query.search) {
