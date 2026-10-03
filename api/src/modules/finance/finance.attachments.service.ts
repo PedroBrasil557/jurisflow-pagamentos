@@ -77,11 +77,23 @@ async function assertOwnerVisible(
   }
   if (owner.kind === 'payout') {
     const [row] = await db
-      .select({ processId: financeCredit.processId })
+      .select({
+        processId: financeCredit.processId,
+        recipientUserId: financeRecipient.userId,
+      })
       .from(financePayout)
       .innerJoin(financeCredit, eq(financePayout.creditId, financeCredit.id))
+      .innerJoin(
+        financeRecipient,
+        eq(financePayout.recipientId, financeRecipient.id),
+      )
       .where(eq(financePayout.id, owner.id))
-    if (!row) throw new FinanceServiceError(404, 'Baixa não encontrada.')
+    if (
+      !row ||
+      (!access.perms.isAdmin && row.recipientUserId !== access.actor.id)
+    ) {
+      throw new FinanceServiceError(404, 'Baixa não encontrada.')
+    }
     return visible(row.processId)()
   }
   const [row] = await db
