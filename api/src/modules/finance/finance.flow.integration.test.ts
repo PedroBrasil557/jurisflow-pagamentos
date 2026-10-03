@@ -288,6 +288,20 @@ suite(
       expect(overview.config).toEqual({ recipients: 0, activeRules: 0 })
     })
 
+    test('E9 entrada não aceita data de liberação futura', async () => {
+      await expectFinanceError(
+        createReceipt(admin, {
+          idempotencyKey: key('rec'),
+          processId: p1,
+          kind: 'HONORARIOS_CONTRATUAIS',
+          amountCents: 100,
+          releaseDate: '9999-12-31',
+        }),
+        422,
+        /futura/i,
+      )
+    })
+
     test('CT-05 sem regra aplicável: BLOQUEADO com causa, sem valores inventados', async () => {
       const receipt = await newReceipt(admin, p1, 1_200_000)
       const calculated = await calculateReceipt(admin, receipt.id)
