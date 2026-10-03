@@ -127,12 +127,19 @@ function ruleTitle(rule: Rule) {
 export function FinanceConfigPage() {
   const { permissions } = useSession()
   const canEdit = financeAccess.regras(permissions)
-  const recipients = useQuery(recipientsQuery())
-  const rules = useQuery(rulesQuery())
+  const canManageConfiguration = permissions.isAdmin && canEdit
+  const recipients = useQuery({
+    ...recipientsQuery(),
+    enabled: canManageConfiguration,
+  })
+  const rules = useQuery({
+    ...rulesQuery(),
+    enabled: canManageConfiguration,
+  })
   const [tab, setTab] = useState<AdvancedTab>('regras')
   const users = useQuery({
     ...adminUserListOptions({ limit: 100, page: 1 }),
-    enabled: permissions.isAdmin && tab === 'recebedores',
+    enabled: canManageConfiguration && tab === 'recebedores',
   })
   const [filter, setFilter] = useState<RuleFilter>('TODAS')
   const [recipientOpen, setRecipientOpen] = useState(false)
@@ -184,6 +191,22 @@ export function FinanceConfigPage() {
   function openHistory(rule: Rule) {
     setHistoryLineageId(rule.lineageId)
     setTab('historico')
+  }
+
+  if (!canManageConfiguration) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          description="As configurações financeiras avançadas são restritas ao administrador com permissão para gerenciar regras."
+          eyebrow="Financeiro · Opções avançadas"
+          title="Configurações avançadas"
+        />
+        <EmptyState
+          description="Você pode consultar as áreas financeiras liberadas ao seu perfil, mas não pode abrir ou alterar regras, recebedores e importações."
+          title="Configuração sem permissão de acesso"
+        />
+      </div>
+    )
   }
 
   return (
