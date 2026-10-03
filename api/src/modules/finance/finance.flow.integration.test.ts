@@ -850,7 +850,7 @@ suite(
         processId: p1,
         kind: 'DESPESA',
         amountCents: 18_000,
-        movementDate: '2026-09-25',
+        movementDate: TODAY,
         description: 'Certidão em cartório (teste)',
       })
       await createReserveDebit(admin, {
