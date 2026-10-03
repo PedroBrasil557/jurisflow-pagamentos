@@ -18,7 +18,9 @@ import {
   createPayout,
   previewClosing,
   getClosingDetail,
+  listClosings,
   listCredits,
+  listPayouts,
   reverseClosing,
   reversePayout,
 } from './finance.closings.service'
@@ -1287,11 +1289,21 @@ suite(
       await expectFinanceError(getOverview(noAccess), 403)
       const visible = await listReceipts(viewer, {})
       expect(visible.length).toBeGreaterThan(0)
+      expect(await listClosings(viewer)).toEqual([])
+      expect(await listCredits(viewer, {})).toEqual([])
+      expect(await listPayouts(viewer, {})).toEqual([])
+      expect((await getOverview(viewer)).credits).toEqual({
+        dueCents: 0,
+        paidCents: 0,
+        balanceCents: 0,
+      })
+      await expectFinanceError(getClosingDetail(viewer, closingId), 404)
       expect(
         visible.every((r) => r.housingComplexName === 'Condomínio Teste 2'),
       ).toBe(true)
       await expectFinanceError(getReceiptDetail(viewer, firstReceiptId), 404)
       const statement = await getStatement(viewer, {})
+      expect(statement.entries).toEqual([])
       await expectFinanceError(listRecipients(viewer), 403)
       await expectFinanceError(listRules(viewer), 403)
       const complexes = await listHousingComplexOptions(viewer)
