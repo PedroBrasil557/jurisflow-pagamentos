@@ -1312,6 +1312,48 @@ suite(
       expect(inactive?.isActive).toBe(false)
     })
 
+    test('E9 versão histórica encerrada não pode remover regra vigente por efeito cascata', async () => {
+      const recipient = await createRecipient(admin, {
+        name: 'Recebedor Histórico E9',
+        kind: 'PESSOA_FISICA',
+      })
+      const original = await createRule(admin, {
+        stage: 'DEDUCAO_LIQUIDA',
+        nature: 'CREDITO',
+        recipientId: recipient?.id as string,
+        workType: 'Histórico E9',
+        valueType: 'PERCENTUAL',
+        basisPoints: 100,
+        validFrom: '2020-01-01',
+        housingComplexIds: [],
+      })
+      const current = await createRuleVersion(
+        admin,
+        original?.lineageId as string,
+        {
+          stage: 'DEDUCAO_LIQUIDA',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Histórico E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 200,
+          validFrom: '2021-01-01',
+          housingComplexIds: [],
+        },
+      )
+      await expectFinanceError(
+        revokeRule(admin, original?.id as string, 'Tentativa histórica'),
+        409,
+        /histórica/i,
+      )
+      const versions = (await listRules(admin)).filter(
+        (rule) => rule.lineageId === original?.lineageId,
+      )
+      expect(versions.find((rule) => rule.id === current?.id)?.status).toBe(
+        'ATIVA',
+      )
+    })
+
     test('permissões no servidor: sem acesso, leitura por condomínio e operações globais', async () => {
       await expectFinanceError(listReceipts(noAccess, {}), 403)
       await expectFinanceError(getOverview(noAccess), 403)
