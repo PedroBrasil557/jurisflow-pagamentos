@@ -45,6 +45,8 @@ export async function getOverview(access: FinanceAccess) {
     .from(financeReceipt)
     .innerJoin(process, eq(financeReceipt.processId, process.id))
     .where(visible)
+  const creditFilters: SQL[] = []
+  if (visible) creditFilters.push(visible)
   const [credits] = await db
     .select({
       dueCents: sql<number>`coalesce(sum(${financeCredit.amountCents} + ${financeCredit.adjustedCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
@@ -52,7 +54,20 @@ export async function getOverview(access: FinanceAccess) {
     })
     .from(financeCredit)
     .innerJoin(process, eq(financeCredit.processId, process.id))
-    .where(visible)
+    .innerJoin(
+      financeRecipient,
+      eq(financeCredit.recipientId, financeRecipient.id),
+    )
+    .where(
+      and(
+        ...(access.perms.isAdmin
+          ? creditFilters
+          : [
+              ...creditFilters,
+              eq(financeRecipient.userId, access.actor.id),
+            ]),
+      ),
+    )
   const [config] = await db
     .select({
       recipients: sql<number>`(SELECT count(*) FROM ${financeRecipient})::int`,
@@ -73,10 +88,12 @@ export async function getOverview(access: FinanceAccess) {
     },
     credits: { dueCents: due, paidCents: paid, balanceCents: due - paid },
     reservesBalanceCents: reserves.reduce((sum, r) => sum + r.balanceCents, 0),
-    config: {
-      recipients: config?.recipients ?? 0,
-      activeRules: config?.activeRules ?? 0,
-    },
+    config: access.perms.isAdmin
+      ? {
+          recipients: config?.recipients ?? 0,
+          activeRules: config?.activeRules ?? 0,
+        }
+      : { recipients: 0, activeRules: 0 },
   }
 }
 
@@ -127,6 +144,9 @@ export async function getStatement(
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.perms.isAdmin) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   if (query.recipientId)
     filters.push(eq(financeCredit.recipientId, query.recipientId))
   if (query.processId)
@@ -317,6 +337,9 @@ export async function listStatementRecipientOptions(
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.perms.isAdmin) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
 
   return db
     .select({
