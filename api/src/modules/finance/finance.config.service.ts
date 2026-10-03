@@ -530,6 +530,12 @@ export async function revokeRule(
       if (before.status === 'REVOGADA') {
         throw new FinanceServiceError(409, 'Regra já revogada.')
       }
+      if (before.validTo && before.validTo < todaySaoPaulo()) {
+        throw new FinanceServiceError(
+          409,
+          'Versão histórica não pode ser removida; altere a regra vigente ou futura.',
+        )
+      }
 
       // Remover uma configuração não pode fazê-la "voltar" por uma versão
       // futura já agendada. Revoga a versão escolhida e as posteriores da
