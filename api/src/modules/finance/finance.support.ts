@@ -166,7 +166,7 @@ export function mapDbError(error: unknown, fallback?: string): never {
     throw new FinanceServiceError(
       409,
       cause.constraint
-        ? (fallback ?? `Dados recusados pela regra ${cause.constraint}.`)
+        ? (fallback ?? 'Dados recusados pelas regras financeiras.')
         : (cause.message ?? fallback ?? 'Operação recusada.'),
     )
   }
