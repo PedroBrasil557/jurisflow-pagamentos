@@ -31,6 +31,7 @@ import {
   formatCivilDate,
   formatInstant,
   parseBRLToCents,
+  todayCivil,
 } from '../lib/finance-money'
 import {
   creditStatusLabels,
@@ -401,6 +402,7 @@ function EditReceiptDialog({
           <Label htmlFor="edit-receipt-date">Data da entrada/liberação</Label>
           <Input
             id="edit-receipt-date"
+            max={todayCivil()}
             onChange={(event) => setReleaseDate(event.target.value)}
             type="date"
             value={releaseDate}
