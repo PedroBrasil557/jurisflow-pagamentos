@@ -64,11 +64,11 @@ export async function paymentRecipientsPreviewScoped(
   assertFinance(accessData, 'view')
   const filters: SQL[] = [ne(financeCredit.status, 'ESTORNADO')]
   if (accessData.processFilter) filters.push(accessData.processFilter)
-  if (!accessData.perms.isAdmin) {
+  if (!accessData.isGlobal) {
     filters.push(eq(financeRecipient.userId, accessData.actor.id))
   }
 
-  const ownedRecipientIds = accessData.perms.isAdmin
+  const ownedRecipientIds = accessData.isGlobal
     ? null
     : new Set(
         (
@@ -206,7 +206,7 @@ export async function paymentRecipientsPreviewScoped(
       balanceCents: totals.releasedCents - totals.paidCents,
       awaitingDistributionCents: totals.awaitingDistributionCents,
     },
-    preview: accessData.perms.isAdmin
+    preview: accessData.isGlobal
       ? {
           pendingReceipts: projection.pendingReceipts,
           inconsistent: projection.inconsistent,
