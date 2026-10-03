@@ -1336,8 +1336,12 @@ suite(
     })
 
     test('comprovantes privados: upload validado, download íntegro e escopo', async () => {
-      const { uploadAttachment, listAttachments, downloadAttachment } =
-        await import('./finance.attachments.service')
+      const {
+        uploadAttachment,
+        listAttachments,
+        downloadAttachment,
+        removeAttachment,
+      } = await import('./finance.attachments.service')
       const pdf = new TextEncoder().encode('%PDF-1.4\n% comprovante ficticio\n')
       let attachment: { id: string } | undefined
       try {
@@ -1391,6 +1395,36 @@ suite(
       await expectFinanceError(
         downloadAttachment(noAccess, attachment?.id as string),
         403,
+      )
+      await expectFinanceError(
+        removeAttachment(admin, attachment?.id as string, 'x'),
+        422,
+        /motivo/i,
+      )
+      await removeAttachment(
+        admin,
+        attachment?.id as string,
+        'Arquivo anexado incorretamente',
+      )
+      const afterRemoval = await listAttachments(admin, {
+        kind: 'receipt',
+        id: firstReceiptId,
+      })
+      expect(afterRemoval.map((a) => a.id)).not.toContain(
+        attachment?.id as string,
+      )
+      await expectFinanceError(
+        downloadAttachment(admin, attachment?.id as string),
+        404,
+      )
+      await expectFinanceError(
+        removeAttachment(
+          admin,
+          attachment?.id as string,
+          'Tentativa de remover novamente',
+        ),
+        409,
+        /já removido/i,
       )
     })
 
