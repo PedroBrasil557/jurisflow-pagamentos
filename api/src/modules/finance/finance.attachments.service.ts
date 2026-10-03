@@ -13,6 +13,7 @@ import {
   financeCredit,
   financePayout,
   financeReceipt,
+  financeRecipient,
   financeReserveMovement,
 } from './finance.schema'
 import {
