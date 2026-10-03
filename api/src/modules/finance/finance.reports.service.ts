@@ -1,4 +1,14 @@
-import { and, asc, eq, inArray, isNull, or, type SQL, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNull,
+  lte,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import { process } from '../processes/processes.schema'
@@ -505,6 +515,7 @@ async function poolBalance(
   tx: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
   poolKey: string,
   processId: string | null,
+  atDate?: string,
 ) {
   const signed = sql<number>`coalesce(sum(CASE WHEN ${financeReserveMovement.kind} = 'CONSTITUICAO' THEN ${financeReserveMovement.amountCents} ELSE -${financeReserveMovement.amountCents} END), 0)::bigint`
   const [row] = await tx
@@ -515,6 +526,9 @@ async function poolBalance(
         eq(financeReserveMovement.poolKey, poolKey),
         eq(financeReserveMovement.status, 'ATIVO'),
         processId ? eq(financeReserveMovement.processId, processId) : undefined,
+        atDate
+          ? lte(financeReserveMovement.movementDate, atDate)
+          : undefined,
       ),
     )
   return Number(row?.balance ?? 0)
@@ -599,6 +613,7 @@ export async function createReserveDebit(
         tx,
         input.poolKey,
         input.processId ?? null,
+        input.movementDate,
       )
       const problem = validateReserveDebit(balance, input.amountCents)
       if (problem) throw new FinanceServiceError(422, problem)
