@@ -6,6 +6,7 @@ import {
   FileSpreadsheet,
   GitBranch,
   History,
+  Link2,
   Pencil,
   Plus,
   UserMinus,
@@ -21,6 +22,8 @@ import { Label } from '#/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '#/components/ui/native-select'
 import { Textarea } from '#/components/ui/textarea'
 import { useSession } from '@/features/auth/hooks/use-session'
+import { adminUserListOptions } from '@/features/admin/services/admin-users.queries'
+import type { AdminUserListItem } from '@/features/admin/services/admin-users.service'
 import { AppDialog } from '@/shared/components/app-dialog'
 import { PageHeader } from '@/shared/components/page-header'
 import { StatusBadge } from '@/shared/components/status-badge'
@@ -47,6 +50,7 @@ import {
 import {
   useCreateRecipient,
   useCreateRuleVersion,
+  useLinkRecipientUser,
   useRevokeRule,
   useUpdateRecipient,
 } from '../services/finance.mutations'
@@ -126,10 +130,15 @@ export function FinanceConfigPage() {
   const recipients = useQuery(recipientsQuery())
   const rules = useQuery(rulesQuery())
   const [tab, setTab] = useState<AdvancedTab>('regras')
+  const users = useQuery({
+    ...adminUserListOptions({ limit: 100, page: 1 }),
+    enabled: permissions.isAdmin && tab === 'recebedores',
+  })
   const [filter, setFilter] = useState<RuleFilter>('TODAS')
   const [recipientOpen, setRecipientOpen] = useState(false)
   const [editingRecipient, setEditingRecipient] = useState<Recipient | null>(null)
   const [togglingRecipient, setTogglingRecipient] = useState<Recipient | null>(null)
+  const [linkingRecipient, setLinkingRecipient] = useState<Recipient | null>(null)
   const [versionOf, setVersionOf] = useState<Rule | null>(null)
   const [revoking, setRevoking] = useState<Rule | null>(null)
   const [historyLineageId, setHistoryLineageId] = useState<string | null>(null)
@@ -397,6 +406,14 @@ export function FinanceConfigPage() {
                   <p className="mt-3 text-sm text-muted-foreground">
                     {recipient.paymentNote || 'Sem dados de pagamento informados.'}
                   </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Conta de usuário:{' '}
+                    {recipient.userId
+                      ? users.data?.items.find(
+                          (item) => item.id === recipient.userId,
+                        )?.name ?? 'Conta vinculada'
+                      : 'não vinculada'}
+                  </p>
                   {recipient.origin === 'IMPORTACAO' ? (
                     <p className="mt-2 text-xs text-muted-foreground">
                       Cadastro criado por importação.
@@ -412,6 +429,16 @@ export function FinanceConfigPage() {
                         <Pencil className="size-4" />
                         Editar
                       </Button>
+                      {permissions.isAdmin ? (
+                        <Button
+                          onClick={() => setLinkingRecipient(recipient)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          <Link2 className="size-4" />
+                          Conta
+                        </Button>
+                      ) : null}
                       <Button
                         onClick={() => setTogglingRecipient(recipient)}
                         size="sm"
@@ -594,6 +621,13 @@ export function FinanceConfigPage() {
           recipient={togglingRecipient}
         />
       ) : null}
+      {linkingRecipient ? (
+        <RecipientUserDialog
+          onClose={() => setLinkingRecipient(null)}
+          recipient={linkingRecipient}
+          users={users.data?.items ?? []}
+        />
+      ) : null}
       {versionOf ? (
         <VersionDialog onClose={() => setVersionOf(null)} rule={versionOf} />
       ) : null}
@@ -715,6 +749,93 @@ function RecipientDialog({
           </Button>
         </div>
       </form>
+    </AppDialog>
+  )
+}
+
+function RecipientUserDialog({
+  recipient,
+  users,
+  onClose,
+}: {
+  recipient: Recipient
+  users: AdminUserListItem[]
+  onClose: () => void
+}) {
+  const mutation = useLinkRecipientUser()
+  const [userId, setUserId] = useState(recipient.userId ?? '')
+  const [error, setError] = useState<string | null>(null)
+  const selected = users.find((item) => item.id === userId)
+
+  return (
+    <AppDialog
+      description="Esse vínculo define qual conta de login pode enxergar a própria participação financeira. Deixe sem conta somente quando o recebedor não precisar desse acesso."
+      footer={
+        <Button
+          disabled={mutation.isPending}
+          onClick={() => {
+            setError(null)
+            mutation.mutate(
+              {
+                recipientId: recipient.id,
+                userId: userId || null,
+              },
+              {
+                onSuccess: () => {
+                  toast.success(
+                    userId
+                      ? 'Conta vinculada ao recebedor.'
+                      : 'Vínculo com a conta removido.',
+                  )
+                  onClose()
+                },
+                onError: (cause) => setError((cause as Error).message),
+              },
+            )
+          }}
+        >
+          {mutation.isPending ? 'Salvando…' : 'Salvar vínculo'}
+        </Button>
+      }
+      icon={Link2}
+      maxWidth="md"
+      onClose={onClose}
+      open
+      title={`Conta de usuário — ${recipient.name}`}
+    >
+      <div className="grid gap-3">
+        <div className="grid gap-1.5">
+          <Label htmlFor={`recipient-user-${recipient.id}`}>Conta</Label>
+          <NativeSelect
+            id={`recipient-user-${recipient.id}`}
+            onChange={(event) => setUserId(event.target.value)}
+            value={userId}
+          >
+            <NativeSelectOption value="">Sem conta vinculada</NativeSelectOption>
+            {users
+              .filter((item) => item.isActive || item.id === recipient.userId)
+              .map((item) => (
+                <NativeSelectOption key={item.id} value={item.id}>
+                  {item.name}
+                  {item.email ? ` · ${item.email}` : ''}
+                  {!item.isActive ? ' · inativa' : ''}
+                </NativeSelectOption>
+              ))}
+          </NativeSelect>
+        </div>
+        {recipient.userId && !users.some((item) => item.id === recipient.userId) ? (
+          <p className="text-xs text-amber-700">
+            A conta atualmente vinculada não apareceu nesta consulta. Salvar outra conta ou “Sem conta vinculada” substituirá o vínculo atual.
+          </p>
+        ) : null}
+        {selected ? (
+          <p className="text-xs text-muted-foreground">
+            Selecionada: {selected.name}
+            {selected.email ? ` · ${selected.email}` : ''}
+          </p>
+        ) : null}
+        <FieldError message={error} />
+      </div>
     </AppDialog>
   )
 }
