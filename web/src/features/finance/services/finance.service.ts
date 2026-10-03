@@ -462,7 +462,7 @@ export async function removeAttachmentRequest(input: {
   reason: string
 }) {
   return ok(
-    await finance.attachments[':id'].remove.$post({
+    await finance['attachment-files'][':id'].remove.$post({
       param: { id: input.id },
       json: { reason: input.reason },
     }),
