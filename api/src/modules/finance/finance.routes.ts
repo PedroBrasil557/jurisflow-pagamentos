@@ -580,7 +580,7 @@ export const financeRoutes = new Hono<AppBindings>()
     },
   )
   .post(
-    '/attachments/:id/remove',
+    '/attachment-files/:id/remove',
     paramsValidator(idParamSchema),
     jsonValidator(reasonPayloadSchema),
     async (c) => {
