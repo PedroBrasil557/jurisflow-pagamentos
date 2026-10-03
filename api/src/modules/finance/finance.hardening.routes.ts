@@ -103,6 +103,11 @@ export async function overviewScoped(access: FinanceAccess) {
     .innerJoin(process, eq(financeReceipt.processId, process.id))
     .where(visible)
 
+  const creditFilters: SQL[] = []
+  if (visible) creditFilters.push(visible)
+  if (!access.isGlobal) {
+    creditFilters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   const [credits] = await db
     .select({
       allocatedCents: sql<number>`coalesce(sum(${financeCredit.amountCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
@@ -110,8 +115,12 @@ export async function overviewScoped(access: FinanceAccess) {
       paidCents: sql<number>`coalesce(sum(${financeCredit.paidCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
     })
     .from(financeCredit)
+    .innerJoin(
+      financeRecipient,
+      eq(financeCredit.recipientId, financeRecipient.id),
+    )
     .innerJoin(process, eq(financeCredit.processId, process.id))
-    .where(visible)
+    .where(creditFilters.length ? and(...creditFilters) : undefined)
 
   const [rated] = await db
     .select({
