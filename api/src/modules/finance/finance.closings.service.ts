@@ -509,19 +509,37 @@ export async function reverseClosing(
 
 export async function listClosings(access: FinanceAccess) {
   assertFinance(access, 'view')
+  const fields = {
+    id: financeClosing.id,
+    code: financeClosing.code,
+    status: financeClosing.status,
+    periodStart: financeClosing.periodStart,
+    periodEnd: financeClosing.periodEnd,
+    receiptCount: financeClosing.receiptCount,
+    grossCents: financeClosing.grossCents,
+    createdAt: financeClosing.createdAt,
+    reversedAt: financeClosing.reversedAt,
+  }
+  if (!access.processFilter) {
+    return db
+      .select(fields)
+      .from(financeClosing)
+      .orderBy(desc(financeClosing.createdAt))
+      .limit(200)
+  }
   return db
-    .select({
-      id: financeClosing.id,
-      code: financeClosing.code,
-      status: financeClosing.status,
-      periodStart: financeClosing.periodStart,
-      periodEnd: financeClosing.periodEnd,
-      receiptCount: financeClosing.receiptCount,
-      grossCents: financeClosing.grossCents,
-      createdAt: financeClosing.createdAt,
-      reversedAt: financeClosing.reversedAt,
-    })
+    .selectDistinct(fields)
     .from(financeClosing)
+    .innerJoin(
+      financeClosingItem,
+      eq(financeClosingItem.closingId, financeClosing.id),
+    )
+    .innerJoin(
+      financeReceipt,
+      eq(financeClosingItem.receiptId, financeReceipt.id),
+    )
+    .innerJoin(process, eq(financeReceipt.processId, process.id))
+    .where(access.processFilter)
     .orderBy(desc(financeClosing.createdAt))
     .limit(200)
 }
@@ -581,6 +599,9 @@ export async function listCredits(access: FinanceAccess, query: CreditQuery) {
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.perms.isAdmin) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   if (query.closingId)
     filters.push(eq(financeCredit.closingId, query.closingId))
   if (query.recipientId) {
@@ -801,6 +822,9 @@ export async function listPayouts(
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.perms.isAdmin) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   if (query.creditId) filters.push(eq(financePayout.creditId, query.creditId))
   if (query.recipientId) {
     filters.push(eq(financePayout.recipientId, query.recipientId))
