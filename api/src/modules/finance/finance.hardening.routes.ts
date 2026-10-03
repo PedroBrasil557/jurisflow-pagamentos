@@ -103,14 +103,21 @@ export async function overviewScoped(access: FinanceAccess) {
     .innerJoin(process, eq(financeReceipt.processId, process.id))
     .where(visible)
 
-  const creditFilters: SQL[] = []
-  if (visible) creditFilters.push(visible)
-  if (!access.isGlobal) {
-    creditFilters.push(eq(financeRecipient.userId, access.actor.id))
-  }
-  const [credits] = await db
+  const [allocationCredits] = await db
     .select({
       allocatedCents: sql<number>`coalesce(sum(${financeCredit.amountCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
+    })
+    .from(financeCredit)
+    .innerJoin(process, eq(financeCredit.processId, process.id))
+    .where(visible)
+
+  const paymentFilters: SQL[] = []
+  if (visible) paymentFilters.push(visible)
+  if (!access.isGlobal) {
+    paymentFilters.push(eq(financeRecipient.userId, access.actor.id))
+  }
+  const [paymentCredits] = await db
+    .select({
       dueCents: sql<number>`coalesce(sum(${financeCredit.amountCents} + ${financeCredit.adjustedCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
       paidCents: sql<number>`coalesce(sum(${financeCredit.paidCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
     })
@@ -120,7 +127,7 @@ export async function overviewScoped(access: FinanceAccess) {
       eq(financeCredit.recipientId, financeRecipient.id),
     )
     .innerJoin(process, eq(financeCredit.processId, process.id))
-    .where(creditFilters.length ? and(...creditFilters) : undefined)
+    .where(paymentFilters.length ? and(...paymentFilters) : undefined)
 
   const [rated] = await db
     .select({
@@ -144,9 +151,11 @@ export async function overviewScoped(access: FinanceAccess) {
     .filter((pool) => pool.nature === 'RESERVA')
     .reduce((sum, pool) => sum + pool.constitutedCents, 0)
 
-  const dueCents = Number(credits?.dueCents ?? 0)
-  const paidCents = Number(credits?.paidCents ?? 0)
-  const recipientAllocatedCents = Number(credits?.allocatedCents ?? 0)
+  const dueCents = Number(paymentCredits?.dueCents ?? 0)
+  const paidCents = Number(paymentCredits?.paidCents ?? 0)
+  const recipientAllocatedCents = Number(
+    allocationCredits?.allocatedCents ?? 0,
+  )
   const ratedCents = Number(rated?.grossCents ?? 0)
   const receivedCents = Number(receipts?.receivedCents ?? 0)
   const allocatedCents = provisionCents + reserveCents + recipientAllocatedCents
