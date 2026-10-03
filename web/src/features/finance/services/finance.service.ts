@@ -31,12 +31,18 @@ export type RulePayload = InferRequestType<typeof finance.rules.$post>['json']
 export type RecipientPayload = InferRequestType<
   typeof finance.recipients.$post
 >['json']
+export type RecipientUpdatePayload = InferRequestType<
+  (typeof finance.recipients)[':id']['$patch']
+>['json']
 export type ReceiptListItem = InferResponseType<
   typeof finance.receipts.$get,
   200
 >['items'][number]
 export type ReceiptPayload = InferRequestType<
   typeof finance.receipts.$post
+>['json']
+export type ReceiptUpdatePayload = InferRequestType<
+  (typeof finance.receipts)[':id']['$patch']
 >['json']
 export type ReceiptDetail = InferResponseType<
   (typeof finance.receipts)[':id']['$get'],
@@ -62,6 +68,10 @@ export type PayoutPayload = InferRequestType<
   typeof finance.payouts.$post
 >['json']
 export type Statement = InferResponseType<typeof finance.statement.$get, 200>
+export type StatementRecipientOption = InferResponseType<
+  (typeof finance)['statement-recipient-options']['$get'],
+  200
+>['items'][number]
 export type StatementQuery = InferRequestType<
   typeof finance.statement.$get
 >['query']
@@ -138,6 +148,14 @@ export async function fetchComplexOptions() {
     await ok<{ items: ComplexOption[] }>(
       await finance['housing-complexes'].$get(),
       'Não foi possível carregar os condomínios.',
+    )
+  ).items
+}
+export async function fetchStatementRecipientOptions() {
+  return (
+    await ok<{ items: StatementRecipientOption[] }>(
+      await finance['statement-recipient-options'].$get(),
+      'Não foi possível carregar os recebedores do histórico.',
     )
   ).items
 }
@@ -238,6 +256,18 @@ export async function createRecipientRequest(payload: RecipientPayload) {
     'Não foi possível cadastrar o recebedor.',
   )
 }
+export async function updateRecipientRequest(input: {
+  id: string
+  payload: RecipientUpdatePayload
+}) {
+  return ok(
+    await finance.recipients[':id'].$patch({
+      param: { id: input.id },
+      json: input.payload,
+    }),
+    'Não foi possível atualizar o recebedor.',
+  )
+}
 export async function createRuleRequest(payload: RulePayload) {
   return ok(
     await finance.rules.$post({ json: payload }),
@@ -269,6 +299,18 @@ export async function createReceiptRequest(payload: ReceiptPayload) {
   return ok<{ receipt: { id: string } }>(
     await finance.receipts.$post({ json: payload }),
     'Não foi possível registrar o recebimento.',
+  )
+}
+export async function updateReceiptRequest(input: {
+  id: string
+  payload: ReceiptUpdatePayload
+}) {
+  return ok(
+    await finance.receipts[':id'].$patch({
+      param: { id: input.id },
+      json: input.payload,
+    }),
+    'Não foi possível atualizar a entrada.',
   )
 }
 export async function calculateReceiptRequest(id: string) {
@@ -355,6 +397,15 @@ export async function createReserveDebitRequest(json: ReserveDebitPayload) {
     'Não foi possível registrar o movimento.',
   )
 }
+export async function reverseReserveMovementRequest(id: string, reason: string) {
+  return ok(
+    await finance.reserves.movements[':id'].reverse.$post({
+      param: { id },
+      json: { reason },
+    }),
+    'Não foi possível estornar o movimento.',
+  )
+}
 
 async function postFile<T>(
   url: string,
@@ -404,6 +455,18 @@ export async function uploadAttachmentRequest(
     file,
     {},
     'Não foi possível anexar o comprovante.',
+  )
+}
+export async function removeAttachmentRequest(input: {
+  id: string
+  reason: string
+}) {
+  return ok(
+    await finance['attachment-files'][':id'].remove.$post({
+      param: { id: input.id },
+      json: { reason: input.reason },
+    }),
+    'Não foi possível remover o comprovante.',
   )
 }
 

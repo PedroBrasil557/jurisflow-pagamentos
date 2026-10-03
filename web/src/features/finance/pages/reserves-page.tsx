@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowDownUp } from 'lucide-react'
-import { useState } from 'react'
+import { ArrowDownUp, Paperclip, Undo2 } from 'lucide-react'
+import { Fragment, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
 import { Input } from '#/components/ui/input'
@@ -16,6 +16,7 @@ import {
 } from '#/components/ui/table'
 import { Textarea } from '#/components/ui/textarea'
 import { useSession } from '@/features/auth/hooks/use-session'
+import { AttachmentsPanel } from '../components/attachments-panel'
 import { AppDialog } from '@/shared/components/app-dialog'
 import { PageHeader } from '@/shared/components/page-header'
 import { StatusBadge } from '@/shared/components/status-badge'
@@ -34,7 +35,10 @@ import {
   todayCivil,
 } from '../lib/finance-money'
 import { financeAccess, natureLabels } from '../lib/finance-labels'
-import { useCreateReserveDebit } from '../services/finance.mutations'
+import {
+  useCreateReserveDebit,
+  useReverseReserveMovement,
+} from '../services/finance.mutations'
 import {
   reserveMovementsQuery,
   reservesQuery,
@@ -57,6 +61,10 @@ export function ReservesPage() {
   const [poolKey, setPoolKey] = useState<string | undefined>()
   const movements = useQuery(reserveMovementsQuery(poolKey))
   const [debitFor, setDebitFor] = useState<ReserveBalance | null>(null)
+  const reverse = useReverseReserveMovement()
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [reversing, setReversing] = useState<string | null>(null)
+  const [reverseReason, setReverseReason] = useState('')
 
   return (
     <div className="flex flex-col gap-6">
@@ -154,17 +162,18 @@ export function ReservesPage() {
                   <TableHead>Movimento</TableHead>
                   <TableHead>Origem</TableHead>
                   <TableHead className="text-right">Valor</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {movements.data.map(
                   ({ movement, processCode, closingCode }) => (
-                    <TableRow
-                      className={
-                        movement.status === 'ESTORNADO' ? 'opacity-60' : ''
-                      }
-                      key={movement.id}
-                    >
+                    <Fragment key={movement.id}>
+                      <TableRow
+                        className={
+                          movement.status === 'ESTORNADO' ? 'opacity-60' : ''
+                        }
+                      >
                       <TableCell className="text-sm">
                         {formatCivilDate(movement.movementDate)}
                       </TableCell>
@@ -196,7 +205,110 @@ export function ReservesPage() {
                           }
                         />
                       </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex flex-wrap justify-end gap-1">
+                          <Button
+                            onClick={() =>
+                              setExpanded(
+                                expanded === movement.id ? null : movement.id,
+                              )
+                            }
+                            size="sm"
+                            variant="ghost"
+                          >
+                            <Paperclip className="size-4" />
+                            Comprovantes
+                          </Button>
+                          {movement.kind !== 'CONSTITUICAO' &&
+                          movement.status === 'ATIVO' &&
+                          financeAccess.estornar(permissions) ? (
+                            <Button
+                              onClick={() => {
+                                setExpanded(movement.id)
+                                setReversing(movement.id)
+                                setReverseReason('')
+                              }}
+                              size="sm"
+                              variant="ghost"
+                            >
+                              <Undo2 className="size-4" />
+                              Estornar
+                            </Button>
+                          ) : null}
+                        </div>
+                      </TableCell>
                     </TableRow>
+                    {expanded === movement.id ? (
+                      <TableRow>
+                        <TableCell colSpan={6}>
+                          <div className="grid gap-4 py-2">
+                            <AttachmentsPanel
+                              canUpload={
+                                financeAccess.reservas(permissions) &&
+                                movement.status === 'ATIVO'
+                              }
+                              ownerId={movement.id}
+                              ownerKind="reserve"
+                            />
+                            {reversing === movement.id ? (
+                              <div className="grid gap-2 rounded-md border border-border p-3">
+                                <Label htmlFor={`reserve-reverse-${movement.id}`}>
+                                  Motivo do estorno
+                                </Label>
+                                <Textarea
+                                  id={`reserve-reverse-${movement.id}`}
+                                  onChange={(event) =>
+                                    setReverseReason(event.target.value)
+                                  }
+                                  rows={2}
+                                  value={reverseReason}
+                                />
+                                <div className="flex justify-end gap-2">
+                                  <Button
+                                    onClick={() => {
+                                      setReversing(null)
+                                      setReverseReason('')
+                                    }}
+                                    size="sm"
+                                    variant="ghost"
+                                  >
+                                    Cancelar
+                                  </Button>
+                                  <Button
+                                    disabled={
+                                      reverseReason.trim().length < 3 ||
+                                      reverse.isPending
+                                    }
+                                    onClick={() =>
+                                      reverse.mutate(
+                                        {
+                                          id: movement.id,
+                                          reason: reverseReason,
+                                        },
+                                        {
+                                          onSuccess: () => {
+                                            toast.success(
+                                              'Movimento estornado; histórico preservado.',
+                                            )
+                                            setReversing(null)
+                                            setReverseReason('')
+                                          },
+                                        },
+                                      )
+                                    }
+                                    size="sm"
+                                    variant="destructive"
+                                  >
+                                    Confirmar estorno
+                                  </Button>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                    </Fragment>
                   ),
                 )}
               </TableBody>
@@ -251,6 +363,11 @@ function DebitDialog({
       return setError('Esta reserva é por processo: selecione o processo.')
     if (description.trim().length < 3)
       return setError('Informe a origem/justificativa.')
+    if (!movementDate) return setError('Informe a data do movimento.')
+    if (movementDate > todayCivil())
+      return setError('A data do movimento não pode ser futura.')
+    if (kind === 'TRANSFERENCIA' && destination.trim().length < 2)
+      return setError('Informe o destino da transferência.')
     mutation.mutate(
       {
         idempotencyKey,
@@ -334,6 +451,7 @@ function DebitDialog({
           <Label htmlFor="debit-date">Data</Label>
           <Input
             id="debit-date"
+            max={todayCivil()}
             onChange={(e) => setMovementDate(e.target.value)}
             type="date"
             value={movementDate}

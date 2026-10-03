@@ -1,4 +1,14 @@
-import { and, asc, eq, inArray, isNull, or, type SQL, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNull,
+  lte,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import { process } from '../processes/processes.schema'
@@ -23,6 +33,7 @@ import {
   isUniqueViolation,
   mapDbError,
   toSaoPauloDate,
+  todaySaoPaulo,
   writeAudit,
 } from './finance.support'
 
@@ -44,6 +55,8 @@ export async function getOverview(access: FinanceAccess) {
     .from(financeReceipt)
     .innerJoin(process, eq(financeReceipt.processId, process.id))
     .where(visible)
+  const creditFilters: SQL[] = []
+  if (visible) creditFilters.push(visible)
   const [credits] = await db
     .select({
       dueCents: sql<number>`coalesce(sum(${financeCredit.amountCents} + ${financeCredit.adjustedCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
@@ -51,11 +64,31 @@ export async function getOverview(access: FinanceAccess) {
     })
     .from(financeCredit)
     .innerJoin(process, eq(financeCredit.processId, process.id))
-    .where(visible)
+    .innerJoin(
+      financeRecipient,
+      eq(financeCredit.recipientId, financeRecipient.id),
+    )
+    .where(
+      and(
+        ...(access.isGlobal
+          ? creditFilters
+          : [
+              ...creditFilters,
+              eq(financeRecipient.userId, access.actor.id),
+            ]),
+      ),
+    )
+  const today = todaySaoPaulo()
   const [config] = await db
     .select({
       recipients: sql<number>`(SELECT count(*) FROM ${financeRecipient})::int`,
-      activeRules: sql<number>`(SELECT count(*) FROM ${financeRule} WHERE ${financeRule.status} = 'ATIVA')::int`,
+      activeRules: sql<number>`(
+        SELECT count(*)
+        FROM ${financeRule}
+        WHERE ${financeRule.status} = 'ATIVA'
+          AND ${financeRule.validFrom} <= ${today}
+          AND (${financeRule.validTo} IS NULL OR ${financeRule.validTo} >= ${today})
+      )::int`,
     })
     .from(sql`(SELECT 1) AS one`)
   const reserves = access.isGlobal ? await reserveBalances(access) : []
@@ -72,10 +105,12 @@ export async function getOverview(access: FinanceAccess) {
     },
     credits: { dueCents: due, paidCents: paid, balanceCents: due - paid },
     reservesBalanceCents: reserves.reduce((sum, r) => sum + r.balanceCents, 0),
-    config: {
-      recipients: config?.recipients ?? 0,
-      activeRules: config?.activeRules ?? 0,
-    },
+    config: access.isGlobal
+      ? {
+          recipients: config?.recipients ?? 0,
+          activeRules: config?.activeRules ?? 0,
+        }
+      : { recipients: 0, activeRules: 0 },
   }
 }
 
@@ -126,6 +161,9 @@ export async function getStatement(
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.isGlobal) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   if (query.recipientId)
     filters.push(eq(financeCredit.recipientId, query.recipientId))
   if (query.processId)
@@ -310,6 +348,32 @@ export async function getStatement(
   }
 }
 
+export async function listStatementRecipientOptions(
+  access: FinanceAccess,
+) {
+  assertFinance(access, 'view')
+  const filters: SQL[] = []
+  if (access.processFilter) filters.push(access.processFilter)
+  if (!access.isGlobal) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
+
+  return db
+    .select({
+      id: financeRecipient.id,
+      name: financeRecipient.name,
+    })
+    .from(financeCredit)
+    .innerJoin(
+      financeRecipient,
+      eq(financeCredit.recipientId, financeRecipient.id),
+    )
+    .innerJoin(process, eq(financeCredit.processId, process.id))
+    .where(filters.length ? and(...filters) : undefined)
+    .groupBy(financeRecipient.id, financeRecipient.name)
+    .orderBy(asc(financeRecipient.name), asc(financeRecipient.id))
+}
+
 const csvHeader = [
   'Data',
   'Tipo',
@@ -458,6 +522,7 @@ async function poolBalance(
   tx: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0],
   poolKey: string,
   processId: string | null,
+  atDate?: string,
 ) {
   const signed = sql<number>`coalesce(sum(CASE WHEN ${financeReserveMovement.kind} = 'CONSTITUICAO' THEN ${financeReserveMovement.amountCents} ELSE -${financeReserveMovement.amountCents} END), 0)::bigint`
   const [row] = await tx
@@ -468,6 +533,9 @@ async function poolBalance(
         eq(financeReserveMovement.poolKey, poolKey),
         eq(financeReserveMovement.status, 'ATIVO'),
         processId ? eq(financeReserveMovement.processId, processId) : undefined,
+        atDate
+          ? lte(financeReserveMovement.movementDate, atDate)
+          : undefined,
       ),
     )
   return Number(row?.balance ?? 0)
@@ -486,6 +554,18 @@ export async function createReserveDebit(
     throw new FinanceServiceError(
       422,
       'Informe a origem/justificativa do movimento.',
+    )
+  }
+  if (input.movementDate > todaySaoPaulo()) {
+    throw new FinanceServiceError(
+      422,
+      'A data do movimento não pode ser futura.',
+    )
+  }
+  if (input.kind === 'TRANSFERENCIA' && !input.destination?.trim()) {
+    throw new FinanceServiceError(
+      422,
+      'Informe o destino da transferência.',
     )
   }
   const requestHash = hashPayload({ ...input, idempotencyKey: undefined })
@@ -540,6 +620,7 @@ export async function createReserveDebit(
         tx,
         input.poolKey,
         input.processId ?? null,
+        input.movementDate,
       )
       const problem = validateReserveDebit(balance, input.amountCents)
       if (problem) throw new FinanceServiceError(422, problem)

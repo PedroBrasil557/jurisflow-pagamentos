@@ -18,7 +18,11 @@ import {
   FieldError,
   FinanceSection,
 } from '../components/finance-ui'
-import { formatCivilDate, parseBRLToCents } from '../lib/finance-money'
+import {
+  formatCivilDate,
+  parseBRLToCents,
+  todayCivil,
+} from '../lib/finance-money'
 import { financeAccess, receiptKindLabels } from '../lib/finance-labels'
 import {
   useCalculateReceipt,
@@ -190,6 +194,7 @@ export function ReceiptNewPage() {
             <Label htmlFor="receipt-release">Data de liberação na conta</Label>
             <Input
               id="receipt-release"
+              max={todayCivil()}
               onChange={(e) => setReleaseDate(e.target.value)}
               type="date"
               value={releaseDate}

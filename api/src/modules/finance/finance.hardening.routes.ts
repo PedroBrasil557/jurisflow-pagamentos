@@ -1,4 +1,14 @@
-import { and, asc, desc, eq, ilike, ne, or, type SQL, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  ilike,
+  ne,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { z } from 'zod'
 import { db } from '../../shared/db'
@@ -24,6 +34,7 @@ import {
   assertFinance,
   type FinanceAccess,
   resolveFinanceAccess,
+  todaySaoPaulo,
 } from './finance.support'
 
 async function access(c: Context<AppBindings>) {
@@ -92,15 +103,31 @@ export async function overviewScoped(access: FinanceAccess) {
     .innerJoin(process, eq(financeReceipt.processId, process.id))
     .where(visible)
 
-  const [credits] = await db
+  const [allocationCredits] = await db
     .select({
       allocatedCents: sql<number>`coalesce(sum(${financeCredit.amountCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
-      dueCents: sql<number>`coalesce(sum(${financeCredit.amountCents} + ${financeCredit.adjustedCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
-      paidCents: sql<number>`coalesce(sum(${financeCredit.paidCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
     })
     .from(financeCredit)
     .innerJoin(process, eq(financeCredit.processId, process.id))
     .where(visible)
+
+  const paymentFilters: SQL[] = []
+  if (visible) paymentFilters.push(visible)
+  if (!access.isGlobal) {
+    paymentFilters.push(eq(financeRecipient.userId, access.actor.id))
+  }
+  const [paymentCredits] = await db
+    .select({
+      dueCents: sql<number>`coalesce(sum(${financeCredit.amountCents} + ${financeCredit.adjustedCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
+      paidCents: sql<number>`coalesce(sum(${financeCredit.paidCents}) FILTER (WHERE ${financeCredit.status} <> 'ESTORNADO'), 0)::bigint`,
+    })
+    .from(financeCredit)
+    .innerJoin(
+      financeRecipient,
+      eq(financeCredit.recipientId, financeRecipient.id),
+    )
+    .innerJoin(process, eq(financeCredit.processId, process.id))
+    .where(paymentFilters.length ? and(...paymentFilters) : undefined)
 
   const [rated] = await db
     .select({
@@ -124,9 +151,11 @@ export async function overviewScoped(access: FinanceAccess) {
     .filter((pool) => pool.nature === 'RESERVA')
     .reduce((sum, pool) => sum + pool.constitutedCents, 0)
 
-  const dueCents = Number(credits?.dueCents ?? 0)
-  const paidCents = Number(credits?.paidCents ?? 0)
-  const recipientAllocatedCents = Number(credits?.allocatedCents ?? 0)
+  const dueCents = Number(paymentCredits?.dueCents ?? 0)
+  const paidCents = Number(paymentCredits?.paidCents ?? 0)
+  const recipientAllocatedCents = Number(
+    allocationCredits?.allocatedCents ?? 0,
+  )
   const ratedCents = Number(rated?.grossCents ?? 0)
   const receivedCents = Number(receipts?.receivedCents ?? 0)
   const allocatedCents = provisionCents + reserveCents + recipientAllocatedCents
@@ -144,10 +173,17 @@ export async function overviewScoped(access: FinanceAccess) {
 
   let config = { recipients: 0, activeRules: 0 }
   if (access.isGlobal) {
+    const today = todaySaoPaulo()
     const [row] = await db
       .select({
         recipients: sql<number>`(SELECT count(*) FROM ${financeRecipient})::int`,
-        activeRules: sql<number>`(SELECT count(*) FROM ${financeRule} WHERE ${financeRule.status} = 'ATIVA')::int`,
+        activeRules: sql<number>`(
+          SELECT count(*)
+          FROM ${financeRule}
+          WHERE ${financeRule.status} = 'ATIVA'
+            AND ${financeRule.validFrom} <= ${today}
+            AND (${financeRule.validTo} IS NULL OR ${financeRule.validTo} >= ${today})
+        )::int`,
       })
       .from(sql`(SELECT 1) AS one`)
     config = {
@@ -300,6 +336,9 @@ export async function paymentRecipientsScoped(
   assertFinance(access, 'view')
   const filters: SQL[] = [ne(financeCredit.status, 'ESTORNADO')]
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.isGlobal) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   if (query.search) {
     const term = `%${query.search}%`
     filters.push(

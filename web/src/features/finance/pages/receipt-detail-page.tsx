@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { Ban, Calculator, CheckCircle2 } from 'lucide-react'
+import { Ban, Calculator, CheckCircle2, Pencil } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '#/components/ui/button'
+import { Input } from '#/components/ui/input'
 import { Label } from '#/components/ui/label'
+import { NativeSelect, NativeSelectOption } from '#/components/ui/native-select'
 import { Textarea } from '#/components/ui/textarea'
 import { useSession } from '@/features/auth/hooks/use-session'
 import { AppDialog } from '@/shared/components/app-dialog'
@@ -18,12 +20,19 @@ import {
 import {
   BackLink,
   ErrorState,
+  FieldError,
   FinanceSection,
   LoadingState,
   Money,
   Tone,
 } from '../components/finance-ui'
-import { formatCivilDate, formatInstant } from '../lib/finance-money'
+import {
+  formatCents,
+  formatCivilDate,
+  formatInstant,
+  parseBRLToCents,
+  todayCivil,
+} from '../lib/finance-money'
 import {
   creditStatusLabels,
   financeAccess,
@@ -34,8 +43,10 @@ import {
   useApproveReceipt,
   useCalculateReceipt,
   useCancelReceipt,
+  useUpdateReceipt,
 } from '../services/finance.mutations'
 import { receiptQuery } from '../services/finance.queries'
+import type { ReceiptDetail } from '../services/finance.service'
 
 const auditLabels: Record<string, string> = {
   CRIADO: 'Entrada registrada',
@@ -51,6 +62,7 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
   const query = useQuery(receiptQuery(receiptId))
   const calculate = useCalculateReceipt()
   const approve = useApproveReceipt()
+  const [editOpen, setEditOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
 
   if (query.isPending) return <LoadingState rows={8} />
@@ -111,6 +123,12 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
             >
               <CheckCircle2 className="size-4" />
               Aprovar distribuição
+            </Button>
+          ) : null}
+          {open && financeAccess.lancar(permissions) ? (
+            <Button onClick={() => setEditOpen(true)} variant="outline">
+              <Pencil className="size-4" />
+              Editar entrada
             </Button>
           ) : null}
           {open && financeAccess.lancar(permissions) ? (
@@ -271,6 +289,12 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
         </ol>
       </FinanceSection>
 
+      {editOpen ? (
+        <EditReceiptDialog
+          onClose={() => setEditOpen(false)}
+          receipt={receipt}
+        />
+      ) : null}
       {cancelOpen ? (
         <CancelDialog
           onClose={() => setCancelOpen(false)}
@@ -278,6 +302,142 @@ export function ReceiptDetailPage({ receiptId }: { receiptId: string }) {
         />
       ) : null}
     </div>
+  )
+}
+
+function EditReceiptDialog({
+  receipt,
+  onClose,
+}: {
+  receipt: ReceiptDetail['receipt']
+  onClose: () => void
+}) {
+  const mutation = useUpdateReceipt()
+  const [kind, setKind] = useState(receipt.kind)
+  const [amount, setAmount] = useState(
+    formatCents(receipt.amountCents).replace('R$ ', ''),
+  )
+  const [releaseDate, setReleaseDate] = useState(receipt.releaseDate ?? '')
+  const [reference, setReference] = useState(receipt.reference ?? '')
+  const [originDescription, setOriginDescription] = useState(
+    receipt.originDescription ?? '',
+  )
+  const [description, setDescription] = useState(receipt.description ?? '')
+  const [error, setError] = useState<string | null>(null)
+
+  function submit() {
+    setError(null)
+    const amountCents = parseBRLToCents(amount)
+    if (!amountCents || amountCents <= 0) {
+      return setError('Informe um valor maior que zero.')
+    }
+    mutation.mutate(
+      {
+        id: receipt.id,
+        payload: {
+          version: receipt.version,
+          kind,
+          amountCents,
+          releaseDate: releaseDate || null,
+          reference,
+          originDescription,
+          description,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success(
+            'Entrada atualizada. A distribuição precisa ser calculada novamente.',
+          )
+          onClose()
+        },
+        onError: (cause) => setError((cause as Error).message),
+      },
+    )
+  }
+
+  return (
+    <AppDialog
+      description="Ao salvar, qualquer prévia ou aprovação anterior é invalidada e a entrada volta para Pendente."
+      footer={
+        <Button disabled={mutation.isPending} onClick={submit}>
+          Salvar alterações
+        </Button>
+      }
+      icon={Pencil}
+      maxWidth="lg"
+      onClose={onClose}
+      open
+      title="Editar entrada"
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-receipt-kind">Tipo</Label>
+          <NativeSelect
+            id="edit-receipt-kind"
+            onChange={(event) =>
+              setKind(event.target.value as typeof receipt.kind)
+            }
+            value={kind}
+          >
+            <NativeSelectOption value="HONORARIOS_CONTRATUAIS">
+              Honorários contratuais
+            </NativeSelectOption>
+            <NativeSelectOption value="SUCUMBENCIA">
+              Sucumbência
+            </NativeSelectOption>
+            <NativeSelectOption value="MULTA">Multa</NativeSelectOption>
+          </NativeSelect>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-receipt-amount">Valor (R$)</Label>
+          <Input
+            id="edit-receipt-amount"
+            inputMode="decimal"
+            onChange={(event) => setAmount(event.target.value)}
+            value={amount}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-receipt-date">Data da entrada/liberação</Label>
+          <Input
+            id="edit-receipt-date"
+            max={todayCivil()}
+            onChange={(event) => setReleaseDate(event.target.value)}
+            type="date"
+            value={releaseDate}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-receipt-reference">Referência</Label>
+          <Input
+            id="edit-receipt-reference"
+            onChange={(event) => setReference(event.target.value)}
+            value={reference}
+          />
+        </div>
+        <div className="grid gap-1.5 sm:col-span-2">
+          <Label htmlFor="edit-receipt-origin">Origem do dinheiro</Label>
+          <Input
+            id="edit-receipt-origin"
+            onChange={(event) => setOriginDescription(event.target.value)}
+            value={originDescription}
+          />
+        </div>
+        <div className="grid gap-1.5 sm:col-span-2">
+          <Label htmlFor="edit-receipt-description">Observações</Label>
+          <Textarea
+            id="edit-receipt-description"
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            value={description}
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <FieldError message={error} />
+        </div>
+      </div>
+    </AppDialog>
   )
 }
 

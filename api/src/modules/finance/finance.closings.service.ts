@@ -54,6 +54,9 @@ export async function previewClosing(
   input: ClosingInput,
 ) {
   assertFinance(access, 'fechar', { global: true })
+  if (input.periodEnd < input.periodStart) {
+    throw new FinanceServiceError(422, 'Período inválido.')
+  }
   const receipts = await db
     .select()
     .from(financeReceipt)
@@ -506,19 +509,37 @@ export async function reverseClosing(
 
 export async function listClosings(access: FinanceAccess) {
   assertFinance(access, 'view')
+  const fields = {
+    id: financeClosing.id,
+    code: financeClosing.code,
+    status: financeClosing.status,
+    periodStart: financeClosing.periodStart,
+    periodEnd: financeClosing.periodEnd,
+    receiptCount: financeClosing.receiptCount,
+    grossCents: financeClosing.grossCents,
+    createdAt: financeClosing.createdAt,
+    reversedAt: financeClosing.reversedAt,
+  }
+  if (!access.processFilter) {
+    return db
+      .select(fields)
+      .from(financeClosing)
+      .orderBy(desc(financeClosing.createdAt))
+      .limit(200)
+  }
   return db
-    .select({
-      id: financeClosing.id,
-      code: financeClosing.code,
-      status: financeClosing.status,
-      periodStart: financeClosing.periodStart,
-      periodEnd: financeClosing.periodEnd,
-      receiptCount: financeClosing.receiptCount,
-      grossCents: financeClosing.grossCents,
-      createdAt: financeClosing.createdAt,
-      reversedAt: financeClosing.reversedAt,
-    })
+    .selectDistinct(fields)
     .from(financeClosing)
+    .innerJoin(
+      financeClosingItem,
+      eq(financeClosingItem.closingId, financeClosing.id),
+    )
+    .innerJoin(
+      financeReceipt,
+      eq(financeClosingItem.receiptId, financeReceipt.id),
+    )
+    .innerJoin(process, eq(financeReceipt.processId, process.id))
+    .where(access.processFilter)
     .orderBy(desc(financeClosing.createdAt))
     .limit(200)
 }
@@ -578,6 +599,9 @@ export async function listCredits(access: FinanceAccess, query: CreditQuery) {
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.isGlobal) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   if (query.closingId)
     filters.push(eq(financeCredit.closingId, query.closingId))
   if (query.recipientId) {
@@ -690,6 +714,23 @@ export async function createPayout(
           'Crédito estornado não aceita baixa.',
         )
       }
+      const [closing] = await tx
+        .select({ createdAt: financeClosing.createdAt })
+        .from(financeClosing)
+        .where(eq(financeClosing.id, credit.closingId))
+      if (!closing) {
+        throw new FinanceServiceError(
+          409,
+          'Finalização do crédito não encontrada.',
+        )
+      }
+      const closingDate = toSaoPauloDate(closing.createdAt)
+      if (input.paidOn < closingDate) {
+        throw new FinanceServiceError(
+          422,
+          `A data do pagamento não pode ser anterior à finalização (${closingDate}).`,
+        )
+      }
       const problem = validatePayout(
         credit.amountCents + credit.adjustedCents,
         credit.paidCents,
@@ -781,6 +822,9 @@ export async function listPayouts(
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
+  if (!access.isGlobal) {
+    filters.push(eq(financeRecipient.userId, access.actor.id))
+  }
   if (query.creditId) filters.push(eq(financePayout.creditId, query.creditId))
   if (query.recipientId) {
     filters.push(eq(financePayout.recipientId, query.recipientId))
@@ -837,6 +881,34 @@ export async function createAdjustment(
   if (previous) return previous
   try {
     const adjustment = await db.transaction(async (tx) => {
+      const [credit] = await tx
+        .select()
+        .from(financeCredit)
+        .where(eq(financeCredit.id, input.creditId))
+        .for('update')
+      if (!credit) {
+        throw new FinanceServiceError(404, 'Crédito não encontrado.')
+      }
+      if (credit.status === 'ESTORNADO') {
+        throw new FinanceServiceError(
+          409,
+          'Crédito estornado não aceita ajuste.',
+        )
+      }
+      const dueAfter =
+        credit.amountCents + credit.adjustedCents + input.amountCents
+      if (dueAfter < credit.paidCents) {
+        throw new FinanceServiceError(
+          422,
+          'O ajuste reduziria o valor devido para abaixo do que já foi pago.',
+        )
+      }
+      if (dueAfter < 0) {
+        throw new FinanceServiceError(
+          422,
+          'O ajuste não pode tornar o valor devido negativo.',
+        )
+      }
       const [created] = await tx
         .insert(financeAdjustment)
         .values({

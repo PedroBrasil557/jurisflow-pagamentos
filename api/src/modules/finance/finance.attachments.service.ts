@@ -13,6 +13,7 @@ import {
   financeCredit,
   financePayout,
   financeReceipt,
+  financeRecipient,
   financeReserveMovement,
 } from './finance.schema'
 import {
@@ -77,11 +78,23 @@ async function assertOwnerVisible(
   }
   if (owner.kind === 'payout') {
     const [row] = await db
-      .select({ processId: financeCredit.processId })
+      .select({
+        processId: financeCredit.processId,
+        recipientUserId: financeRecipient.userId,
+      })
       .from(financePayout)
       .innerJoin(financeCredit, eq(financePayout.creditId, financeCredit.id))
+      .innerJoin(
+        financeRecipient,
+        eq(financePayout.recipientId, financeRecipient.id),
+      )
       .where(eq(financePayout.id, owner.id))
-    if (!row) throw new FinanceServiceError(404, 'Baixa não encontrada.')
+    if (
+      !row ||
+      (!access.isGlobal && row.recipientUserId !== access.actor.id)
+    ) {
+      throw new FinanceServiceError(404, 'Baixa não encontrada.')
+    }
     return visible(row.processId)()
   }
   const [row] = await db
@@ -212,6 +225,71 @@ export async function listAttachments(
     })
     .from(financeAttachment)
     .where(and(eq(column, owner.id), isNull(financeAttachment.removedAt)))
+}
+
+export async function removeAttachment(
+  access: FinanceAccess,
+  attachmentId: string,
+  reason: string,
+) {
+  if (reason.trim().length < 3) {
+    throw new FinanceServiceError(422, 'Informe o motivo da remoção.')
+  }
+
+  return db.transaction(async (tx) => {
+    const [before] = await tx
+      .select()
+      .from(financeAttachment)
+      .where(eq(financeAttachment.id, attachmentId))
+      .for('update')
+    if (!before) {
+      throw new FinanceServiceError(404, 'Comprovante não encontrado.')
+    }
+
+    const owner: AttachmentOwner = before.receiptId
+      ? { kind: 'receipt', id: before.receiptId }
+      : before.payoutId
+        ? { kind: 'payout', id: before.payoutId }
+        : { kind: 'reserve', id: before.reserveMovementId as string }
+
+    assertFinance(access, ownerFlag[owner.kind])
+    await assertOwnerVisible(access, owner)
+
+    if (before.removedAt) {
+      throw new FinanceServiceError(409, 'Comprovante já removido.')
+    }
+
+    const [after] = await tx
+      .update(financeAttachment)
+      .set({
+        removedAt: new Date(),
+        removedByUserId: access.actor.id,
+        removeReason: reason.trim(),
+      })
+      .where(eq(financeAttachment.id, attachmentId))
+      .returning({
+        id: financeAttachment.id,
+        removedAt: financeAttachment.removedAt,
+        removeReason: financeAttachment.removeReason,
+      })
+
+    // Remoção é lógica: o objeto permanece privado no storage para retenção
+    // e auditoria, mas deixa de ser listável/baixável pela aplicação.
+    await writeAudit(tx, {
+      actor: access.actor,
+      entityType: `${owner.kind}_attachment`,
+      entityId: owner.id,
+      action: 'COMPROVANTE_REMOVIDO',
+      reason,
+      before: {
+        id: before.id,
+        originalFileName: before.originalFileName,
+        sha256: before.sha256,
+      },
+      after,
+    })
+    return after
+  })
 }
 
 export async function downloadAttachment(

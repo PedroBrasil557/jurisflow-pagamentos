@@ -13,6 +13,7 @@ import {
 import {
   downloadAttachment,
   listAttachments,
+  removeAttachment,
   uploadAttachment,
 } from './finance.attachments.service'
 import {
@@ -59,6 +60,7 @@ import {
   getOverview,
   getStatement,
   listReserveMovements,
+  listStatementRecipientOptions,
   reserveBalances,
   reverseReserveMovement,
 } from './finance.reports.service'
@@ -262,6 +264,16 @@ export const financeRoutes = new Hono<AppBindings>()
   .get('/housing-complexes', async (c) => {
     try {
       return c.json({ items: await listHousingComplexOptions(await access(c)) }, 200)
+    } catch (error) {
+      return handleServiceError(c, error)
+    }
+  })
+  .get('/statement-recipient-options', async (c) => {
+    try {
+      return c.json(
+        { items: await listStatementRecipientOptions(await access(c)) },
+        200,
+      )
     } catch (error) {
       return handleServiceError(c, error)
     }
@@ -562,6 +574,23 @@ export const financeRoutes = new Hono<AppBindings>()
           file,
         )
         return c.json({ attachment }, 201)
+      } catch (error) {
+        return handleServiceError(c, error)
+      }
+    },
+  )
+  .post(
+    '/attachment-files/:id/remove',
+    paramsValidator(idParamSchema),
+    jsonValidator(reasonPayloadSchema),
+    async (c) => {
+      try {
+        const attachment = await removeAttachment(
+          await access(c),
+          c.req.valid('param').id,
+          c.req.valid('json').reason,
+        )
+        return c.json({ attachment }, 200)
       } catch (error) {
         return handleServiceError(c, error)
       }

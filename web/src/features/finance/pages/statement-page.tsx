@@ -30,8 +30,8 @@ import { financeAccess, statementKindLabels } from '../lib/finance-labels'
 import {
   complexOptionsQuery,
   overviewQuery,
-  recipientsQuery,
   statementQuery,
+  statementRecipientOptionsQuery,
 } from '../services/finance.queries'
 import {
   downloadAuthenticated,
@@ -54,7 +54,7 @@ type FinanceOverviewSnapshot = {
 /** Histórico operacional: valores liberados, pagos, ajustes e saldo atual. */
 export function StatementPage() {
   const { permissions } = useSession()
-  const recipients = useQuery(recipientsQuery())
+  const recipients = useQuery(statementRecipientOptionsQuery())
   const complexes = useQuery(complexOptionsQuery())
   const overview = useQuery(overviewQuery())
   const [recipientId, setRecipientId] = useState('')

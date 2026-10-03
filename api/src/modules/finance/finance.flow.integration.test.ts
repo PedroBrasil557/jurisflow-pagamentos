@@ -16,8 +16,11 @@ import {
   createAdjustment,
   createClosing,
   createPayout,
+  previewClosing,
   getClosingDetail,
+  listClosings,
   listCredits,
+  listPayouts,
   reverseClosing,
   reversePayout,
 } from './finance.closings.service'
@@ -27,7 +30,9 @@ import {
   createRuleVersion,
   listRecipients,
   listRules,
+  revokeRule,
   type RuleInput,
+  updateRecipient,
 } from './finance.config.service'
 import type { FinanceCalcStep } from './finance.engine'
 import { confirmImport, previewImport } from './finance.import.service'
@@ -36,6 +41,7 @@ import {
   calculateReceipt,
   createReceipt,
   getReceiptDetail,
+  listHousingComplexOptions,
   listReceipts,
 } from './finance.receipts.service'
 import {
@@ -43,10 +49,13 @@ import {
   exportStatementCsv,
   getOverview,
   getStatement,
+  listStatementRecipientOptions,
   reserveBalances,
   reserveProcessBalances,
+  reverseReserveMovement,
 } from './finance.reports.service'
 import {
+  financeAttachment,
   financeClosing,
   financeClosingLine,
   financeCredit,
@@ -278,6 +287,20 @@ suite(
       })
       expect(overview.reservesBalanceCents).toBe(0)
       expect(overview.config).toEqual({ recipients: 0, activeRules: 0 })
+    })
+
+    test('E9 entrada não aceita data de liberação futura', async () => {
+      await expectFinanceError(
+        createReceipt(admin, {
+          idempotencyKey: key('rec'),
+          processId: p1,
+          kind: 'HONORARIOS_CONTRATUAIS',
+          amountCents: 100,
+          releaseDate: '9999-12-31',
+        }),
+        422,
+        /futura/i,
+      )
     })
 
     test('CT-05 sem regra aplicável: BLOQUEADO com causa, sem valores inventados', async () => {
@@ -515,6 +538,18 @@ suite(
       expect(credit?.status).toBe('PAGO')
     })
 
+    test('fechamento recusa período invertido já na conferência', async () => {
+      await expectFinanceError(
+        previewClosing(admin, {
+          receiptIds: [firstReceiptId],
+          periodStart: '2026-10-01',
+          periodEnd: '2026-09-01',
+        }),
+        422,
+        /Período inválido/i,
+      )
+    })
+
     test('fechamento idempotente, imutável e sem recebimento em dois lotes', async () => {
       const receipt = await newReceipt(
         admin,
@@ -625,6 +660,17 @@ suite(
     test('CT-09 / CT-10 baixa parcial, acima do saldo e concorrente', async () => {
       const credits = await listCredits(admin, { closingId })
       const creditF = credits.find((c) => c.recipientName === 'Distribuição F')
+      await expectFinanceError(
+        createPayout(admin, {
+          idempotencyKey: key('payout'),
+          creditId: creditF?.id as string,
+          amountCents: 1,
+          paidOn: YESTERDAY,
+          reference: 'data anterior à finalização',
+        }),
+        422,
+        /anterior.*finaliza/i,
+      )
       const { payout } = await createPayout(admin, {
         idempotencyKey: key('payout'),
         creditId: creditF?.id as string,
@@ -643,7 +689,7 @@ suite(
           idempotencyKey: key('payout'),
           creditId: creditF?.id as string,
           amountCents: 139_881,
-          paidOn: YESTERDAY,
+          paidOn: TODAY,
           reference: 'acima',
         }),
         422,
@@ -655,7 +701,7 @@ suite(
         idempotencyKey: idem,
         creditId: creditF?.id as string,
         amountCents: 10_000,
-        paidOn: YESTERDAY,
+        paidOn: TODAY,
         reference: 'PIX fictício 003',
       }
       const first = await createPayout(admin, body)
@@ -681,6 +727,16 @@ suite(
         .where(eq(financeCredit.id, creditF?.id as string))
       expect(after?.paidCents).toBe(210_000)
       expect(after?.paidCents).toBeLessThanOrEqual(after?.amountCents ?? 0)
+      await expectFinanceError(
+        createAdjustment(admin, {
+          idempotencyKey: key('adj'),
+          creditId: creditF?.id as string,
+          amountCents: -30_000,
+          reason: 'Não pode reduzir abaixo do já pago',
+        }),
+        422,
+        /abaixo do que já foi pago/i,
+      )
     })
 
     test('CT-16 estorno de baixa preserva histórico e restaura saldo', async () => {
@@ -736,11 +792,11 @@ suite(
     test('CT-17 consulta por data mostra o que foi efetivamente pago no dia', async () => {
       const day = await getStatement(admin, {
         recipientId: recipients['Distribuição F'],
-        dateFrom: YESTERDAY,
-        dateTo: YESTERDAY,
+        dateFrom: TODAY,
+        dateTo: TODAY,
       })
-      expect(day.totals.paidCents).toBe(10_000)
-      expect(day.entries.every((e) => e.date === YESTERDAY)).toBe(true)
+      expect(day.totals.paidCents).toBe(210_000)
+      expect(day.entries.every((e) => e.date === TODAY)).toBe(true)
       const csv = await exportStatementCsv(admin, {
         recipientId: recipients['Distribuição F'],
       })
@@ -794,7 +850,7 @@ suite(
         processId: p1,
         kind: 'DESPESA',
         amountCents: 18_000,
-        movementDate: '2026-09-25',
+        movementDate: TODAY,
         description: 'Certidão em cartório (teste)',
       })
       await createReserveDebit(admin, {
@@ -803,10 +859,63 @@ suite(
         processId: p1,
         kind: 'TRANSFERENCIA',
         amountCents: 10_000,
-        movementDate: '2026-09-26',
+        movementDate: TODAY,
         description: 'Transferência do saldo (teste)',
         destination: 'Conta fictícia',
       })
+      await expectFinanceError(
+        createReserveDebit(admin, {
+          idempotencyKey: key('mov'),
+          poolKey: 'reserva-de-teste',
+          processId: p1,
+          kind: 'TRANSFERENCIA',
+          amountCents: 1,
+          movementDate: TODAY,
+          description: 'Transferência sem destino',
+        }),
+        422,
+        /destino/i,
+      )
+      await expectFinanceError(
+        createReserveDebit(admin, {
+          idempotencyKey: key('mov'),
+          poolKey: 'reserva-de-teste',
+          processId: p1,
+          kind: 'DESPESA',
+          amountCents: 1,
+          movementDate: '2000-01-01',
+          description: 'Movimento anterior à constituição',
+        }),
+        422,
+        /saldo/i,
+      )
+      await expectFinanceError(
+        createReserveDebit(admin, {
+          idempotencyKey: key('mov'),
+          poolKey: 'reserva-de-teste',
+          processId: p1,
+          kind: 'DESPESA',
+          amountCents: 1,
+          movementDate: '9999-12-31',
+          description: 'Data futura',
+        }),
+        422,
+        /futura/i,
+      )
+      const reversible = await createReserveDebit(admin, {
+        idempotencyKey: key('mov'),
+        poolKey: 'reserva-de-teste',
+        processId: p1,
+        kind: 'DESPESA',
+        amountCents: 1_000,
+        movementDate: TODAY,
+        description: 'Despesa reversível',
+      })
+      await reverseReserveMovement(
+        admin,
+        reversible.movement?.id as string,
+        'Lançamento duplicado',
+      )
       const reserve = (
         await reserveProcessBalances(admin, 'reserva-de-teste')
       ).find((r) => r.processId === p1)
@@ -1077,15 +1186,209 @@ suite(
       )
     })
 
+    test('E9 manutenção de regras: correção no mesmo dia, remoção futura e inativação segura', async () => {
+      const recipient = await createRecipient(admin, {
+        name: 'Recebedor E9',
+        kind: 'PESSOA_FISICA',
+      })
+      const first = await createRule(admin, {
+        stage: 'DISTRIBUICAO_FINAL',
+        nature: 'CREDITO',
+        recipientId: recipient?.id as string,
+        workType: 'Cenário E9',
+        valueType: 'PERCENTUAL',
+        basisPoints: 1000,
+        validFrom: '2035-01-01',
+        housingComplexIds: [],
+      })
+
+      await expectFinanceError(
+        updateRecipient(admin, recipient?.id as string, { isActive: false }),
+        409,
+        /regra vigente ou futura/i,
+      )
+
+      const corrected = await createRuleVersion(
+        admin,
+        first?.lineageId as string,
+        {
+          stage: 'DISTRIBUICAO_FINAL',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Cenário E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 2000,
+          validFrom: '2035-01-01',
+          housingComplexIds: [],
+        },
+      )
+      expect(corrected?.version).toBe(2)
+
+      const scheduled = await createRuleVersion(
+        admin,
+        first?.lineageId as string,
+        {
+          stage: 'DISTRIBUICAO_FINAL',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Cenário E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 3000,
+          validFrom: '2036-01-01',
+          housingComplexIds: [],
+        },
+      )
+      expect(scheduled?.version).toBe(3)
+
+      // Uma correção da regra vigente continua possível mesmo quando já existe
+      // uma versão futura agendada. Sem limitar a vigência, a correção deve
+      // ser recusada porque invadiria o período da futura.
+      await expectFinanceError(
+        createRuleVersion(admin, first?.lineageId as string, {
+          stage: 'DISTRIBUICAO_FINAL',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Cenário E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 2500,
+          validFrom: '2035-01-01',
+          housingComplexIds: [],
+        }),
+        409,
+        /Sobreposição de vigência/i,
+      )
+
+      const correctedWithFuture = await createRuleVersion(
+        admin,
+        first?.lineageId as string,
+        {
+          stage: 'DISTRIBUICAO_FINAL',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Cenário E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 2500,
+          validFrom: '2035-01-01',
+          validTo: '2035-12-31',
+          housingComplexIds: [],
+        },
+      )
+      expect(correctedWithFuture?.version).toBe(4)
+
+      const versionsBeforeRemove = (await listRules(admin)).filter(
+        (rule) => rule.lineageId === first?.lineageId,
+      )
+      expect(versionsBeforeRemove.map((rule) => rule.status)).toEqual([
+        'REVOGADA',
+        'REVOGADA',
+        'ATIVA',
+        'ATIVA',
+      ])
+      expect(versionsBeforeRemove.map((rule) => rule.basisPoints)).toEqual([
+        1000,
+        2000,
+        3000,
+        2500,
+      ])
+
+      await revokeRule(
+        admin,
+        correctedWithFuture?.id as string,
+        'Participante removido do cenário E9',
+      )
+      const versionsAfterRemove = (await listRules(admin)).filter(
+        (rule) => rule.lineageId === first?.lineageId,
+      )
+      expect(versionsAfterRemove.map((rule) => rule.status)).toEqual([
+        'REVOGADA',
+        'REVOGADA',
+        'REVOGADA',
+        'REVOGADA',
+      ])
+
+      const inactive = await updateRecipient(admin, recipient?.id as string, {
+        isActive: false,
+      })
+      expect(inactive?.isActive).toBe(false)
+    })
+
+    test('E9 versão histórica encerrada não pode remover regra vigente por efeito cascata', async () => {
+      const recipient = await createRecipient(admin, {
+        name: 'Recebedor Histórico E9',
+        kind: 'PESSOA_FISICA',
+      })
+      const original = await createRule(admin, {
+        stage: 'DEDUCAO_LIQUIDA',
+        nature: 'CREDITO',
+        recipientId: recipient?.id as string,
+        workType: 'Histórico E9',
+        valueType: 'PERCENTUAL',
+        basisPoints: 100,
+        validFrom: '2020-01-01',
+        housingComplexIds: [],
+      })
+      const current = await createRuleVersion(
+        admin,
+        original?.lineageId as string,
+        {
+          stage: 'DEDUCAO_LIQUIDA',
+          nature: 'CREDITO',
+          recipientId: recipient?.id as string,
+          workType: 'Histórico E9',
+          valueType: 'PERCENTUAL',
+          basisPoints: 200,
+          validFrom: '2021-01-01',
+          housingComplexIds: [],
+        },
+      )
+      await expectFinanceError(
+        revokeRule(admin, original?.id as string, 'Tentativa histórica'),
+        409,
+        /histórica/i,
+      )
+      const versions = (await listRules(admin)).filter(
+        (rule) => rule.lineageId === original?.lineageId,
+      )
+      expect(versions.find((rule) => rule.id === current?.id)?.status).toBe(
+        'ATIVA',
+      )
+    })
+
     test('permissões no servidor: sem acesso, leitura por condomínio e operações globais', async () => {
       await expectFinanceError(listReceipts(noAccess, {}), 403)
       await expectFinanceError(getOverview(noAccess), 403)
       const visible = await listReceipts(viewer, {})
       expect(visible.length).toBeGreaterThan(0)
+      expect(await listClosings(viewer)).toEqual([])
+      expect(await listCredits(viewer, {})).toEqual([])
+      expect(await listPayouts(viewer, {})).toEqual([])
+      expect((await getOverview(viewer)).credits).toEqual({
+        dueCents: 0,
+        paidCents: 0,
+        balanceCents: 0,
+      })
+      await expectFinanceError(getClosingDetail(viewer, closingId), 404)
       expect(
         visible.every((r) => r.housingComplexName === 'Condomínio Teste 2'),
       ).toBe(true)
       await expectFinanceError(getReceiptDetail(viewer, firstReceiptId), 404)
+      const statement = await getStatement(viewer, {})
+      expect(statement.entries).toEqual([])
+      await expectFinanceError(listRecipients(viewer), 403)
+      await expectFinanceError(listRules(viewer), 403)
+      const complexes = await listHousingComplexOptions(viewer)
+      expect(complexes).toEqual([
+        { id: ids.cond2, name: 'Condomínio Teste 2' },
+      ])
+      const statementRecipients = await listStatementRecipientOptions(viewer)
+      const statementRecipientIds = new Set(
+        statement.entries.map((entry) => entry.recipientId).filter(Boolean),
+      )
+      expect(
+        statementRecipients.every((recipient) =>
+          statementRecipientIds.has(recipient.id),
+        ),
+      ).toBe(true)
       await expectFinanceError(
         createRule(viewer, {
           stage: 'PROVISAO_RECEITA',
@@ -1107,7 +1410,6 @@ suite(
         }),
         403,
       )
-      const statement = await getStatement(viewer, {})
       expect(
         statement.entries.every(
           (e) => e.housingComplexName === 'Condomínio Teste 2',
@@ -1116,8 +1418,12 @@ suite(
     })
 
     test('comprovantes privados: upload validado, download íntegro e escopo', async () => {
-      const { uploadAttachment, listAttachments, downloadAttachment } =
-        await import('./finance.attachments.service')
+      const {
+        uploadAttachment,
+        listAttachments,
+        downloadAttachment,
+        removeAttachment,
+      } = await import('./finance.attachments.service')
       const pdf = new TextEncoder().encode('%PDF-1.4\n% comprovante ficticio\n')
       let attachment: { id: string } | undefined
       try {
@@ -1171,6 +1477,80 @@ suite(
       await expectFinanceError(
         downloadAttachment(noAccess, attachment?.id as string),
         403,
+      )
+      await expectFinanceError(
+        removeAttachment(admin, attachment?.id as string, 'x'),
+        422,
+        /motivo/i,
+      )
+      await removeAttachment(
+        admin,
+        attachment?.id as string,
+        'Arquivo anexado incorretamente',
+      )
+      const afterRemoval = await listAttachments(admin, {
+        kind: 'receipt',
+        id: firstReceiptId,
+      })
+      expect(afterRemoval.map((a) => a.id)).not.toContain(
+        attachment?.id as string,
+      )
+      await expectFinanceError(
+        downloadAttachment(admin, attachment?.id as string),
+        404,
+      )
+      await expectFinanceError(
+        removeAttachment(
+          admin,
+          attachment?.id as string,
+          'Tentativa de remover novamente',
+        ),
+        409,
+        /já removido/i,
+      )
+    })
+
+    test('E9 remoção lógica de comprovante funciona sem depender do storage', async () => {
+      const { downloadAttachment, listAttachments, removeAttachment } =
+        await import('./finance.attachments.service')
+      const id = `fin-attachment-${crypto.randomUUID()}`
+      await db.insert(financeAttachment).values({
+        id,
+        receiptId: firstReceiptId,
+        bucketName: 'bucket-teste',
+        objectKey: `finance/receipt/${firstReceiptId}/${id}.pdf`,
+        originalFileName: 'teste-logico.pdf',
+        mimeType: 'application/pdf',
+        sizeInBytes: 10,
+        sha256: '0'.repeat(64),
+        uploadedByUserId: ids.admin,
+      })
+
+      expect(
+        (await listAttachments(admin, {
+          kind: 'receipt',
+          id: firstReceiptId,
+        })).map((item) => item.id),
+      ).toContain(id)
+
+      await expectFinanceError(
+        removeAttachment(admin, id, 'x'),
+        422,
+        /motivo/i,
+      )
+      await removeAttachment(admin, id, 'Arquivo anexado incorretamente')
+
+      expect(
+        (await listAttachments(admin, {
+          kind: 'receipt',
+          id: firstReceiptId,
+        })).map((item) => item.id),
+      ).not.toContain(id)
+      await expectFinanceError(downloadAttachment(admin, id), 404)
+      await expectFinanceError(
+        removeAttachment(admin, id, 'Nova tentativa de remoção'),
+        409,
+        /já removido/i,
       )
     })
 

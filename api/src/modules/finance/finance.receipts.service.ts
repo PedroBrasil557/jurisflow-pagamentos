@@ -41,6 +41,7 @@ import {
   isUniqueViolation,
   mapDbError,
   toSaoPauloDate,
+  todaySaoPaulo,
   writeAudit,
 } from './finance.support'
 
@@ -131,6 +132,12 @@ export async function createReceipt(
   input: ReceiptInput & { idempotencyKey: string },
 ): Promise<{ receipt: ReceiptRow; replayed: boolean }> {
   assertFinance(access, 'lancar')
+  if (input.releaseDate && input.releaseDate > todaySaoPaulo()) {
+    throw new FinanceServiceError(
+      422,
+      'A data de liberação não pode ser futura.',
+    )
+  }
   const requestHash = receiptRequestHash(input)
   const existing = await findByIdempotency(input.idempotencyKey)
   if (existing) return replayOrConflict(existing, requestHash)
@@ -220,6 +227,12 @@ export async function updateReceipt(
         throw new FinanceServiceError(
           422,
           'O processo de um recebimento não pode ser trocado; cancele e crie outro.',
+        )
+      }
+      if (input.releaseDate && input.releaseDate > todaySaoPaulo()) {
+        throw new FinanceServiceError(
+          422,
+          'A data de liberação não pode ser futura.',
         )
       }
       const [after] = await tx
@@ -718,8 +731,18 @@ export async function searchProcesses(access: FinanceAccess, search: string) {
 
 export async function listHousingComplexOptions(access: FinanceAccess) {
   assertFinance(access, 'view')
+  if (access.isGlobal || !access.processFilter) {
+    return db
+      .select({ id: housingComplex.id, name: housingComplex.name })
+      .from(housingComplex)
+      .orderBy(asc(housingComplex.name))
+  }
+
   return db
     .select({ id: housingComplex.id, name: housingComplex.name })
     .from(housingComplex)
+    .innerJoin(process, eq(process.housingComplexId, housingComplex.id))
+    .where(access.processFilter)
+    .groupBy(housingComplex.id, housingComplex.name)
     .orderBy(asc(housingComplex.name))
 }

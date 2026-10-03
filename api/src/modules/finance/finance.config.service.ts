@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm'
 import { db } from '../../shared/db'
 import { housingComplex } from '../housing-complexes/housing-complexes.schema'
 import {
@@ -25,6 +25,7 @@ import {
   type FinanceTx,
   mapDbError,
   previousCivilDate,
+  todaySaoPaulo,
   writeAudit,
 } from './finance.support'
 
@@ -48,7 +49,7 @@ export type RecipientInput = {
 }
 
 export async function listRecipients(access: FinanceAccess) {
-  assertFinance(access, 'view')
+  assertFinance(access, 'regras', { global: true })
   return db
     .select()
     .from(financeRecipient)
@@ -111,6 +112,26 @@ export async function updateRecipient(
         .for('update')
       if (!before) {
         throw new FinanceServiceError(404, 'Recebedor não encontrado.')
+      }
+      if (input.isActive === false && before.isActive) {
+        const today = todaySaoPaulo()
+        const [activeRule] = await tx
+          .select({ id: financeRule.id })
+          .from(financeRule)
+          .where(
+            and(
+              eq(financeRule.recipientId, recipientId),
+              eq(financeRule.status, 'ATIVA'),
+              or(isNull(financeRule.validTo), gte(financeRule.validTo, today)),
+            ),
+          )
+          .limit(1)
+        if (activeRule) {
+          throw new FinanceServiceError(
+            409,
+            'Recebedor possui regra vigente ou futura. Remova/desative as regras antes de inativá-lo.',
+          )
+        }
       }
       const [after] = await tx
         .update(financeRecipient)
@@ -397,7 +418,7 @@ export async function createRuleVersion(
   try {
     return await db.transaction(async (tx) => {
       await tx.execute(RULES_LOCK)
-      const [current] = await tx
+      const activeVersions = await tx
         .select()
         .from(financeRule)
         .where(
@@ -407,14 +428,26 @@ export async function createRuleVersion(
           ),
         )
         .orderBy(desc(financeRule.version))
-        .limit(1)
-      if (!current) {
+        .for('update')
+      if (activeVersions.length === 0) {
         throw new FinanceServiceError(404, 'Regra não encontrada.')
       }
-      if (input.validFrom <= current.validFrom) {
+
+      // A edição parte da versão que cobre a data informada, não
+      // necessariamente da versão de maior número. Assim uma correção da
+      // regra vigente continua possível mesmo quando já existe versão futura.
+      const current =
+        activeVersions.find(
+          (rule) =>
+            rule.validFrom <= input.validFrom &&
+            (rule.validTo === null || rule.validTo >= input.validFrom),
+        ) ??
+        activeVersions.find((rule) => rule.validFrom < input.validFrom)
+
+      if (!current) {
         throw new FinanceServiceError(
           422,
-          'A nova versão deve começar depois do início da versão atual.',
+          'A nova versão não pode começar antes da primeira versão da regra.',
         )
       }
       if (
@@ -427,31 +460,51 @@ export async function createRuleVersion(
           'Nova versão mantém etapa, natureza e recebedor; para mudá-los, crie outra regra.',
         )
       }
-      const newEnd = previousCivilDate(input.validFrom)
-      if (current.validTo === null || current.validTo > newEnd) {
-        await tx
+
+      if (input.validFrom === current.validFrom) {
+        const replacedAt = new Date()
+        const [replaced] = await tx
           .update(financeRule)
-          .set({ validTo: newEnd })
+          .set({
+            status: 'REVOGADA',
+            revokedAt: replacedAt,
+            revokedByUserId: access.actor.id,
+            revokeReason: 'Substituída por correção com a mesma vigência.',
+          })
           .where(eq(financeRule.id, current.id))
+          .returning()
         await writeAudit(tx, {
           actor: access.actor,
           entityType: 'rule',
           entityId: current.id,
-          action: 'VIGENCIA_ENCERRADA',
-          before: { validTo: current.validTo },
-          after: { validTo: newEnd },
+          action: 'SUBSTITUIDA_MESMA_VIGENCIA',
+          before: current,
+          after: replaced,
         })
+      } else {
+        const newEnd = previousCivilDate(input.validFrom)
+        if (current.validTo === null || current.validTo > newEnd) {
+          await tx
+            .update(financeRule)
+            .set({ validTo: newEnd })
+            .where(eq(financeRule.id, current.id))
+          await writeAudit(tx, {
+            actor: access.actor,
+            entityType: 'rule',
+            entityId: current.id,
+            action: 'VIGENCIA_ENCERRADA',
+            before: { validTo: current.validTo },
+            after: { validTo: newEnd },
+          })
+        }
       }
-      const latest = await tx
-        .select({ version: financeRule.version })
-        .from(financeRule)
-        .where(eq(financeRule.lineageId, lineageId))
-        .orderBy(desc(financeRule.version))
-        .limit(1)
+      const latestVersion = Math.max(
+        current.version,
+        ...activeVersions.map((rule) => rule.version),
+      )
       return insertRuleVersion(tx, access, input, {
         lineageId,
-        version: (latest[0]?.version ?? current.version) + 1,
-        ignoreLineageId: lineageId,
+        version: latestVersion + 1,
       })
     })
   } catch (error) {
@@ -472,30 +525,58 @@ export async function revokeRule(
         .select()
         .from(financeRule)
         .where(eq(financeRule.id, ruleId))
+        .for('update')
       if (!before) throw new FinanceServiceError(404, 'Regra não encontrada.')
       if (before.status === 'REVOGADA') {
         throw new FinanceServiceError(409, 'Regra já revogada.')
       }
-      const [after] = await tx
-        .update(financeRule)
-        .set({
-          status: 'REVOGADA',
-          revokedAt: new Date(),
-          revokedByUserId: access.actor.id,
-          revokeReason: reason.trim(),
+      if (before.validTo && before.validTo < todaySaoPaulo()) {
+        throw new FinanceServiceError(
+          409,
+          'Versão histórica não pode ser removida; altere a regra vigente ou futura.',
+        )
+      }
+
+      // Remover uma configuração não pode fazê-la "voltar" por uma versão
+      // futura já agendada. Revoga a versão escolhida e as posteriores da
+      // mesma linhagem; versões históricas anteriores permanecem intactas.
+      const targets = await tx
+        .select()
+        .from(financeRule)
+        .where(
+          and(
+            eq(financeRule.lineageId, before.lineageId),
+            eq(financeRule.status, 'ATIVA'),
+            gte(financeRule.validFrom, before.validFrom),
+          ),
+        )
+        .for('update')
+
+      const revokedAt = new Date()
+      let selected = before
+      for (const target of targets) {
+        const [after] = await tx
+          .update(financeRule)
+          .set({
+            status: 'REVOGADA',
+            revokedAt,
+            revokedByUserId: access.actor.id,
+            revokeReason: reason.trim(),
+          })
+          .where(eq(financeRule.id, target.id))
+          .returning()
+        await writeAudit(tx, {
+          actor: access.actor,
+          entityType: 'rule',
+          entityId: target.id,
+          action: 'REVOGADA',
+          reason,
+          before: target,
+          after,
         })
-        .where(eq(financeRule.id, ruleId))
-        .returning()
-      await writeAudit(tx, {
-        actor: access.actor,
-        entityType: 'rule',
-        entityId: ruleId,
-        action: 'REVOGADA',
-        reason,
-        before,
-        after,
-      })
-      return after
+        if (target.id === ruleId && after) selected = after
+      }
+      return selected
     })
   } catch (error) {
     mapDbError(error)
@@ -503,7 +584,7 @@ export async function revokeRule(
 }
 
 export async function listRules(access: FinanceAccess) {
-  assertFinance(access, 'view')
+  assertFinance(access, 'regras', { global: true })
   const rows = await db
     .select({ rule: financeRule, recipientName: financeRecipient.name })
     .from(financeRule)

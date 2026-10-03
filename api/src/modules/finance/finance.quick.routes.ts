@@ -1,4 +1,4 @@
-import { and, asc, eq, ne, type SQL, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, isNull, lte, ne, or, type SQL, sql } from 'drizzle-orm'
 import { type Context, Hono } from 'hono'
 import { z } from 'zod'
 import { db } from '../../shared/db'
@@ -22,6 +22,7 @@ import {
   assertFinance,
   FinanceServiceError,
   resolveFinanceAccess,
+  todaySaoPaulo,
   writeAudit,
 } from './finance.support'
 
@@ -160,7 +161,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
         const financeAccess = await access(c)
         assertFinance(financeAccess, 'view')
         const query = c.req.valid('query')
-        if (financeAccess.perms.isAdmin) {
+        if (financeAccess.isGlobal) {
           return c.json(await paymentRecipientsScoped(financeAccess, query), 200)
         }
         return c.json(await ownPaymentRecipients(financeAccess, query), 200)
@@ -174,7 +175,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
       const financeAccess = await access(c)
       assertFinance(financeAccess, 'view')
       const query = c.req.valid('query')
-      if (financeAccess.perms.isAdmin) {
+      if (financeAccess.isGlobal) {
         return c.json({ items: await listCredits(financeAccess, query) }, 200)
       }
 
@@ -207,6 +208,8 @@ export const financeQuickRoutes = new Hono<AppBindings>()
   .get('/allocation-policy', async (c) => {
     try {
       const financeAccess = await access(c)
+      assertFinance(financeAccess, 'view')
+      const today = todaySaoPaulo()
       const rows = await db
         .select({
           id: financeRule.id,
@@ -221,15 +224,47 @@ export const financeQuickRoutes = new Hono<AppBindings>()
           validTo: financeRule.validTo,
         })
         .from(financeRule)
-        .where(eq(financeRule.status, 'ATIVA'))
+        .where(
+          and(
+            eq(financeRule.status, 'ATIVA'),
+            lte(financeRule.validFrom, today),
+            or(isNull(financeRule.validTo), gte(financeRule.validTo, today)),
+          ),
+        )
         .orderBy(asc(financeRule.stage), asc(financeRule.sortOrder))
       const links = rows.length
         ? await db
-            .select({ ruleId: financeRuleHousingComplex.ruleId })
+            .select({
+              ruleId: financeRuleHousingComplex.ruleId,
+              housingComplexId: financeRuleHousingComplex.housingComplexId,
+            })
             .from(financeRuleHousingComplex)
         : []
+      const visibleComplexIds =
+        financeAccess.isGlobal || !financeAccess.processFilter
+          ? null
+          : new Set(
+              (
+                await db
+                  .selectDistinct({
+                    id: process.housingComplexId,
+                  })
+                  .from(process)
+                  .where(financeAccess.processFilter)
+              )
+                .map((row) => row.id)
+                .filter((id): id is string => Boolean(id)),
+            )
+      const visibleRows = rows.filter((row) => {
+        if (!visibleComplexIds) return true
+        const scoped = links.filter((link) => link.ruleId === row.id)
+        if (scoped.length === 0) return true
+        return scoped.some((link) =>
+          visibleComplexIds.has(link.housingComplexId),
+        )
+      })
       return c.json({
-        items: rows.map((row) => ({
+        items: visibleRows.map((row) => ({
           id: row.id,
           group: publicGroupLabel(row),
           stage: row.stage,
@@ -240,7 +275,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
           validTo: row.validTo,
           global: !links.some((link) => link.ruleId === row.id),
         })),
-        visibility: financeAccess.perms.isAdmin ? 'ADMIN' : 'GROUPS_ONLY',
+        visibility: financeAccess.isGlobal ? 'ADMIN' : 'GROUPS_ONLY',
       })
     } catch (error) {
       return handleServiceError(c, error)
@@ -253,7 +288,7 @@ export const financeQuickRoutes = new Hono<AppBindings>()
       try {
         const financeAccess = await access(c)
         assertFinance(financeAccess, 'regras', { global: true })
-        if (!financeAccess.perms.isAdmin) {
+        if (!financeAccess.isGlobal) {
           throw new FinanceServiceError(
             403,
             'Somente o administrador pode vincular contas aos recebedores.',

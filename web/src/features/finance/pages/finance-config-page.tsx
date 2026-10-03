@@ -6,8 +6,12 @@ import {
   FileSpreadsheet,
   GitBranch,
   History,
+  Link2,
+  Pencil,
   Plus,
+  UserMinus,
   UserPlus,
+  UserRoundCheck,
   Users,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -18,6 +22,8 @@ import { Label } from '#/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '#/components/ui/native-select'
 import { Textarea } from '#/components/ui/textarea'
 import { useSession } from '@/features/auth/hooks/use-session'
+import { adminUserListOptions } from '@/features/admin/services/admin-users.queries'
+import type { AdminUserListItem } from '@/features/admin/services/admin-users.service'
 import { AppDialog } from '@/shared/components/app-dialog'
 import { PageHeader } from '@/shared/components/page-header'
 import { StatusBadge } from '@/shared/components/status-badge'
@@ -33,7 +39,9 @@ import {
   formatBasisPoints,
   formatCents,
   formatCivilDate,
+  todayCivil,
 } from '../lib/finance-money'
+import { ruleEffectiveOn, rulesEffectiveOn } from '../lib/finance-rules'
 import {
   financeAccess,
   natureLabels,
@@ -42,10 +50,12 @@ import {
 import {
   useCreateRecipient,
   useCreateRuleVersion,
+  useLinkRecipientUser,
   useRevokeRule,
+  useUpdateRecipient,
 } from '../services/finance.mutations'
 import { recipientsQuery, rulesQuery } from '../services/finance.queries'
-import type { Rule } from '../services/finance.service'
+import type { Recipient, Rule } from '../services/finance.service'
 
 type AdvancedTab = 'regras' | 'recebedores' | 'importacao' | 'historico'
 type RuleFilter =
@@ -117,17 +127,31 @@ function ruleTitle(rule: Rule) {
 export function FinanceConfigPage() {
   const { permissions } = useSession()
   const canEdit = financeAccess.regras(permissions)
-  const recipients = useQuery(recipientsQuery())
-  const rules = useQuery(rulesQuery())
+  const canManageConfiguration = permissions.isAdmin && canEdit
+  const recipients = useQuery({
+    ...recipientsQuery(),
+    enabled: canManageConfiguration,
+  })
+  const rules = useQuery({
+    ...rulesQuery(),
+    enabled: canManageConfiguration,
+  })
   const [tab, setTab] = useState<AdvancedTab>('regras')
+  const users = useQuery({
+    ...adminUserListOptions({ limit: 100, page: 1 }),
+    enabled: canManageConfiguration && tab === 'recebedores',
+  })
   const [filter, setFilter] = useState<RuleFilter>('TODAS')
   const [recipientOpen, setRecipientOpen] = useState(false)
+  const [editingRecipient, setEditingRecipient] = useState<Recipient | null>(null)
+  const [togglingRecipient, setTogglingRecipient] = useState<Recipient | null>(null)
+  const [linkingRecipient, setLinkingRecipient] = useState<Recipient | null>(null)
   const [versionOf, setVersionOf] = useState<Rule | null>(null)
   const [revoking, setRevoking] = useState<Rule | null>(null)
   const [historyLineageId, setHistoryLineageId] = useState<string | null>(null)
 
   const allRules = rules.data ?? []
-  const activeRules = allRules.filter((rule) => rule.status === 'ATIVA')
+  const activeRules = rulesEffectiveOn(allRules, todayCivil())
   const specialRules = activeRules.filter(
     (rule) =>
       !(
@@ -167,6 +191,22 @@ export function FinanceConfigPage() {
   function openHistory(rule: Rule) {
     setHistoryLineageId(rule.lineageId)
     setTab('historico')
+  }
+
+  if (!canManageConfiguration) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader
+          description="As configurações financeiras avançadas são restritas ao administrador com permissão para gerenciar regras."
+          eyebrow="Financeiro · Opções avançadas"
+          title="Configurações avançadas"
+        />
+        <EmptyState
+          description="Você pode consultar as áreas financeiras liberadas ao seu perfil, mas não pode abrir ou alterar regras, recebedores e importações."
+          title="Configuração sem permissão de acesso"
+        />
+      </div>
+    )
   }
 
   return (
@@ -389,10 +429,52 @@ export function FinanceConfigPage() {
                   <p className="mt-3 text-sm text-muted-foreground">
                     {recipient.paymentNote || 'Sem dados de pagamento informados.'}
                   </p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Conta de usuário:{' '}
+                    {recipient.userId
+                      ? users.data?.items.find(
+                          (item) => item.id === recipient.userId,
+                        )?.name ?? 'Conta vinculada'
+                      : 'não vinculada'}
+                  </p>
                   {recipient.origin === 'IMPORTACAO' ? (
                     <p className="mt-2 text-xs text-muted-foreground">
                       Cadastro criado por importação.
                     </p>
+                  ) : null}
+                  {canEdit ? (
+                    <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
+                      <Button
+                        onClick={() => setEditingRecipient(recipient)}
+                        size="sm"
+                        variant="outline"
+                      >
+                        <Pencil className="size-4" />
+                        Editar
+                      </Button>
+                      {permissions.isAdmin ? (
+                        <Button
+                          onClick={() => setLinkingRecipient(recipient)}
+                          size="sm"
+                          variant="outline"
+                        >
+                          <Link2 className="size-4" />
+                          Conta
+                        </Button>
+                      ) : null}
+                      <Button
+                        onClick={() => setTogglingRecipient(recipient)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        {recipient.isActive ? (
+                          <UserMinus className="size-4" />
+                        ) : (
+                          <UserRoundCheck className="size-4" />
+                        )}
+                        {recipient.isActive ? 'Desativar' : 'Reativar'}
+                      </Button>
+                    </div>
                   ) : null}
                 </article>
               ))}
@@ -478,13 +560,21 @@ export function FinanceConfigPage() {
                     </div>
 
                     <div className="divide-y divide-border">
-                      {group.versions.map((version, index) => {
+                      {group.versions.map((version) => {
                         const revoked = version.status === 'REVOGADA'
+                        const effectiveNow = ruleEffectiveOn(
+                          version,
+                          todayCivil(),
+                        )
+                        const future =
+                          !revoked && version.validFrom > todayCivil()
                         const versionLabel = revoked
                           ? 'Revogada'
-                          : index === 0
+                          : effectiveNow
                             ? 'Atual'
-                            : 'Anterior'
+                            : future
+                              ? 'Agendada'
+                              : 'Anterior'
 
                         return (
                           <div
@@ -499,9 +589,11 @@ export function FinanceConfigPage() {
                                 tone={
                                   revoked
                                     ? 'ghost'
-                                    : index === 0
+                                    : effectiveNow
                                       ? 'success'
-                                      : 'info'
+                                      : future
+                                        ? 'warning'
+                                        : 'info'
                                 }
                               >
                                 {versionLabel}
@@ -540,6 +632,25 @@ export function FinanceConfigPage() {
         onClose={() => setRecipientOpen(false)}
         open={recipientOpen}
       />
+      {editingRecipient ? (
+        <EditRecipientDialog
+          onClose={() => setEditingRecipient(null)}
+          recipient={editingRecipient}
+        />
+      ) : null}
+      {togglingRecipient ? (
+        <RecipientStatusDialog
+          onClose={() => setTogglingRecipient(null)}
+          recipient={togglingRecipient}
+        />
+      ) : null}
+      {linkingRecipient ? (
+        <RecipientUserDialog
+          onClose={() => setLinkingRecipient(null)}
+          recipient={linkingRecipient}
+          users={users.data?.items ?? []}
+        />
+      ) : null}
       {versionOf ? (
         <VersionDialog onClose={() => setVersionOf(null)} rule={versionOf} />
       ) : null}
@@ -594,6 +705,7 @@ function RecipientDialog({
           setPaymentNote('')
           onClose()
         },
+        onError: (cause) => setError((cause as Error).message),
       },
     )
   }
@@ -664,11 +776,263 @@ function RecipientDialog({
   )
 }
 
+function RecipientUserDialog({
+  recipient,
+  users,
+  onClose,
+}: {
+  recipient: Recipient
+  users: AdminUserListItem[]
+  onClose: () => void
+}) {
+  const mutation = useLinkRecipientUser()
+  const [userId, setUserId] = useState(recipient.userId ?? '')
+  const [error, setError] = useState<string | null>(null)
+  const selected = users.find((item) => item.id === userId)
+
+  return (
+    <AppDialog
+      description="Esse vínculo define qual conta de login pode enxergar a própria participação financeira. Deixe sem conta somente quando o recebedor não precisar desse acesso."
+      footer={
+        <Button
+          disabled={mutation.isPending}
+          onClick={() => {
+            setError(null)
+            mutation.mutate(
+              {
+                recipientId: recipient.id,
+                userId: userId || null,
+              },
+              {
+                onSuccess: () => {
+                  toast.success(
+                    userId
+                      ? 'Conta vinculada ao recebedor.'
+                      : 'Vínculo com a conta removido.',
+                  )
+                  onClose()
+                },
+                onError: (cause) => setError((cause as Error).message),
+              },
+            )
+          }}
+        >
+          {mutation.isPending ? 'Salvando…' : 'Salvar vínculo'}
+        </Button>
+      }
+      icon={Link2}
+      maxWidth="md"
+      onClose={onClose}
+      open
+      title={`Conta de usuário — ${recipient.name}`}
+    >
+      <div className="grid gap-3">
+        <div className="grid gap-1.5">
+          <Label htmlFor={`recipient-user-${recipient.id}`}>Conta</Label>
+          <NativeSelect
+            id={`recipient-user-${recipient.id}`}
+            onChange={(event) => setUserId(event.target.value)}
+            value={userId}
+          >
+            <NativeSelectOption value="">Sem conta vinculada</NativeSelectOption>
+            {users
+              .filter((item) => item.isActive || item.id === recipient.userId)
+              .map((item) => (
+                <NativeSelectOption key={item.id} value={item.id}>
+                  {item.name}
+                  {item.email ? ` · ${item.email}` : ''}
+                  {!item.isActive ? ' · inativa' : ''}
+                </NativeSelectOption>
+              ))}
+          </NativeSelect>
+        </div>
+        {recipient.userId && !users.some((item) => item.id === recipient.userId) ? (
+          <p className="text-xs text-amber-700">
+            A conta atualmente vinculada não apareceu nesta consulta. Salvar outra conta ou “Sem conta vinculada” substituirá o vínculo atual.
+          </p>
+        ) : null}
+        {selected ? (
+          <p className="text-xs text-muted-foreground">
+            Selecionada: {selected.name}
+            {selected.email ? ` · ${selected.email}` : ''}
+          </p>
+        ) : null}
+        <FieldError message={error} />
+      </div>
+    </AppDialog>
+  )
+}
+
+function EditRecipientDialog({
+  recipient,
+  onClose,
+}: {
+  recipient: Recipient
+  onClose: () => void
+}) {
+  const mutation = useUpdateRecipient()
+  const [name, setName] = useState(recipient.name)
+  const [kind, setKind] = useState(recipient.kind)
+  const [document, setDocument] = useState(recipient.document ?? '')
+  const [paymentNote, setPaymentNote] = useState(recipient.paymentNote ?? '')
+  const [error, setError] = useState<string | null>(null)
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setError(null)
+    if (!name.trim()) return setError('Informe o nome.')
+    mutation.mutate(
+      {
+        id: recipient.id,
+        payload: {
+          name: name.trim(),
+          kind,
+          document,
+          paymentNote,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Recebedor atualizado.')
+          onClose()
+        },
+        onError: (cause) => setError((cause as Error).message),
+      },
+    )
+  }
+
+  return (
+    <AppDialog
+      icon={Pencil}
+      maxWidth="md"
+      onClose={onClose}
+      open
+      title={`Editar recebedor — ${recipient.name}`}
+    >
+      <form className="grid gap-3" onSubmit={submit}>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-recipient-name">Nome</Label>
+          <Input
+            autoFocus
+            id="edit-recipient-name"
+            onChange={(event) => setName(event.target.value)}
+            value={name}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-recipient-kind">Tipo de pessoa</Label>
+          <NativeSelect
+            id="edit-recipient-kind"
+            onChange={(event) =>
+              setKind(event.target.value as typeof recipient.kind)
+            }
+            value={kind}
+          >
+            <NativeSelectOption value="PESSOA_FISICA">
+              Pessoa física
+            </NativeSelectOption>
+            <NativeSelectOption value="PESSOA_JURIDICA">
+              Pessoa jurídica
+            </NativeSelectOption>
+          </NativeSelect>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-recipient-doc">CPF/CNPJ (opcional)</Label>
+          <Input
+            id="edit-recipient-doc"
+            inputMode="numeric"
+            onChange={(event) => setDocument(event.target.value)}
+            value={document}
+          />
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="edit-recipient-payment">
+            Dados para pagamento (informativo)
+          </Label>
+          <Textarea
+            id="edit-recipient-payment"
+            onChange={(event) => setPaymentNote(event.target.value)}
+            rows={2}
+            value={paymentNote}
+          />
+        </div>
+        <FieldError message={error} />
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose} type="button" variant="ghost">
+            Cancelar
+          </Button>
+          <Button disabled={mutation.isPending} type="submit">
+            {mutation.isPending ? 'Salvando…' : 'Salvar alterações'}
+          </Button>
+        </div>
+      </form>
+    </AppDialog>
+  )
+}
+
+function RecipientStatusDialog({
+  recipient,
+  onClose,
+}: {
+  recipient: Recipient
+  onClose: () => void
+}) {
+  const mutation = useUpdateRecipient()
+  const nextActive = !recipient.isActive
+  const [error, setError] = useState<string | null>(null)
+
+  return (
+    <AppDialog
+      description={
+        nextActive
+          ? 'O recebedor voltará a ficar disponível para novas regras.'
+          : 'Recebedores ligados a regras vigentes ou futuras não podem ser desativados. Remova essas regras primeiro para preservar a consistência.'
+      }
+      footer={
+        <Button
+          disabled={mutation.isPending}
+          onClick={() => {
+            setError(null)
+            mutation.mutate(
+              {
+                id: recipient.id,
+                payload: { isActive: nextActive },
+              },
+              {
+                onSuccess: () => {
+                  toast.success(
+                    nextActive
+                      ? 'Recebedor reativado.'
+                      : 'Recebedor desativado.',
+                  )
+                  onClose()
+                },
+                onError: (cause) => setError((cause as Error).message),
+              },
+            )
+          }}
+          variant={nextActive ? 'default' : 'destructive'}
+        >
+          {nextActive ? 'Reativar recebedor' : 'Desativar recebedor'}
+        </Button>
+      }
+      icon={nextActive ? UserRoundCheck : UserMinus}
+      maxWidth="md"
+      onClose={onClose}
+      open
+      title={`${nextActive ? 'Reativar' : 'Desativar'} — ${recipient.name}`}
+      variant={nextActive ? 'default' : 'destructive'}
+    >
+      <FieldError message={error} />
+    </AppDialog>
+  )
+}
+
 function VersionDialog({ rule, onClose }: { rule: Rule; onClose: () => void }) {
   const mutation = useCreateRuleVersion()
   return (
     <AppDialog
-      description="A versão atual terá a vigência encerrada na véspera do novo início. Fechamentos anteriores continuam com a versão usada."
+      description="Salvar cria uma nova versão. Use a mesma data para corrigir a configuração vigente ou uma data posterior para agendar a mudança. Distribuições finalizadas não mudam."
       icon={GitBranch}
       maxWidth="3xl"
       onClose={onClose}
@@ -678,8 +1042,8 @@ function VersionDialog({ rule, onClose }: { rule: Rule; onClose: () => void }) {
       <RuleForm
         initial={{
           ...rule,
-          validFrom: '',
-          validTo: null,
+          validFrom: rule.validFrom,
+          validTo: rule.validTo,
           housingComplexIds: rule.housingComplexes.map((c) => c.id),
           lockIdentity: true,
         }}
