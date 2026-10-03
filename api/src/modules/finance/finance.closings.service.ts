@@ -599,7 +599,7 @@ export async function listCredits(access: FinanceAccess, query: CreditQuery) {
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
-  if (!access.perms.isAdmin) {
+  if (!access.isGlobal) {
     filters.push(eq(financeRecipient.userId, access.actor.id))
   }
   if (query.closingId)
@@ -822,7 +822,7 @@ export async function listPayouts(
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
-  if (!access.perms.isAdmin) {
+  if (!access.isGlobal) {
     filters.push(eq(financeRecipient.userId, access.actor.id))
   }
   if (query.creditId) filters.push(eq(financePayout.creditId, query.creditId))
