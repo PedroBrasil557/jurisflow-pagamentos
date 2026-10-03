@@ -55,6 +55,7 @@ import {
   reverseReserveMovement,
 } from './finance.reports.service'
 import {
+  financeAttachment,
   financeClosing,
   financeClosingLine,
   financeCredit,
@@ -1449,6 +1450,50 @@ suite(
           attachment?.id as string,
           'Tentativa de remover novamente',
         ),
+        409,
+        /já removido/i,
+      )
+    })
+
+    test('E9 remoção lógica de comprovante funciona sem depender do storage', async () => {
+      const { downloadAttachment, listAttachments, removeAttachment } =
+        await import('./finance.attachments.service')
+      const id = `fin-attachment-${crypto.randomUUID()}`
+      await db.insert(financeAttachment).values({
+        id,
+        receiptId: firstReceiptId,
+        bucketName: 'bucket-teste',
+        objectKey: `finance/receipt/${firstReceiptId}/${id}.pdf`,
+        originalFileName: 'teste-logico.pdf',
+        mimeType: 'application/pdf',
+        sizeInBytes: 10,
+        sha256: '0'.repeat(64),
+        uploadedByUserId: ids.admin,
+      })
+
+      expect(
+        (await listAttachments(admin, {
+          kind: 'receipt',
+          id: firstReceiptId,
+        })).map((item) => item.id),
+      ).toContain(id)
+
+      await expectFinanceError(
+        removeAttachment(admin, id, 'x'),
+        422,
+        /motivo/i,
+      )
+      await removeAttachment(admin, id, 'Arquivo anexado incorretamente')
+
+      expect(
+        (await listAttachments(admin, {
+          kind: 'receipt',
+          id: firstReceiptId,
+        })).map((item) => item.id),
+      ).not.toContain(id)
+      await expectFinanceError(downloadAttachment(admin, id), 404)
+      await expectFinanceError(
+        removeAttachment(admin, id, 'Nova tentativa de remoção'),
         409,
         /já removido/i,
       )
