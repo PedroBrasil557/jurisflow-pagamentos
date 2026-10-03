@@ -720,7 +720,7 @@ function ProvisionDialog({
       toast.success('Provisão inicial configurada.')
       reset()
       onClose()
-    } catch {
+    } catch (cause) {
       setError(
         cause instanceof Error
           ? cause.message
@@ -882,7 +882,7 @@ function QuickParticipantDialog({
       if (userId) {
         try {
           await linkUser.mutateAsync({ recipientId: recipient.id, userId })
-        } catch (cause) {
+        } catch {
           toast.warning(
             'Destino salvo, mas o vínculo com a conta de usuário não foi concluído. Ajuste o vínculo em Recebedores.',
           )
