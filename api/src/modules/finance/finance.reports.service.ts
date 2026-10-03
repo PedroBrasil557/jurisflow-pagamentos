@@ -60,7 +60,7 @@ export async function getOverview(access: FinanceAccess) {
     )
     .where(
       and(
-        ...(access.perms.isAdmin
+        ...(access.isGlobal
           ? creditFilters
           : [
               ...creditFilters,
@@ -88,7 +88,7 @@ export async function getOverview(access: FinanceAccess) {
     },
     credits: { dueCents: due, paidCents: paid, balanceCents: due - paid },
     reservesBalanceCents: reserves.reduce((sum, r) => sum + r.balanceCents, 0),
-    config: access.perms.isAdmin
+    config: access.isGlobal
       ? {
           recipients: config?.recipients ?? 0,
           activeRules: config?.activeRules ?? 0,
@@ -144,7 +144,7 @@ export async function getStatement(
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
-  if (!access.perms.isAdmin) {
+  if (!access.isGlobal) {
     filters.push(eq(financeRecipient.userId, access.actor.id))
   }
   if (query.recipientId)
@@ -337,7 +337,7 @@ export async function listStatementRecipientOptions(
   assertFinance(access, 'view')
   const filters: SQL[] = []
   if (access.processFilter) filters.push(access.processFilter)
-  if (!access.perms.isAdmin) {
+  if (!access.isGlobal) {
     filters.push(eq(financeRecipient.userId, access.actor.id))
   }
 
