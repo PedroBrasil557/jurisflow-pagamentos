@@ -720,7 +720,7 @@ function ProvisionDialog({
       toast.success('Provisão inicial configurada.')
       reset()
       onClose()
-    } catch (cause) {
+    } catch {
       setError(
         cause instanceof Error
           ? cause.message
