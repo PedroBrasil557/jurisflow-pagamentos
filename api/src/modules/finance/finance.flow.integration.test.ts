@@ -859,7 +859,7 @@ suite(
         processId: p1,
         kind: 'TRANSFERENCIA',
         amountCents: 10_000,
-        movementDate: '2026-09-26',
+        movementDate: TODAY,
         description: 'Transferência do saldo (teste)',
         destination: 'Conta fictícia',
       })
