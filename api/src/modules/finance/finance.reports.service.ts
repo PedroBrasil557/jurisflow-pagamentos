@@ -78,10 +78,17 @@ export async function getOverview(access: FinanceAccess) {
             ]),
       ),
     )
+  const today = todaySaoPaulo()
   const [config] = await db
     .select({
       recipients: sql<number>`(SELECT count(*) FROM ${financeRecipient})::int`,
-      activeRules: sql<number>`(SELECT count(*) FROM ${financeRule} WHERE ${financeRule.status} = 'ATIVA')::int`,
+      activeRules: sql<number>`(
+        SELECT count(*)
+        FROM ${financeRule}
+        WHERE ${financeRule.status} = 'ATIVA'
+          AND ${financeRule.validFrom} <= ${today}
+          AND (${financeRule.validTo} IS NULL OR ${financeRule.validTo} >= ${today})
+      )::int`,
     })
     .from(sql`(SELECT 1) AS one`)
   const reserves = access.isGlobal ? await reserveBalances(access) : []
